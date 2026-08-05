@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>后台管理 - AI 社区网格员助手</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+            background: #f5f7fa;
+            color: #333;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 24px 16px;
+        }
+        /* 顶部导航 */
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .topbar h1 {
+            font-size: 22px;
+            color: #1a56db;
+        }
+        .topbar .nav-links a {
+            color: #1a56db;
+            text-decoration: none;
+            font-size: 14px;
+            margin-left: 16px;
+            cursor: pointer;
+        }
+        .topbar .nav-links a:hover { text-decoration: underline; }
+        .topbar .user-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 14px;
+            color: #555;
+        }
+        .topbar .user-info strong {
+            color: #1a56db;
+        }
+        .role-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .role-tag.admin { background: #f3e8ff; color: #7e22ce; }
+
+        .card {
+            background: #fff;
+            border-radius: 10px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        .card h2 {
+            font-size: 18px;
+            margin-bottom: 16px;
+            color: #111;
+            border-left: 4px solid #1a56db;
+            padding-left: 10px;
+        }
+
+        /* 统计卡片 */
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .stat-card {
+            background: #fff;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+        .stat-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            flex-shrink: 0;
+        }
+        .stat-icon.blue { background: #eaf0ff; }
+        .stat-icon.green { background: #e0f2e9; }
+        .stat-icon.orange { background: #fff3cd; }
+        .stat-icon.purple { background: #f3e8ff; }
+        .stat-info .stat-value {
+            font-size: 26px;
+            font-weight: 700;
+            color: #111;
+            line-height: 1.2;
+        }
+        .stat-info .stat-label {
+            font-size: 13px;
+            color: #888;
+            margin-top: 2px;
+        }
+
+        /* 图表布局 */
+        .charts-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+        .chart-container h3 {
+            font-size: 15px;
+            color: #555;
+            margin-bottom: 16px;
+            font-weight: 600;
+        }
+        .bar-chart {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .bar-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .bar-label {
+            width: 80px;
+            font-size: 13px;
+            color: #555;
+            text-align: right;
+            flex-shrink: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .bar-track {
+            flex: 1;
+            height: 22px;
+            background: #f1f5f9;
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+        .bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.6s ease;
+            min-width: 4px;
+        }
+        .bar-fill.blue { background: #1a56db; }
+        .bar-fill.red { background: #e74c3c; }
+        .bar-fill.orange { background: #f39c12; }
+        .bar-fill.green { background: #27ae60; }
+        .bar-fill.purple { background: #8e44ad; }
+        .bar-fill.cyan { background: #17a2b8; }
+        .bar-value {
+            width: 36px;
+            font-size: 13px;
+            color: #333;
+            font-weight: 500;
+            flex-shrink: 0;
+            text-align: right;
+        }
+
+        /* 筛选栏 */
+        .filter-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 16px;
+            align-items: center;
+        }
+        .filter-bar label {
+            font-size: 13px;
+            color: #666;
+        }
+        .filter-bar select {
+            padding: 6px 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 13px;
+            background: #fff;
+            color: #333;
+            cursor: pointer;
+        }
+        .filter-bar select:focus { outline: none; border-color: #1a56db; }
+        .filter-bar .btn-sm {
+            padding: 6px 14px;
+            background: #1a56db;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .filter-bar .btn-sm:hover { background: #164bc7; }
+        .filter-bar .btn-refresh {
+            margin-left: auto;
+            background: #fff;
+            color: #1a56db;
+            border: 1px solid #1a56db;
+        }
+        .filter-bar .btn-refresh:hover { background: #f0f7ff; }
+
+        /* 表格 */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        th, td {
+            text-align: left;
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+        }
+        th {
+            background: #f8fafc;
+            color: #555;
+            font-weight: 600;
+            cursor: pointer;
+            user-select: none;
+        }
+        th:hover { background: #f1f5f9; }
+        th .sort-indicator {
+            font-size: 11px;
+            color: #999;
+            margin-left: 4px;
+        }
+        tr:hover { background: #f8fafc; }
+        .tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .tag-high { background: #ffe0e0; color: #c0392b; }
+        .tag-medium { background: #fff3cd; color: #856404; }
+        .tag-low { background: #e0f2e9; color: #27ae60; }
+        .tag-processing { background: #e5e7eb; color: #6b7280; }
+        .tag-failed { background: #ffe0e0; color: #c0392b; }
+        .tag-success { background: #e0f2e9; color: #27ae60; }
+        .tag-scene-life { background: #fde8e8; color: #c0392b; }
+        .tag-scene-rescue { background: #fff3cd; color: #d97706; }
+        .tag-scene-normal { background: #eaf0ff; color: #1a56db; }
+        .empty { text-align: center; color: #999; padding: 40px 0; }
+
+        /* 分页信息 */
+        .table-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 12px;
+            font-size: 13px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="topbar">
+            <h1>📊 街道管理后台</h1>
+            <div class="user-info">
+                <span>👤 <strong id="user-name">-</strong><span class="role-tag admin" id="user-role">街道管理员</span></span>
+                <div class="nav-links">
+                    <a href="/">← 返回事件提交页</a>
+                    <a onclick="logout()">🚪 退出登录</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- 统计卡片 -->
+        <div class="stat-grid" id="statGrid">
+            <div class="stat-card">
+                <div class="stat-icon blue">📋</div>
+                <div class="stat-info">
+                    <div class="stat-value" id="stat-total">-</div>
+                    <div class="stat-label">事件总数</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon green">📈</div>
+                <div class="stat-info">
+                    <div class="stat-value" id="stat-today">-</div>
+                    <div class="stat-label">今日新增</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon orange">⏳</div>
+                <div class="stat-info">
+                    <div class="stat-value" id="stat-pending">-</div>
+                    <div class="stat-label">待处理数</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon purple">✅</div>
+                <div class="stat-info">
+                    <div class="stat-value" id="stat-done">-</div>
+                    <div class="stat-label">已处理数</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 图表区域 -->
+        <div class="charts-row">
+            <div class="card chart-container">
+                <h2>事件类型分布</h2>
+                <div class="bar-chart" id="typeChart">
+                    <div class="empty">加载中…</div>
+                </div>
+            </div>
+            <div class="card chart-container">
+                <h2>紧急程度分布</h2>
+                <div class="bar-chart" id="urgencyChart">
+                    <div class="empty">加载中…</div>
+                </div>
+            </div>
+            <div class="card chart-container">
+                <h2>场景标签分布</h2>
+                <div class="bar-chart" id="sceneChart">
+                    <div class="empty">加载中…</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 事件列表 -->
+        <div class="card">
+            <h2>事件列表</h2>
+            <div class="filter-bar">
+                <label>状态：</label>
+                <select id="filterStatus">
+                    <option value="">全部</option>
+                    <option value="处理中">处理中</option>
+                    <option value="已完成">已完成</option>
+                    <option value="已派单">已派单</option>
+                    <option value="处理超时">处理超时</option>
+                    <option value="处理失败">处理失败</option>
+                    <option value="已拒绝">已拒绝</option>
+                </select>
+                <label>类型：</label>
+                <select id="filterType">
+                    <option value="">全部</option>
+                </select>
+                <label>紧急程度：</label>
+                <select id="filterUrgency">
+                    <option value="">全部</option>
+                    <option value="高">高</option>
+                    <option value="中">中</option>
+                    <option value="低">低</option>
+                </select>
+                <label>场景标签：</label>
+                <select id="filterScene">
+                    <option value="">全部</option>
+                    <option value="生命急救">生命急救</option>
+                    <option value="紧急救援">紧急救援</option>
+                    <option value="常规">常规</option>
+                </select>
+                <button class="btn-sm" onclick="applyFilters()">筛选</button>
+                <button class="btn-sm btn-refresh" onclick="loadData()">🔄 刷新</button>
+            </div>
+            <div id="tableContainer">
+                <div class="empty">加载中…</div>
+            </div>
+            <div class="table-footer">
+                <span id="showingInfo">共 0 条记录</span>
+                <span>数据实时来源于 GET /api/events</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';
+        let allEvents = [];
+        let currentSort = { key: 'created_at', desc: true };
+
+        // ------------------------------------------------------------------
+        // 认证相关
+        // ------------------------------------------------------------------
+        function getAuthHeaders(contentType = true) {
+            const headers = {};
+            if (contentType) headers['Content-Type'] = 'application/json';
+            const token = localStorage.getItem('token');
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+            return headers;
+        }
+
+        function checkUnauthorized(res) {
+            if (res.status === 401) {
+                localStorage.removeItem('token');
+                localStorage.removeItem('user');
+                window.location.href = '/login.html';
+                return true;
+            }
+            return false;
+        }
+
+        async function initAuth() {
+            const token = localStorage.getItem('token');
+            if (!token) {
+                window.location.href = '/login.html';
+                return false;
+            }
+            try {
+                const res = await fetch(`${API_BASE}/api/auth/me`, {
+                    headers: getAuthHeaders(false)
+                });
+                if (checkUnauthorized(res)) return false;
+                if (!res.ok) {
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('user');
+                    window.location.href = '/login.html';
+                    return false;
+                }
+                const user = await res.json();
+                if (user.role !== 'admin') {
+                    alert('权限不足，仅管理员可访问后台管理页面');
+                    window.location.href = '/';
+                    return false;
+                }
+                document.getElementById('user-name').textContent = user.real_name || user.username;
+                return true;
+            } catch (e) {
+                // 网络异常时暂不跳转，允许离线查看
+                return true;
+            }
+        }
+
+        async function logout() {
+            const token = localStorage.getItem('token');
+            if (token) {
+                try {
+                    await fetch(`${API_BASE}/api/auth/logout`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                } catch (e) {
+                    // 网络异常不影响本地登出
+                }
+            }
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            window.location.href = '/login.html';
+        }
+
+        // ------------------------------------------------------------------
+        // 原有业务逻辑（仅增加认证头）
+        // ------------------------------------------------------------------
+        // 工具：统计对象
+        function countBy(arr, key) {
+            const map = {};
+            for (const item of arr) {
+                const val = item[key] || '未分类';
+                map[val] = (map[val] || 0) + 1;
+            }
+            return map;
+        }
+
+        // 工具：获取今日日期字符串 YYYY-MM-DD
+        function todayStr() {
+            const d = new Date();
+            return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        }
+
+        // 渲染统计卡片
+        function renderStats(events) {
+            const total = events.length;
+            const today = todayStr();
+            const todayCount = events.filter(e => (e.created_at || '').startsWith(today)).length;
+            const pending = events.filter(e => e.status === '处理中').length;
+            const done = events.filter(e => e.status === '已完成' || e.status === '已派单').length;
+
+            document.getElementById('stat-total').textContent = total;
+            document.getElementById('stat-today').textContent = todayCount;
+            document.getElementById('stat-pending').textContent = pending;
+            document.getElementById('stat-done').textContent = done;
+        }
+
+        // 渲染条形图
+        function renderBarChart(containerId, dataMap, colorClassMap) {
+            const container = document.getElementById(containerId);
+            const entries = Object.entries(dataMap).sort((a, b) => b[1] - a[1]);
+            if (entries.length === 0) {
+                container.innerHTML = '<div class="empty">暂无数据</div>';
+                return;
+            }
+            const maxVal = Math.max(...entries.map(e => e[1]));
+            const colors = ['blue', 'green', 'orange', 'purple', 'red', 'cyan'];
+            const html = entries.map((entry, idx) => {
+                const label = entry[0];
+                const val = entry[1];
+                const pct = maxVal > 0 ? (val / maxVal * 100) : 0;
+                const color = colorClassMap && colorClassMap[label] ? colorClassMap[label] : colors[idx % colors.length];
+                return `
+                    <div class="bar-item">
+                        <div class="bar-label" title="${label}">${label}</div>
+                        <div class="bar-track">
+                            <div class="bar-fill ${color}" style="width: ${pct}%"></div>
+                        </div>
+                        <div class="bar-value">${val}</div>
+                    </div>
+                `;
+            }).join('');
+            container.innerHTML = html;
+        }
+
+        // 更新类型筛选下拉框选项
+        function updateTypeFilterOptions(events) {
+            const types = [...new Set(events.map(e => e.event_type).filter(Boolean))].sort();
+            const select = document.getElementById('filterType');
+            // 保留第一个"全部"选项
+            select.innerHTML = '<option value="">全部</option>';
+            for (const t of types) {
+                const opt = document.createElement('option');
+                opt.value = t;
+                opt.textContent = t;
+                select.appendChild(opt);
+            }
+        }
+
+        // 标签样式工具
+        function urgencyClass(u) {
+            if (u === '高') return 'tag-high';
+            if (u === '中') return 'tag-medium';
+            return 'tag-low';
+        }
+        function statusClass(s) {
+            if (s === '处理中') return 'tag-processing';
+            if (s === '处理超时' || s === '处理失败' || s === '已拒绝') return 'tag-failed';
+            if (s === '已完成' || s === '已派单') return 'tag-success';
+            return '';
+        }
+        function sceneClass(s) {
+            if (s === '生命急救') return 'tag-scene-life';
+            if (s === '紧急救援') return 'tag-scene-rescue';
+            if (s === '常规') return 'tag-scene-normal';
+            return '';
+        }
+
+        // 渲染表格
+        function renderTable(events) {
+            const container = document.getElementById('tableContainer');
+            if (!events || events.length === 0) {
+                container.innerHTML = '<div class="empty">暂无符合条件的事件</div>';
+                document.getElementById('showingInfo').textContent = '共 0 条记录';
+                return;
+            }
+
+            // 排序
+            const sorted = [...events].sort((a, b) => {
+                const av = a[currentSort.key] || '';
+                const bv = b[currentSort.key] || '';
+                if (av < bv) return currentSort.desc ? 1 : -1;
+                if (av > bv) return currentSort.desc ? -1 : 1;
+                return 0;
+            });
+
+            const rows = sorted.map(e => `
+                <tr>
+                    <td>${e.created_at || '-'}</td>
+                    <td>${e.description || '-'}</td>
+                    <td>${e.event_type || '-'}</td>
+                    <td><span class="tag ${urgencyClass(e.urgency)}">${e.urgency || '-'}</span></td>
+                    <td><span class="tag ${sceneClass(e.scene_tag)}">${e.scene_tag || '-'}</span></td>
+                    <td>${e.handler || '-'}</td>
+                    <td><span class="tag ${statusClass(e.status)}">${e.status || '-'}</span></td>
+                </tr>
+            `).join('');
+
+            container.innerHTML = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th onclick="sortBy('created_at')">创建时间<span class="sort-indicator">${sortIndicator('created_at')}</span></th>
+                            <th onclick="sortBy('description')">描述<span class="sort-indicator">${sortIndicator('description')}</span></th>
+                            <th onclick="sortBy('event_type')">类型<span class="sort-indicator">${sortIndicator('event_type')}</span></th>
+                            <th onclick="sortBy('urgency')">紧急程度<span class="sort-indicator">${sortIndicator('urgency')}</span></th>
+                            <th onclick="sortBy('scene_tag')">场景标签<span class="sort-indicator">${sortIndicator('scene_tag')}</span></th>
+                            <th onclick="sortBy('handler')">处理部门<span class="sort-indicator">${sortIndicator('handler')}</span></th>
+                            <th onclick="sortBy('status')">状态<span class="sort-indicator">${sortIndicator('status')}</span></th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            `;
+            document.getElementById('showingInfo').textContent = `共 ${sorted.length} 条记录`;
+        }
+
+        function sortIndicator(key) {
+            if (currentSort.key !== key) return '⇅';
+            return currentSort.desc ? '↓' : '↑';
+        }
+
+        function sortBy(key) {
+            if (currentSort.key === key) {
+                currentSort.desc = !currentSort.desc;
+            } else {
+                currentSort.key = key;
+                currentSort.desc = true;
+            }
+            applyFilters();
+        }
+
+        // 筛选逻辑
+        function getFilteredEvents() {
+            const statusFilter = document.getElementById('filterStatus').value;
+            const typeFilter = document.getElementById('filterType').value;
+            const urgencyFilter = document.getElementById('filterUrgency').value;
+            const sceneFilter = document.getElementById('filterScene').value;
+
+            return allEvents.filter(e => {
+                if (statusFilter && e.status !== statusFilter) return false;
+                if (typeFilter && e.event_type !== typeFilter) return false;
+                if (urgencyFilter && e.urgency !== urgencyFilter) return false;
+                if (sceneFilter && e.scene_tag !== sceneFilter) return false;
+                return true;
+            });
+        }
+
+        function applyFilters() {
+            const filtered = getFilteredEvents();
+            renderTable(filtered);
+        }
+
+        // 加载数据
+        async function loadData() {
+            try {
+                const res = await fetch(`${API_BASE}/api/events`, {
+                    headers: getAuthHeaders(false)
+                });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) throw new Error('请求失败');
+                allEvents = await res.json();
+
+                renderStats(allEvents);
+
+                // 事件类型分布
+                const typeCounts = countBy(allEvents, 'event_type');
+                renderBarChart('typeChart', typeCounts);
+
+                // 紧急程度分布（固定颜色映射）
+                const urgencyCounts = countBy(allEvents, 'urgency');
+                renderBarChart('urgencyChart', urgencyCounts, {
+                    '高': 'red',
+                    '中': 'orange',
+                    '低': 'green'
+                });
+
+                // 场景标签分布
+                const sceneCounts = countBy(allEvents, 'scene_tag');
+                renderBarChart('sceneChart', sceneCounts, {
+                    '生命急救': 'red',
+                    '紧急救援': 'orange',
+                    '常规': 'blue'
+                });
+
+                updateTypeFilterOptions(allEvents);
+                applyFilters();
+            } catch (e) {
+                document.getElementById('typeChart').innerHTML = '<div class="empty">数据加载失败</div>';
+                document.getElementById('urgencyChart').innerHTML = '<div class="empty">数据加载失败</div>';
+                document.getElementById('sceneChart').innerHTML = '<div class="empty">数据加载失败</div>';
+                document.getElementById('tableContainer').innerHTML = '<div class="empty">数据加载失败</div>';
+            }
+        }
+
+        // 初始化：先认证，再加载数据
+        initAuth().then(ok => {
+            if (ok) {
+                loadData();
+                // 每 10 秒自动刷新一次
+                setInterval(loadData, 10000);
+            }
+        });
+    </script>
+</body>
+</html>

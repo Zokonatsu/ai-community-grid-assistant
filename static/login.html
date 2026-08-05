@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 / 注册 - AI 社区网格员助手</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+            background: #f5f7fa;
+            color: #333;
+            line-height: 1.6;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px 16px;
+        }
+        .auth-container {
+            width: 100%;
+            max-width: 420px;
+        }
+        .auth-header {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        .auth-header h1 {
+            font-size: 24px;
+            color: #1a56db;
+            margin-bottom: 6px;
+        }
+        .auth-header p {
+            color: #666;
+            font-size: 14px;
+        }
+        .card {
+            background: #fff;
+            border-radius: 10px;
+            padding: 28px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        .tab {
+            flex: 1;
+            text-align: center;
+            padding: 10px 0;
+            cursor: pointer;
+            font-size: 15px;
+            color: #666;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        .tab.active {
+            color: #1a56db;
+            border-bottom-color: #1a56db;
+            font-weight: 600;
+        }
+        .form-group {
+            margin-bottom: 16px;
+        }
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            color: #555;
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            background: #fff;
+        }
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #1a56db;
+        }
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 11px;
+            background: #1a56db;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            cursor: pointer;
+            transition: background 0.2s;
+            margin-top: 8px;
+        }
+        .btn:hover { background: #164bc7; }
+        .btn:disabled { background: #9bb3e6; cursor: not-allowed; }
+        .error {
+            margin-top: 12px;
+            color: #c0392b;
+            font-size: 13px;
+            text-align: center;
+        }
+        .success {
+            margin-top: 12px;
+            color: #27ae60;
+            font-size: 13px;
+            text-align: center;
+        }
+        .hint {
+            margin-top: 16px;
+            text-align: center;
+            font-size: 12px;
+            color: #888;
+        }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="auth-container">
+        <div class="auth-header">
+            <h1>AI 社区网格员助手</h1>
+            <p>用户登录与实名认证</p>
+        </div>
+        <div class="card">
+            <div class="tabs">
+                <div class="tab active" id="tab-login" onclick="switchTab('login')">登录</div>
+                <div class="tab" id="tab-register" onclick="switchTab('register')">注册</div>
+            </div>
+
+            <!-- 登录表单 -->
+            <form id="login-form" onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label for="login-username">用户名</label>
+                    <input type="text" id="login-username" placeholder="请输入用户名" required>
+                </div>
+                <div class="form-group">
+                    <label for="login-password">密码</label>
+                    <input type="password" id="login-password" placeholder="请输入密码" required>
+                </div>
+                <button type="submit" class="btn" id="login-btn">登录</button>
+                <div class="error hidden" id="login-error"></div>
+            </form>
+
+            <!-- 注册表单 -->
+            <form id="register-form" class="hidden" onsubmit="handleRegister(event)">
+                <div class="form-group">
+                    <label for="reg-username">用户名</label>
+                    <input type="text" id="reg-username" placeholder="3-20位，支持中文、字母、数字" required>
+                </div>
+                <div class="form-group">
+                    <label for="reg-password">密码</label>
+                    <input type="password" id="reg-password" placeholder="至少6位" required>
+                </div>
+                <div class="form-group">
+                    <label for="reg-confirm">确认密码</label>
+                    <input type="password" id="reg-confirm" placeholder="再次输入密码" required>
+                </div>
+                <div class="form-group">
+                    <label for="reg-realname">真实姓名</label>
+                    <input type="text" id="reg-realname" placeholder="请输入真实姓名" required>
+                </div>
+                <div class="form-group">
+                    <label for="reg-phone">手机号</label>
+                    <input type="tel" id="reg-phone" placeholder="请输入11位手机号" required>
+                </div>
+                <div class="form-group">
+                    <label for="reg-role">角色</label>
+                    <select id="reg-role" disabled>
+                        <option value="resident">居民</option>
+                    </select>
+                    <input type="hidden" id="reg-role-value" value="resident">
+                </div>
+                <button type="submit" class="btn" id="register-btn">注册</button>
+                <div class="error hidden" id="register-error"></div>
+                <div class="success hidden" id="register-success"></div>
+            </form>
+
+            <div class="hint">
+                登录状态将保持 7 天，刷新页面后无需重新登录。
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';
+
+        // 若已登录，直接跳转到首页
+        (function() {
+            const token = localStorage.getItem('token');
+            if (token) {
+                // 静默校验 token 是否仍有效
+                fetch(`${API_BASE}/api/auth/me`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                }).then(r => {
+                    if (r.ok) {
+                        window.location.href = '/';
+                    } else {
+                        localStorage.removeItem('token');
+                        localStorage.removeItem('user');
+                    }
+                }).catch(() => {
+                    // 网络异常不做处理，留在登录页
+                });
+            }
+        })();
+
+        function switchTab(tab) {
+            document.getElementById('tab-login').classList.toggle('active', tab === 'login');
+            document.getElementById('tab-register').classList.toggle('active', tab === 'register');
+            document.getElementById('login-form').classList.toggle('hidden', tab !== 'login');
+            document.getElementById('register-form').classList.toggle('hidden', tab !== 'register');
+            // 清空提示
+            document.getElementById('login-error').classList.add('hidden');
+            document.getElementById('register-error').classList.add('hidden');
+            document.getElementById('register-success').classList.add('hidden');
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const username = document.getElementById('login-username').value.trim();
+            const password = document.getElementById('login-password').value;
+            const btn = document.getElementById('login-btn');
+            const errorEl = document.getElementById('login-error');
+
+            errorEl.classList.add('hidden');
+            btn.disabled = true;
+            btn.textContent = '登录中…';
+
+            try {
+                const res = await fetch(`${API_BASE}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    errorEl.textContent = data.error || '登录失败';
+                    errorEl.classList.remove('hidden');
+                    return;
+                }
+                localStorage.setItem('token', data.data.token);
+                localStorage.setItem('user', JSON.stringify(data.data.user));
+                window.location.href = '/';
+            } catch (err) {
+                errorEl.textContent = '网络请求失败，请检查服务是否启动';
+                errorEl.classList.remove('hidden');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '登录';
+            }
+        }
+
+        async function handleRegister(e) {
+            e.preventDefault();
+            const username = document.getElementById('reg-username').value.trim();
+            const password = document.getElementById('reg-password').value;
+            const confirm = document.getElementById('reg-confirm').value;
+            const real_name = document.getElementById('reg-realname').value.trim();
+            const phone = document.getElementById('reg-phone').value.trim();
+            const role = document.getElementById('reg-role-value').value;
+            const btn = document.getElementById('register-btn');
+            const errorEl = document.getElementById('register-error');
+            const successEl = document.getElementById('register-success');
+
+            errorEl.classList.add('hidden');
+            successEl.classList.add('hidden');
+
+            if (password !== confirm) {
+                errorEl.textContent = '两次输入的密码不一致';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = '注册中…';
+
+            try {
+                const res = await fetch(`${API_BASE}/api/auth/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password, real_name, phone, role })
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    errorEl.textContent = data.error || '注册失败';
+                    errorEl.classList.remove('hidden');
+                    return;
+                }
+                successEl.textContent = '注册成功，请切换到登录页登录';
+                successEl.classList.remove('hidden');
+                document.getElementById('register-form').reset();
+            } catch (err) {
+                errorEl.textContent = '网络请求失败，请检查服务是否启动';
+                errorEl.classList.remove('hidden');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '注册';
+            }
+        }
+    </script>
+</body>
+</html>
