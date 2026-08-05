@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 社区网格员助手</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+            background: #f5f7fa;
+            color: #333;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 24px 16px;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+        header h1 {
+            font-size: 28px;
+            color: #1a56db;
+            margin-bottom: 8px;
+        }
+        header p {
+            color: #666;
+            font-size: 14px;
+        }
+        .card {
+            background: #fff;
+            border-radius: 10px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        .card h2 {
+            font-size: 18px;
+            margin-bottom: 16px;
+            color: #111;
+            border-left: 4px solid #1a56db;
+            padding-left: 10px;
+        }
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 15px;
+            resize: vertical;
+            min-height: 80px;
+            font-family: inherit;
+        }
+        textarea:focus {
+            outline: none;
+            border-color: #1a56db;
+        }
+        .btn {
+            display: inline-block;
+            margin-top: 12px;
+            padding: 10px 28px;
+            background: #1a56db;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn:hover { background: #164bc7; }
+        .btn:disabled { background: #9bb3e6; cursor: not-allowed; }
+        .result {
+            margin-top: 20px;
+            padding: 16px;
+            background: #f0f7ff;
+            border-radius: 8px;
+            border: 1px solid #c2d8ff;
+        }
+        .result.hidden { display: none; }
+        .result-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+        .result-item {
+            background: #fff;
+            padding: 10px 12px;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+        }
+        .result-item .label {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 4px;
+        }
+        .result-item .value {
+            font-size: 15px;
+            color: #222;
+            font-weight: 500;
+        }
+        .error {
+            margin-top: 12px;
+            color: #c0392b;
+            font-size: 14px;
+        }
+        /* 轮询状态提示区域 */
+        .polling {
+            margin-top: 20px;
+            padding: 16px;
+            background: #f0f7ff;
+            border-radius: 8px;
+            border: 1px solid #c2d8ff;
+        }
+        .polling.hidden { display: none; }
+        .polling-id {
+            font-size: 12px;
+            color: #666;
+            margin-top: 8px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        }
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid #1a56db;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading { color: #1a56db; font-size: 14px; margin-top: 8px; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        th, td {
+            text-align: left;
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+        }
+        th {
+            background: #f8fafc;
+            color: #555;
+            font-weight: 600;
+        }
+        tr:hover { background: #f8fafc; }
+        .tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .tag-high { background: #ffe0e0; color: #c0392b; }
+        .tag-medium { background: #fff3cd; color: #856404; }
+        .tag-low { background: #e0f2e9; color: #27ae60; }
+        /* 状态标签扩展 */
+        .tag-processing { background: #e5e7eb; color: #6b7280; }
+        .tag-failed { background: #ffe0e0; color: #c0392b; }
+        .tag-success { background: #e0f2e9; color: #27ae60; }
+        .tag-scene-life { background: #fde8e8; color: #c0392b; }
+        .tag-scene-rescue { background: #fff3cd; color: #d97706; }
+        .tag-scene-normal { background: #eaf0ff; color: #1a56db; }
+        .empty { text-align: center; color: #999; padding: 40px 0; }
+        /* 顶部用户栏 */
+        .userbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #fff;
+            border-radius: 10px;
+            padding: 12px 16px;
+            margin-bottom: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            font-size: 14px;
+        }
+        .userbar .user-info {
+            color: #555;
+        }
+        .userbar .user-info strong {
+            color: #1a56db;
+        }
+        .userbar .user-actions a {
+            color: #1a56db;
+            text-decoration: none;
+            margin-left: 12px;
+            cursor: pointer;
+        }
+        .userbar .user-actions a:hover { text-decoration: underline; }
+        .userbar .role-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            margin-left: 8px;
+        }
+        .role-tag.admin { background: #f3e8ff; color: #7e22ce; }
+        .role-tag.resident { background: #eaf0ff; color: #1a56db; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 用户栏 -->
+        <div class="userbar" id="userbar" style="display:none;">
+            <div class="user-info">
+                👤 欢迎，<strong id="user-name">-</strong>
+                <span class="role-tag" id="user-role">-</span>
+            </div>
+            <div class="user-actions">
+                <a id="admin-link" style="display:none;" href="/admin.html">🏠 进入管理后台</a>
+                <a onclick="logout()">🚪 退出登录</a>
+            </div>
+        </div>
+
+        <header>
+            <h1>AI 社区网格员助手</h1>
+            <p>智能接收居民诉求，自动提取信息并派发处理部门</p>
+        </header>
+
+        <div class="card">
+            <h2>事件提交</h2>
+            <textarea id="description" placeholder="请输入居民问题描述，例如：我家楼下下水道堵了"></textarea>
+            <button class="btn" id="submitBtn" onclick="submitEvent()">提交处理</button>
+            <div class="loading" id="loading" style="display:none;">AI 处理中，请稍候…</div>
+            <div class="error" id="error"></div>
+
+            <!-- 异步轮询状态提示 -->
+            <div class="polling hidden" id="polling">
+                <div style="font-weight:600; margin-bottom:8px;">
+                    <span class="spinner"></span>事件已提交，正在处理中…
+                </div>
+                <div class="polling-id">事件 ID：<span id="polling-id"></span></div>
+            </div>
+
+            <div class="result hidden" id="result">
+                <div style="font-weight:600; margin-bottom:8px;">处理结果</div>
+                <div class="result-grid">
+                    <div class="result-item">
+                        <div class="label">事件类型</div>
+                        <div class="value" id="r-event_type"></div>
+                    </div>
+                    <div class="result-item">
+                        <div class="label">紧急程度</div>
+                        <div class="value" id="r-urgency"></div>
+                    </div>
+                    <div class="result-item">
+                        <div class="label">处理部门</div>
+                        <div class="value" id="r-handler"></div>
+                    </div>
+                    <div class="result-item">
+                        <div class="label">状态</div>
+                        <div class="value" id="r-status"></div>
+                    </div>
+                    <div class="result-item">
+                        <div class="label">场景标签</div>
+                        <div class="value" id="r-scene_tag"></div>
+                    </div>
+                    <div class="result-item">
+                        <div class="label">创建时间</div>
+                        <div class="value" id="r-created_at"></div>
+                    </div>
+                    <div class="result-item">
+                        <div class="label">地址</div>
+                        <div class="value" id="r-address"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>事件列表</h2>
+            <div id="listContainer">
+                <div class="empty">加载中…</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';
+        let pollTimer = null;
+
+        // ------------------------------------------------------------------
+        // 认证相关
+        // ------------------------------------------------------------------
+        function getAuthHeaders(contentType = true) {
+            const headers = {};
+            if (contentType) headers['Content-Type'] = 'application/json';
+            const token = localStorage.getItem('token');
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+            return headers;
+        }
+
+        function checkUnauthorized(res) {
+            if (res.status === 401) {
+                localStorage.removeItem('token');
+                localStorage.removeItem('user');
+                window.location.href = '/login.html';
+                return true;
+            }
+            return false;
+        }
+
+        async function initAuth() {
+            const token = localStorage.getItem('token');
+            if (!token) {
+                window.location.href = '/login.html';
+                return false;
+            }
+            try {
+                const res = await fetch(`${API_BASE}/api/auth/me`, {
+                    headers: getAuthHeaders(false)
+                });
+                if (checkUnauthorized(res)) return false;
+                if (!res.ok) {
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('user');
+                    window.location.href = '/login.html';
+                    return false;
+                }
+                const user = await res.json();
+                // 显示用户栏
+                document.getElementById('userbar').style.display = 'flex';
+                document.getElementById('user-name').textContent = user.real_name || user.username;
+                const roleEl = document.getElementById('user-role');
+                if (user.role === 'admin') {
+                    roleEl.textContent = '街道管理员';
+                    roleEl.className = 'role-tag admin';
+                    document.getElementById('admin-link').style.display = 'inline';
+                } else {
+                    roleEl.textContent = '居民';
+                    roleEl.className = 'role-tag resident';
+                }
+                return true;
+            } catch (e) {
+                // 网络异常时暂不跳转，允许离线查看已缓存内容
+                return true;
+            }
+        }
+
+        async function logout() {
+            const token = localStorage.getItem('token');
+            if (token) {
+                try {
+                    await fetch(`${API_BASE}/api/auth/logout`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                } catch (e) {
+                    // 网络异常不影响本地登出
+                }
+            }
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            window.location.href = '/login.html';
+        }
+
+        // ------------------------------------------------------------------
+        // 事件提交与轮询（原有逻辑，仅增加认证头）
+        // ------------------------------------------------------------------
+        async function submitEvent() {
+            const desc = document.getElementById('description').value.trim();
+            const btn = document.getElementById('submitBtn');
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+            const result = document.getElementById('result');
+            const polling = document.getElementById('polling');
+
+            error.textContent = '';
+            if (!desc) { error.textContent = '请输入居民描述'; return; }
+
+            btn.disabled = true;
+            loading.style.display = 'block';
+            result.classList.add('hidden');
+            polling.classList.add('hidden');
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+
+            try {
+                const res = await fetch(`${API_BASE}/api/events`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ description: desc })
+                });
+                if (checkUnauthorized(res)) return;
+                const data = await res.json();
+                if (!data.success) {
+                    error.textContent = data.error || '处理失败';
+                    btn.disabled = false;
+                    loading.style.display = 'none';
+                    return;
+                }
+                const d = data.data;
+                // 立即展示轮询状态
+                document.getElementById('polling-id').textContent = d.event_id;
+                polling.classList.remove('hidden');
+                document.getElementById('description').value = '';
+                loadList();
+                // 启动轮询
+                startPolling(d.event_id);
+            } catch (e) {
+                error.textContent = '网络请求失败，请检查服务是否启动';
+            } finally {
+                btn.disabled = false;
+                loading.style.display = 'none';
+            }
+        }
+
+        function startPolling(eventId) {
+            if (pollTimer) clearInterval(pollTimer);
+
+            const check = async () => {
+                try {
+                    const res = await fetch(`${API_BASE}/api/events/${eventId}`, {
+                        headers: getAuthHeaders(false)
+                    });
+                    if (checkUnauthorized(res)) return;
+                    if (!res.ok) {
+                        if (res.status === 404) {
+                            clearInterval(pollTimer);
+                            pollTimer = null;
+                            document.getElementById('polling').classList.add('hidden');
+                            document.getElementById('error').textContent = '事件不存在或已被移除';
+                            loadList();
+                        }
+                        return;
+                    }
+                    const d = await res.json();
+
+                    if (d.status === '已完成' || d.status === '已派单') {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                        // 隐藏轮询提示，展示结果
+                        document.getElementById('polling').classList.add('hidden');
+                        document.getElementById('r-event_type').textContent = d.event_type || '-';
+                        document.getElementById('r-urgency').textContent = d.urgency || '-';
+                        document.getElementById('r-handler').textContent = d.handler || '-';
+                        document.getElementById('r-status').textContent = d.status || '-';
+                        document.getElementById('r-scene_tag').textContent = d.scene_tag || '-';
+                        document.getElementById('r-created_at').textContent = d.created_at || '-';
+                        document.getElementById('r-address').textContent = d.address || '-';
+                        document.getElementById('result').classList.remove('hidden');
+                        loadList();
+                    } else if (d.status === '处理超时' || d.status === '处理失败' || d.status === '已拒绝') {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                        document.getElementById('polling').classList.add('hidden');
+                        document.getElementById('error').textContent = d.error || (d.status === '已拒绝' ? '输入内容无效，非社区公共事务' : '处理超时，请稍后刷新或重新提交');
+                        loadList();
+                    }
+                    // 处理中则继续轮询
+                } catch (e) {
+                    // 轮询出错不中断，继续等待下次
+                }
+            };
+
+            check(); // 立即查一次
+            pollTimer = setInterval(check, 3000);
+        }
+
+        async function loadList() {
+            const container = document.getElementById('listContainer');
+            try {
+                const res = await fetch(`${API_BASE}/api/events`, {
+                    headers: getAuthHeaders(false)
+                });
+                if (checkUnauthorized(res)) return;
+                const events = await res.json();
+                if (!Array.isArray(events) || events.length === 0) {
+                    container.innerHTML = '<div class="empty">暂无事件记录</div>';
+                    return;
+                }
+                const urgencyClass = u => {
+                    if (u === '高') return 'tag-high';
+                    if (u === '中') return 'tag-medium';
+                    return 'tag-low';
+                };
+                const sceneClass = s => {
+                    if (s === '生命急救') return 'tag-scene-life';
+                    if (s === '紧急救援') return 'tag-scene-rescue';
+                    if (s === '常规') return 'tag-scene-normal';
+                    return '';
+                };
+                const statusClass = s => {
+                    if (s === '处理中') return 'tag-processing';
+                    if (s === '处理超时' || s === '处理失败' || s === '已拒绝') return 'tag-failed';
+                    if (s === '已完成' || s === '已派单') return 'tag-success';
+                    return '';
+                };
+                const rows = events.map(e => `
+                    <tr>
+                        <td>${e.created_at || '-'}</td>
+                        <td>${e.description || '-'}</td>
+                        <td>${e.event_type || '-'}</td>
+                        <td><span class="tag ${urgencyClass(e.urgency)}">${e.urgency || '-'}</span></td>
+                        <td><span class="tag ${sceneClass(e.scene_tag)}">${e.scene_tag || '-'}</span></td>
+                        <td>${e.handler || '-'}</td>
+                        <td><span class="tag ${statusClass(e.status)}">${e.status || '-'}</span></td>
+                    </tr>
+                `).join('');
+                container.innerHTML = `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>创建时间</th>
+                                <th>描述</th>
+                                <th>类型</th>
+                                <th>紧急程度</th>
+                                <th>场景标签</th>
+                                <th>处理部门</th>
+                                <th>状态</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                `;
+            } catch (e) {
+                container.innerHTML = '<div class="empty">加载失败</div>';
+            }
+        }
+
+        // 页面初始化：先认证，再加载数据
+        initAuth().then(ok => {
+            if (ok) loadList();
+        });
+    </script>
+</body>
+</html>
