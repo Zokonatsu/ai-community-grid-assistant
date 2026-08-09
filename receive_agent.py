@@ -146,7 +146,7 @@ def _vote_on_results(results: list[dict]) -> tuple[dict, str]:
     """
     对多轮采样结果进行投票，返回最可信的结果及置信度。
 
-    投票维度：is_valid、event_type、urgency、scene_tag、address
+    投票维度：is_valid、event_type、urgency、scene_tag
     置信度规则：
         - high  ：所有结果完全一致
         - medium：存在多数（≥2/3）一致的结果
@@ -165,13 +165,11 @@ def _vote_on_results(results: list[dict]) -> tuple[dict, str]:
         return results[0], "medium"
 
     def _result_key(r: dict):
-        # address 允许为空，但为空时属于高风险场景，在后续逻辑中单独处理
         return (
             r.get("is_valid"),
             r.get("event_type"),
             r.get("urgency"),
             r.get("scene_tag"),
-            r.get("address", ""),
         )
 
     from collections import Counter
@@ -280,7 +278,7 @@ def _is_valid_input(description: str) -> bool:
     无效输入特征：
         - 空字符串或仅包含空白字符
         - 纯数字、纯标点符号等无意义内容
-        - 总长度不足3个字符
+        - 总长度不足3个字符（生命急救/紧急救援关键词除外）
 
     参数:
         description: 居民原始描述。
@@ -292,6 +290,10 @@ def _is_valid_input(description: str) -> bool:
         return False
 
     cleaned = description.strip()
+
+    # 生命急救和紧急救援关键词优先放行，不受长度限制
+    if _LIFE_RESCUE_RE.search(cleaned) or _EMERGENCY_RESCUE_RE.search(cleaned):
+        return True
 
     # 长度不足3个字符，直接视为无效
     if len(cleaned) < 3:
