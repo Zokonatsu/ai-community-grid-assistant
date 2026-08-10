@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from workflow import workflow, WorkflowState, dispatch_record_workflow
 import record_agent
 from receive_agent import _is_valid_input, receive_node, _check_hard_rules_first
+import receive_agent  # noqa: F811  用于调试：确认加载的模块路径
 import auth
 
 logger = logging.getLogger("main")
@@ -412,6 +413,7 @@ async def create_event(
     若 60 秒内未完成，自动标记为处理超时。
     """
     try:
+        print(f"[DEBUG] Loaded receive_agent from: {receive_agent.__file__}")
         # 前置快速校验：无效输入直接拒绝，不创建任务，不调用外部API，不留任何记录
         if not _is_valid_input(request.description):
             logger.warning("前置快速校验拦截：description='%s'", request.description)
