@@ -62,6 +62,9 @@ class WorkflowState(TypedDict):
         created_at:  记录Agent填充的创建时间（格式"YYYY-MM-DD HH:MM:SS"），初始为空字符串。
         user_id:     提交事件的用户标识，用于数据隔离与审计追溯。
         confidence:  语义校验置信度（high/medium/low/none），由接收Agent填充。
+        confirmation_required: 是否需要前端二次确认（模糊急救短词触发）。
+        emergency_type: 模糊急救类型，medical/police/fire。
+        confirmed:   用户是否已确认高风险描述（用于模糊急救二次提交）。
     """
     description: str
     address: str
@@ -73,6 +76,9 @@ class WorkflowState(TypedDict):
     created_at: str
     user_id: str
     confidence: str
+    confirmation_required: bool
+    emergency_type: str
+    confirmed: bool
 
 
 # ------------------------------------------------------------------
@@ -170,6 +176,9 @@ if __name__ == "__main__":
             "created_at": "",
             "user_id": "",
             "confidence": "",
+            "confirmation_required": False,
+            "emergency_type": "",
+            "confirmed": False,
         }
 
         print(f"\n【输入描述】{description}")

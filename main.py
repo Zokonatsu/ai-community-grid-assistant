@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 # 复用已有工作流与持久化配置
 from workflow import workflow, WorkflowState, dispatch_record_workflow
 import record_agent
-from receive_agent import _is_valid_input, receive_node, _check_hard_rules_first
+from receive_agent import _is_valid_input, receive_node, _check_hard_rules_first, _check_fuzzy_emergency
 import receive_agent  # noqa: F811  用于调试：确认加载的模块路径
 import auth
 
@@ -126,6 +126,9 @@ async def _process_event(
             "created_at": "",
             "user_id": user_id,
             "confidence": pre_checked_state.get("confidence", ""),
+            "confirmation_required": pre_checked_state.get("confirmation_required", False),
+            "emergency_type": pre_checked_state.get("emergency_type", ""),
+            "confirmed": pre_checked_state.get("confirmed", False),
         }
         return dispatch_record_workflow.invoke(initial_state)
 
@@ -193,6 +196,7 @@ class EventRequest(BaseModel):
     事件提交请求体。
     """
     description: str = Field(..., description="居民事件描述字符串", min_length=1)
+    confirmed: bool = Field(default=False, description="用户是否已确认高风险描述（用于模糊急救二次提交）")
 
 
 class EventResponseData(BaseModel):
@@ -208,6 +212,8 @@ class EventResponseData(BaseModel):
     handler: str
     status: str
     created_at: str
+    confirmation_required: bool | None = Field(default=None, description="是否需要前端二次确认（模糊急救短词触发）")
+    emergency_type: str | None = Field(default=None, description="模糊急救类型：medical/police/fire")
 
 
 class EventResponse(BaseModel):
@@ -423,6 +429,34 @@ async def create_event(
             )
 
         # ------------------------------------------------------------------
+        # 前置模糊急救检查：高风险短词且用户未确认时，返回确认提示，不创建任务
+        # ------------------------------------------------------------------
+        if not request.confirmed:
+            fuzzy_emergency = _check_fuzzy_emergency(request.description)
+            if fuzzy_emergency is not None:
+                logger.warning(
+                    "前置模糊急救命中（%s），返回确认提示：description='%s'",
+                    fuzzy_emergency["emergency_type"],
+                    request.description,
+                )
+                return EventResponse(
+                    success=True,
+                    error=f"检测到高风险关键词「{request.description.strip()}」，请补充具体地址和详细描述后重新提交",
+                    data=EventResponseData(
+                        event_id="",
+                        address="",
+                        event_type="安全隐患",
+                        urgency="高",
+                        scene_tag="",
+                        handler="",
+                        status="",
+                        created_at="",
+                        confirmation_required=True,
+                        emergency_type=fuzzy_emergency["emergency_type"],
+                    ),
+                )
+
+        # ------------------------------------------------------------------
         # 前置硬规则检查（生命安全优先）：命中则跳过所有LLM调用，直接派单
         # ------------------------------------------------------------------
         hard_rule_result = _check_hard_rules_first(request.description)
@@ -478,6 +512,9 @@ async def create_event(
                 "scene_tag": "",
                 "handler": "",
                 "confidence": "",
+                "confirmation_required": False,
+                "emergency_type": "",
+                "confirmed": request.confirmed,
             }
             semantic_result = await asyncio.wait_for(
                 asyncio.to_thread(receive_node, check_state),
@@ -554,6 +591,25 @@ async def create_event(
 
         # 语义校验完成，根据结果分流处理
         event_type = semantic_result.get("event_type", "")
+
+        # 兜底：receive_node 返回了模糊急救确认标识（独立调用场景）
+        if semantic_result.get("confirmation_required"):
+            return EventResponse(
+                success=True,
+                error=f"检测到高风险关键词「{request.description.strip()}」，请补充具体地址和详细描述后重新提交",
+                data=EventResponseData(
+                    event_id="",
+                    address="",
+                    event_type="安全隐患",
+                    urgency="高",
+                    scene_tag="",
+                    handler="",
+                    status="",
+                    created_at="",
+                    confirmation_required=True,
+                    emergency_type=semantic_result.get("emergency_type", ""),
+                ),
+            )
 
         if event_type == "无效输入":
             logger.warning("语义校验拦截：description='%s'", request.description)

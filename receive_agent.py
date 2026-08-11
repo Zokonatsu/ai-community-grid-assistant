@@ -66,6 +66,37 @@ _EMERGENCY_RESCUE_RE = re.compile(
 )
 
 
+# 模糊急救关键词：短词无上下文时需要前端二次确认
+_FUZZY_MEDICAL_RE = re.compile(
+    r"吐血|上吊|晕倒|猝死|窒息|中毒",
+    re.IGNORECASE,
+)
+_FUZZY_POLICE_RE = re.compile(
+    r"绑架|抢劫|杀人|持刀|行凶",
+    re.IGNORECASE,
+)
+_FUZZY_FIRE_RE = re.compile(
+    r"着火|火灾|燃气泄漏|被困|爆炸",
+    re.IGNORECASE,
+)
+
+
+def _check_fuzzy_emergency(description: str) -> dict | None:
+    """
+    模糊急救检查：命中高风险词表且长度≤4字符时，返回需要确认的结果。
+
+    不调用 LLM，不创建任务，仅返回确认标识供前端二次确认。
+    """
+    cleaned = description.strip()
+    if len(cleaned) > 4:
+        return None
+
+    if _FUZZY_MEDICAL_RE.search(cleaned):
+        return {"confirmation_required": True, "emergency_type": "medical"}
+    if _FUZZY_POLICE_RE.search(cleaned):
+        return {"confirmation_required": True, "emergency_type": "police"}
+    if _FUZZY_FIRE_RE.search(cleaned):
+        return {"confirmation_required": True, "emergency_type": "fire"}
 def _apply_hard_rules(description: str, parsed: dict) -> dict:
     """
     对模型返回结果应用硬规则兜底。
@@ -210,6 +241,9 @@ class ReceiveState(TypedDict):
         scene_tag:   场景标签，限定为：生命急救/紧急救援/常规。根据描述自动判断。
         handler:     处理方标识，初始为空字符串 ""，由派发Agent后续填充。
         confidence:  语义校验置信度，high/medium/low/none，由多轮投票计算得出。
+        confirmation_required: 是否需要前端二次确认（模糊急救短词触发）。
+        emergency_type: 模糊急救类型，medical/police/fire。
+        confirmed:   用户是否已确认高风险描述（用于模糊急救二次提交）。
     """
     description: str
     address: str
@@ -218,6 +252,9 @@ class ReceiveState(TypedDict):
     scene_tag: str
     handler: str
     confidence: str
+    confirmation_required: bool
+    emergency_type: str
+    confirmed: bool
 
 
 # ------------------------------------------------------------------
@@ -305,6 +342,14 @@ def _is_valid_input(description: str) -> bool:
     if _LIFE_RESCUE_RE.search(cleaned) or _EMERGENCY_RESCUE_RE.search(cleaned):
         return True
 
+    # 模糊急救高风险词同样放行，不受长度限制
+    if (
+        _FUZZY_MEDICAL_RE.search(cleaned)
+        or _FUZZY_POLICE_RE.search(cleaned)
+        or _FUZZY_FIRE_RE.search(cleaned)
+    ):
+        return True
+
     # 长度不足3个字符，直接视为无效
     if len(cleaned) < 3:
         return False
@@ -383,7 +428,33 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             hard_result["scene_tag"],
             description,
         )
+        hard_result["confirmation_required"] = False
+        hard_result["emergency_type"] = ""
         return hard_result
+
+    # ------------------------------------------------------------------
+    # 步骤0.5：模糊急救检查（高风险短词，需要前端二次确认）
+    # ------------------------------------------------------------------
+    if not state.get("confirmed", False):
+        fuzzy_result = _check_fuzzy_emergency(description)
+        if fuzzy_result is not None:
+            logger.warning(
+                "模糊急救命中（%s），返回确认提示：description='%s'",
+                fuzzy_result["emergency_type"],
+                description,
+            )
+            return {
+                "description": description,
+                "address": "",
+                "event_type": "安全隐患",
+                "urgency": "高",
+                "scene_tag": "",
+                "handler": "",
+                "confidence": "high",
+                "confirmation_required": True,
+                "emergency_type": fuzzy_result["emergency_type"],
+                "confirmed": state.get("confirmed", False),
+            }
 
     # ------------------------------------------------------------------
     # 步骤1：前置机械校验（辅助层）
@@ -401,6 +472,8 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             "scene_tag": "常规",
             "handler": "",
             "confidence": "high",
+            "confirmation_required": False,
+            "emergency_type": "",
         }
 
     # ------------------------------------------------------------------
@@ -438,6 +511,8 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             "scene_tag": "常规",
             "handler": "",
             "confidence": "none",
+            "confirmation_required": False,
+            "emergency_type": "",
         }
 
     # 投票：取多数结果并计算置信度
@@ -462,6 +537,8 @@ def receive_node(state: ReceiveState) -> ReceiveState:
                 "scene_tag": "生命急救" if _LIFE_RESCUE_RE.search(description) else "紧急救援",
                 "handler": "",
                 "confidence": "medium",
+                "confirmation_required": False,
+                "emergency_type": "",
             }
 
         reject_reason = merged.get("reject_reason", "语义判断为无效输入")
@@ -479,6 +556,8 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             "scene_tag": "常规",
             "handler": "",
             "confidence": confidence,
+            "confirmation_required": False,
+            "emergency_type": "",
         }
 
     # 提取字段，若缺失则使用安全默认值
@@ -511,6 +590,8 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             "scene_tag": scene_tag,
             "handler": "",
             "confidence": confidence,
+            "confirmation_required": False,
+            "emergency_type": "",
         }
 
     # 构建并返回新的状态对象
@@ -523,6 +604,8 @@ def receive_node(state: ReceiveState) -> ReceiveState:
         "scene_tag": scene_tag,
         "handler": "",
         "confidence": confidence,
+        "confirmation_required": False,
+        "emergency_type": "",
     }
 
 
