@@ -93,9 +93,17 @@ def dispatch_node(state: DispatchState) -> DispatchState:
     event_type = state.get("event_type", "")
     urgency = state.get("urgency", "")
     scene_tag = state.get("scene_tag", "常规")
+    emergency_type = state.get("emergency_type")
 
+    # 若有 emergency_type（来自模糊急救确认），直接按类型分配外部资源处理方
+    if emergency_type == "medical":
+        handler = "120医疗急救中心（外部资源）"
+    elif emergency_type == "police":
+        handler = "110公安急救中心（外部资源）"
+    elif emergency_type == "fire":
+        handler = "119消防急救中心（外部资源）"
     # 场景标签优先：生命急救和紧急救援直接分配外部资源处理方
-    if scene_tag == "生命急救":
+    elif scene_tag == "生命急救":
         handler = "急救中心（外部资源）"
     elif scene_tag == "紧急救援":
         handler = "应急救援队（外部资源）"
