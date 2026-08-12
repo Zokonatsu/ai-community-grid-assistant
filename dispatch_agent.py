@@ -17,6 +17,7 @@ dispatch_agent.py
 """
 
 import logging
+import re
 from typing import TypedDict
 
 from langgraph.graph import StateGraph, START, END
@@ -68,6 +69,40 @@ EVENT_TYPE_TO_HANDLER: dict[str, str] = {
 
 
 # ------------------------------------------------------------------
+# 模糊急救关键词推断（兜底：二次提交时 emergency_type 被清空后的恢复）
+# ------------------------------------------------------------------
+_FUZZY_MEDICAL_RE = re.compile(
+    r"吐血|上吊|晕倒|猝死|窒息|中毒",
+    re.IGNORECASE,
+)
+_FUZZY_POLICE_RE = re.compile(
+    r"绑架|抢劫|杀人|持刀|行凶",
+    re.IGNORECASE,
+)
+_FUZZY_FIRE_RE = re.compile(
+    r"着火|火灾|燃气泄漏|被困|爆炸",
+    re.IGNORECASE,
+)
+
+
+def _infer_emergency_type(description: str) -> str | None:
+    """
+    根据居民描述中的关键词推断模糊急救类型。
+
+    当前端二次提交（confirmed=true）时，receive_node 会清空 emergency_type，
+    导致 dispatch_node 无法根据该字段匹配 110/119/120。本函数作为兜底，
+    通过原始描述中的关键词重新推断类型，确保 police/fire/medical 都能正确派单。
+    """
+    if _FUZZY_MEDICAL_RE.search(description):
+        return "medical"
+    if _FUZZY_POLICE_RE.search(description):
+        return "police"
+    if _FUZZY_FIRE_RE.search(description):
+        return "fire"
+    return None
+
+
+# ------------------------------------------------------------------
 # 节点函数：dispatch_node
 # ------------------------------------------------------------------
 def dispatch_node(state: DispatchState) -> DispatchState:
@@ -94,6 +129,10 @@ def dispatch_node(state: DispatchState) -> DispatchState:
     urgency = state.get("urgency", "")
     scene_tag = state.get("scene_tag", "常规")
     emergency_type = state.get("emergency_type")
+
+    # 兜底：若 receive_node 将 emergency_type 清空为空字符串，根据 description 重新推断
+    if not emergency_type:
+        emergency_type = _infer_emergency_type(state.get("description", ""))
 
     # 若有 emergency_type（来自模糊急救确认），直接按类型分配外部资源处理方
     if emergency_type == "medical":
