@@ -325,7 +325,7 @@ def _is_valid_input(description: str) -> bool:
     无效输入特征：
         - 空字符串或仅包含空白字符
         - 纯数字、纯标点符号等无意义内容
-        - 总长度不足3个字符（生命急救/紧急救援关键词除外）
+        - 纯问候语、纯闲聊、纯测试字符串
 
     参数:
         description: 居民原始描述。
@@ -349,10 +349,6 @@ def _is_valid_input(description: str) -> bool:
         or _FUZZY_FIRE_RE.search(cleaned)
     ):
         return True
-
-    # 长度不足3个字符，直接视为无效
-    if len(cleaned) < 3:
-        return False
 
     # 纯数字或纯标点符号（无任何字母/汉字）
     if cleaned.isdigit() or all(not c.isalnum() for c in cleaned):
@@ -512,7 +508,7 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             "handler": "",
             "confidence": "none",
             "confirmation_required": False,
-            "emergency_type": "",
+            "emergency_type": state.get("emergency_type", ""),
         }
 
     # 投票：取多数结果并计算置信度
@@ -538,7 +534,26 @@ def receive_node(state: ReceiveState) -> ReceiveState:
                 "handler": "",
                 "confidence": "medium",
                 "confirmation_required": False,
-                "emergency_type": "",
+                "emergency_type": state.get("emergency_type", ""),
+            }
+
+        # 安全兜底：短词（长度≤4字符）即使模型判断无效，也不直接拒绝，降级为待审核
+        # 短词缺乏上下文，模型容易误判，优先进入人工审核而非直接拦截
+        if len(description.strip()) <= 4:
+            logger.warning(
+                "语义校验安全兜底：模型判定无效，但输入为短词（长度≤4），降级为待审核。description='%s'",
+                description,
+            )
+            return {
+                "description": description,
+                "address": "",
+                "event_type": "待审核",
+                "urgency": "高",
+                "scene_tag": "常规",
+                "handler": "",
+                "confidence": "medium",
+                "confirmation_required": False,
+                "emergency_type": state.get("emergency_type", ""),
             }
 
         reject_reason = merged.get("reject_reason", "语义判断为无效输入")
@@ -557,7 +572,7 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             "handler": "",
             "confidence": confidence,
             "confirmation_required": False,
-            "emergency_type": "",
+            "emergency_type": state.get("emergency_type", ""),
         }
 
     # 提取字段，若缺失则使用安全默认值
@@ -591,7 +606,7 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             "handler": "",
             "confidence": confidence,
             "confirmation_required": False,
-            "emergency_type": "",
+            "emergency_type": state.get("emergency_type", ""),
         }
 
     # 构建并返回新的状态对象
@@ -605,7 +620,7 @@ def receive_node(state: ReceiveState) -> ReceiveState:
         "handler": "",
         "confidence": confidence,
         "confirmation_required": False,
-        "emergency_type": "",
+        "emergency_type": state.get("emergency_type", ""),
     }
 
 

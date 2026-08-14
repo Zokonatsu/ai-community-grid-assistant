@@ -241,6 +241,13 @@
             font-weight: 600;
             margin-bottom: 20px;
         }
+        .confirm-legal {
+            color: #c0392b;
+            font-size: 13px;
+            margin-bottom: 16px;
+            font-weight: bold;
+            line-height: 1.5;
+        }
         .confirm-buttons {
             display: flex;
             justify-content: flex-end;
@@ -344,6 +351,7 @@
             <div class="confirm-title" id="confirmTitle">急救确认</div>
             <div class="confirm-text" id="confirmText"></div>
             <div class="confirm-countdown" id="confirmCountdown">5 秒后自动确认</div>
+            <div class="confirm-legal" id="confirmLegal"></div>
             <div class="confirm-buttons">
                 <button class="btn btn-cancel" id="confirmCancel">取消</button>
                 <button class="btn btn-confirm" id="confirmAgree">同意</button>
@@ -357,6 +365,7 @@
         let confirmTimer = null;
         let confirmSeconds = 5;
         let currentDesc = '';
+        let currentEmergencyType = '';
 
         // ------------------------------------------------------------------
         // 认证相关
@@ -511,11 +520,13 @@
         // ------------------------------------------------------------------
         function showConfirmDialog(desc, emergencyType) {
             currentDesc = desc;
+            currentEmergencyType = emergencyType;
             confirmSeconds = 5;
 
             const titleEl = document.getElementById('confirmTitle');
             const textEl = document.getElementById('confirmText');
             const countdownEl = document.getElementById('confirmCountdown');
+            const legalEl = document.getElementById('confirmLegal');
 
             let text = '';
             if (emergencyType === 'medical') {
@@ -530,6 +541,7 @@
             titleEl.textContent = '急救确认';
             textEl.textContent = text;
             countdownEl.textContent = confirmSeconds + ' 秒后自动确认';
+            legalEl.textContent = '注意：恶意虚报、滥用急救资源将承担相应法律责任。';
 
             const agreeBtn = document.getElementById('confirmAgree');
             const cancelBtn = document.getElementById('confirmCancel');
@@ -593,7 +605,7 @@
                 const res = await fetch(`${API_BASE}/api/events`, {
                     method: 'POST',
                     headers: getAuthHeaders(),
-                    body: JSON.stringify({ description: desc, confirmed: true })
+                    body: JSON.stringify({ description: desc, confirmed: true, emergency_type: currentEmergencyType })
                 });
                 if (checkUnauthorized(res)) return;
                 const data = await res.json();

@@ -197,6 +197,7 @@ class EventRequest(BaseModel):
     """
     description: str = Field(..., description="居民事件描述字符串", min_length=1)
     confirmed: bool = Field(default=False, description="用户是否已确认高风险描述（用于模糊急救二次提交）")
+    emergency_type: str | None = Field(default=None, description="模糊急救类型：medical/police/fire（用于二次提交时传递）")
 
 
 class EventResponseData(BaseModel):
@@ -420,12 +421,47 @@ async def create_event(
     """
     try:
         print(f"[DEBUG] Loaded receive_agent from: {receive_agent.__file__}")
-        # 前置快速校验：无效输入直接拒绝，不创建任务，不调用外部API，不留任何记录
-        if not _is_valid_input(request.description):
-            logger.warning("前置快速校验拦截：description='%s'", request.description)
+        # ------------------------------------------------------------------
+        # 前置硬规则检查（生命安全优先）：命中则跳过所有LLM调用，直接派单
+        # ------------------------------------------------------------------
+        hard_rule_result = _check_hard_rules_first(request.description)
+        if hard_rule_result is not None:
+            event_id = str(uuid.uuid4())
+            created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            async with _task_lock:
+                _tasks[event_id] = {
+                    "event_id": event_id,
+                    "description": request.description,
+                    "status": "处理中",
+                    "address": "",
+                    "event_type": hard_rule_result["event_type"],
+                    "urgency": hard_rule_result["urgency"],
+                    "scene_tag": hard_rule_result["scene_tag"],
+                    "handler": "",
+                    "created_at": created_at,
+                    "completed_at": None,
+                    "error": None,
+                    "user_id": current_user["id"],
+                }
+                _save_tasks(_tasks)
+            # 启动后台异步任务
+            bg_task = asyncio.create_task(
+                _process_event(event_id, hard_rule_result, current_user["id"])
+            )
+            _background_tasks.add(bg_task)
+            bg_task.add_done_callback(_background_tasks.discard)
             return EventResponse(
-                success=False,
-                error="输入内容无效（如纯问候、闲聊或无实质内容的描述），请提供具体的社区事务描述",
+                success=True,
+                data=EventResponseData(
+                    event_id=event_id,
+                    address="",
+                    event_type=hard_rule_result["event_type"],
+                    urgency=hard_rule_result["urgency"],
+                    scene_tag=hard_rule_result["scene_tag"],
+                    handler="",
+                    status="处理中",
+                    created_at=created_at,
+                ),
             )
 
         # ------------------------------------------------------------------
@@ -513,7 +549,7 @@ async def create_event(
                 "handler": "",
                 "confidence": "",
                 "confirmation_required": False,
-                "emergency_type": "",
+                "emergency_type": request.emergency_type or "",
                 "confirmed": request.confirmed,
             }
             semantic_result = await asyncio.wait_for(
