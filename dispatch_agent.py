@@ -76,7 +76,7 @@ _FUZZY_MEDICAL_RE = re.compile(
     re.IGNORECASE,
 )
 _FUZZY_POLICE_RE = re.compile(
-    r"绑架|抢劫|杀人|持刀|行凶",
+    r"绑架|抢劫|杀人|持刀|行凶|强奸|强盗|性侵|猥亵|骚扰|盗窃|偷窃|偷东西|打架|斗殴|暴力|威胁|恐吓",
     re.IGNORECASE,
 )
 _FUZZY_FIRE_RE = re.compile(
@@ -143,9 +143,19 @@ def dispatch_node(state: DispatchState) -> DispatchState:
         handler = "119消防急救中心（外部资源）"
     # 场景标签优先：生命急救和紧急救援直接分配外部资源处理方
     elif scene_tag == "生命急救":
-        handler = "急救中心（外部资源）"
+        inferred = _infer_emergency_type(state.get("description", "")) or "medical"
+        handler = (
+            "120医疗急救中心（外部资源）" if inferred == "medical"
+            else "110公安急救中心（外部资源）" if inferred == "police"
+            else "119消防急救中心（外部资源）"
+        )
     elif scene_tag == "紧急救援":
-        handler = "应急救援队（外部资源）"
+        inferred = _infer_emergency_type(state.get("description", "")) or "fire"
+        handler = (
+            "119消防急救中心（外部资源）" if inferred == "fire"
+            else "110公安急救中心（外部资源）" if inferred == "police"
+            else "120医疗急救中心（外部资源）"
+        )
     else:
         # 常规场景：根据事件类型匹配处理部门，未命中时回退到"综合部"
         handler = EVENT_TYPE_TO_HANDLER.get(event_type, "综合部")
@@ -267,7 +277,7 @@ if __name__ == "__main__":
     print("输入：", test_case_4)
     result_4 = graph.invoke(test_case_4)
     print("输出：", result_4)
-    assert result_4["handler"] == "急救中心（外部资源）", f"期望'急救中心（外部资源）'，实际'{result_4['handler']}'"
+    assert result_4["handler"] == "120医疗急救中心（外部资源）", f"期望'120医疗急救中心（外部资源）'，实际'{result_4['handler']}'"
 
     # 测试用例5：紧急救援场景 → 应分配"应急救援队（外部资源）"
     test_case_5: DispatchState = {
@@ -284,7 +294,7 @@ if __name__ == "__main__":
     print("输入：", test_case_5)
     result_5 = graph.invoke(test_case_5)
     print("输出：", result_5)
-    assert result_5["handler"] == "应急救援队（外部资源）", f"期望'应急救援队（外部资源）'，实际'{result_5['handler']}'"
+    assert result_5["handler"] == "119消防急救中心（外部资源）", f"期望'119消防急救中心（外部资源）'，实际'{result_5['handler']}'"
 
     print("=" * 50)
     print("全部测试通过！")

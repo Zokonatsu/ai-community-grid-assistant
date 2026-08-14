@@ -28,6 +28,7 @@ from workflow import workflow, WorkflowState, dispatch_record_workflow
 import record_agent
 from receive_agent import _is_valid_input, receive_node, _check_hard_rules_first, _check_fuzzy_emergency
 import receive_agent  # noqa: F811  用于调试：确认加载的模块路径
+import dispatch_agent
 import auth
 
 logger = logging.getLogger("main")
@@ -422,10 +423,29 @@ async def create_event(
     try:
         print(f"[DEBUG] Loaded receive_agent from: {receive_agent.__file__}")
         # ------------------------------------------------------------------
-        # 前置硬规则检查（生命安全优先）：命中则跳过所有LLM调用，直接派单
+        # 前置硬规则检查（生命安全优先）：命中则跳过所有LLM调用
         # ------------------------------------------------------------------
         hard_rule_result = _check_hard_rules_first(request.description)
         if hard_rule_result is not None:
+            if not request.confirmed:
+                # 未确认：返回弹窗确认，不创建任务
+                return EventResponse(
+                    success=True,
+                    error=f"检测到高风险描述「{request.description.strip()}」，请确认是否向外部急救资源求助",
+                    data=EventResponseData(
+                        event_id="",
+                        address="",
+                        event_type=hard_rule_result["event_type"],
+                        urgency=hard_rule_result["urgency"],
+                        scene_tag="",
+                        handler="",
+                        status="",
+                        created_at="",
+                        confirmation_required=True,
+                        emergency_type=hard_rule_result.get("emergency_type", ""),
+                    ),
+                )
+            # 已确认：直接创建任务并派单
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
@@ -491,49 +511,6 @@ async def create_event(
                         emergency_type=fuzzy_emergency["emergency_type"],
                     ),
                 )
-
-        # ------------------------------------------------------------------
-        # 前置硬规则检查（生命安全优先）：命中则跳过所有LLM调用，直接派单
-        # ------------------------------------------------------------------
-        hard_rule_result = _check_hard_rules_first(request.description)
-        if hard_rule_result is not None:
-            event_id = str(uuid.uuid4())
-            created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            async with _task_lock:
-                _tasks[event_id] = {
-                    "event_id": event_id,
-                    "description": request.description,
-                    "status": "处理中",
-                    "address": "",
-                    "event_type": hard_rule_result["event_type"],
-                    "urgency": hard_rule_result["urgency"],
-                    "scene_tag": hard_rule_result["scene_tag"],
-                    "handler": "",
-                    "created_at": created_at,
-                    "completed_at": None,
-                    "error": None,
-                    "user_id": current_user["id"],
-                }
-                _save_tasks(_tasks)
-            # 启动后台异步任务
-            bg_task = asyncio.create_task(
-                _process_event(event_id, hard_rule_result, current_user["id"])
-            )
-            _background_tasks.add(bg_task)
-            bg_task.add_done_callback(_background_tasks.discard)
-            return EventResponse(
-                success=True,
-                data=EventResponseData(
-                    event_id=event_id,
-                    address="",
-                    event_type=hard_rule_result["event_type"],
-                    urgency=hard_rule_result["urgency"],
-                    scene_tag=hard_rule_result["scene_tag"],
-                    handler="",
-                    status="处理中",
-                    created_at=created_at,
-                ),
-            )
 
         # ------------------------------------------------------------------
         # 同步语义校验（唯一一次）：多轮采样消除随机性
@@ -644,6 +621,29 @@ async def create_event(
                     created_at="",
                     confirmation_required=True,
                     emergency_type=semantic_result.get("emergency_type", ""),
+                ),
+            )
+
+        # 外部资源场景：语义校验判定为生命急救或紧急救援，且用户未确认时触发弹窗
+        scene_tag = semantic_result.get("scene_tag", "")
+        if scene_tag in ("生命急救", "紧急救援") and not request.confirmed:
+            inferred = dispatch_agent._infer_emergency_type(request.description)
+            if not inferred:
+                inferred = "medical" if scene_tag == "生命急救" else "fire"
+            return EventResponse(
+                success=True,
+                error=f"检测到高风险描述「{request.description.strip()}」，请确认是否向外部急救资源求助",
+                data=EventResponseData(
+                    event_id="",
+                    address="",
+                    event_type=event_type,
+                    urgency=semantic_result.get("urgency", "高"),
+                    scene_tag="",
+                    handler="",
+                    status="",
+                    created_at="",
+                    confirmation_required=True,
+                    emergency_type=inferred,
                 ),
             )
 

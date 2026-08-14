@@ -131,6 +131,7 @@ def _check_hard_rules_first(description: str) -> dict | None:
             "scene_tag": "生命急救",
             "handler": "",
             "confidence": "high",
+            "emergency_type": "medical",
         }
     if _EMERGENCY_RESCUE_RE.search(description):
         return {
@@ -141,6 +142,7 @@ def _check_hard_rules_first(description: str) -> dict | None:
             "scene_tag": "紧急救援",
             "handler": "",
             "confidence": "high",
+            "emergency_type": "fire",
         }
     return None
 
@@ -424,8 +426,12 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             hard_result["scene_tag"],
             description,
         )
-        hard_result["confirmation_required"] = False
-        hard_result["emergency_type"] = ""
+        if not state.get("confirmed", False):
+            hard_result["confirmation_required"] = True
+            # emergency_type 已由 _check_hard_rules_first 设置
+        else:
+            hard_result["confirmation_required"] = False
+            hard_result["emergency_type"] = ""
         return hard_result
 
     # ------------------------------------------------------------------
