@@ -116,6 +116,34 @@ def _apply_hard_rules(description: str, parsed: dict) -> dict:
     return parsed
 
 
+def _resolve_emergency_type(description: str, scene_tag: str) -> str:
+    """
+    根据描述和场景标签推断 emergency_type，用于接收模块向派发模块传递明确结论。
+
+    当接收模块已判定为生命急救或紧急救援，但 emergency_type 未设置时，
+    通过关键词匹配补全，避免下游派发模块因信息不足而错误 fallback。
+    """
+    if scene_tag == "生命急救":
+        return "medical"
+    if scene_tag == "紧急救援":
+        # fire 关键词：与 dispatch_agent 的推断规则保持一致
+        if _FUZZY_FIRE_RE.search(description) or re.search(
+            r"煤气味|燃气味|煤气|燃气", description, re.IGNORECASE
+        ):
+            return "fire"
+        if _FUZZY_POLICE_RE.search(description):
+            return "police"
+        # 兜底：按描述中更完整的救援类型关键词区分
+        if re.search(
+            r"火灾|起火|着火|燃气泄漏|煤气泄漏|爆炸|坍塌|电梯困人|高空坠物",
+            description,
+            re.IGNORECASE,
+        ):
+            return "fire"
+        return "police"
+    return ""
+
+
 def _check_hard_rules_first(description: str) -> dict | None:
     """
     前置硬规则检查：在调用任何 LLM API 之前执行。
@@ -548,16 +576,17 @@ def receive_node(state: ReceiveState) -> ReceiveState:
                 "语义校验安全兜底：模型判定无效，但命中紧急关键词，降级为待审核。description='%s'",
                 description,
             )
+            scene_tag_val = "生命急救" if _LIFE_RESCUE_RE.search(description) else "紧急救援"
             return {
                 "description": description,
                 "address": "",
                 "event_type": "待审核",
                 "urgency": "高",
-                "scene_tag": "生命急救" if _LIFE_RESCUE_RE.search(description) else "紧急救援",
+                "scene_tag": scene_tag_val,
                 "handler": "",
                 "confidence": "medium",
                 "confirmation_required": False,
-                "emergency_type": state.get("emergency_type", ""),
+                "emergency_type": _resolve_emergency_type(description, scene_tag_val),
             }
 
         # 安全兜底：短词（长度≤4字符）即使模型判断无效，也不直接拒绝，降级为待审核
@@ -620,6 +649,9 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             address,
             confidence,
         )
+        emergency_type_val = state.get("emergency_type", "")
+        if not emergency_type_val and scene_tag in ("生命急救", "紧急救援"):
+            emergency_type_val = _resolve_emergency_type(description, scene_tag)
         return {
             "description": description,
             "address": address,
@@ -629,8 +661,13 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             "handler": "",
             "confidence": confidence,
             "confirmation_required": False,
-            "emergency_type": state.get("emergency_type", ""),
+            "emergency_type": emergency_type_val,
         }
+
+    # 若 scene_tag 为外部资源场景但未设置 emergency_type，根据描述推断并传递
+    emergency_type_val = state.get("emergency_type", "")
+    if not emergency_type_val and scene_tag in ("生命急救", "紧急救援"):
+        emergency_type_val = _resolve_emergency_type(description, scene_tag)
 
     # 构建并返回新的状态对象
     # handler 始终初始化为空字符串，不由接收Agent决定处理方
@@ -643,7 +680,7 @@ def receive_node(state: ReceiveState) -> ReceiveState:
         "handler": "",
         "confidence": confidence,
         "confirmation_required": False,
-        "emergency_type": state.get("emergency_type", ""),
+        "emergency_type": emergency_type_val,
     }
 
 

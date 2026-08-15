@@ -628,7 +628,10 @@ async def create_event(
         # 外部资源场景：语义校验判定为生命急救或紧急救援，且用户未确认时触发弹窗
         scene_tag = semantic_result.get("scene_tag", "")
         if scene_tag in ("生命急救", "紧急救援") and not request.confirmed:
-            inferred = dispatch_agent._infer_emergency_type(request.description)
+            # 优先使用接收模块已推断的 emergency_type，避免二次推断与语义判断不一致
+            inferred = semantic_result.get("emergency_type")
+            if not inferred:
+                inferred = dispatch_agent._infer_emergency_type(request.description)
             if not inferred:
                 if scene_tag == "生命急救":
                     inferred = "medical"

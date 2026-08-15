@@ -80,7 +80,7 @@ _FUZZY_POLICE_RE = re.compile(
     re.IGNORECASE,
 )
 _FUZZY_FIRE_RE = re.compile(
-    r"着火|火灾|燃气泄漏|被困|爆炸|起火|煤气泄漏",
+    r"着火|火灾|燃气泄漏|煤气泄漏|煤气味|燃气味|煤气|燃气|被困|爆炸|起火",
     re.IGNORECASE,
 )
 
@@ -154,7 +154,7 @@ def dispatch_node(state: DispatchState) -> DispatchState:
         if not inferred:
             # 无法通过关键词直接推断时，根据描述进一步区分，不默认fire
             desc = state.get("description", "")
-            if re.search(r"火灾|起火|着火|燃气泄漏|煤气泄漏|爆炸|坍塌|电梯困人|高空坠物", desc):
+            if re.search(r"火灾|起火|着火|燃气泄漏|煤气泄漏|煤气味|燃气味|煤气|燃气|爆炸|坍塌|电梯困人|高空坠物", desc):
                 inferred = "fire"
             else:
                 # 无法明确推断的紧急救援，优先公安（110），因为治安类事件在社会场景中更常见
