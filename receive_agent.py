@@ -18,6 +18,7 @@ receive_agent.py
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import TypedDict
 
 from openai import OpenAI
@@ -295,8 +296,11 @@ Few-shot 示例：
    - 中：影响居民正常生活但无直接人身危险，如停水停电、下水道堵塞等
    - 低：一般性建议、咨询、不紧急的改善需求
 6. scene_tag（字符串）：场景标签，只能从"生命急救"/"紧急救援"/"常规"中选择一项：
-   - 生命急救：涉及人员生命危险，需要医疗急救力量介入，如心脏骤停、严重外伤大出血、突发重病昏迷、窒息、触电致伤等
-   - 紧急救援：涉及火灾、燃气泄漏、电梯困人、溺水、建筑物坍塌、严重交通事故等需要消防/公安/专业救援力量介入的情况
+   - 生命急救：涉及人员生命危险，需要医疗急救力量（120）介入，如心脏骤停、严重外伤大出血、突发重病昏迷、窒息、触电致伤、溺水等
+   - 紧急救援：需要消防（119）或公安（110）等专业救援力量介入的情况，必须根据描述内容判断具体属于哪类：
+     * 119消防职责范围：火灾、起火、着火、燃气泄漏、煤气泄漏、爆炸、建筑物坍塌、电梯困人、高空坠物等
+     * 110公安职责范围：暴恐袭击、抢劫、盗窃、打架斗殴、寻仇、吸毒、持刀行凶、绑架、强奸、诈骗、聚众闹事、寻衅滋事、严重交通事故等治安或刑事案件
+     * 注意：涉及人身安全威胁、治安犯罪、社会暴力的紧急事件属于110公安，而非119消防
    - 常规：一般社区事务，不需要外部专业急救或救援力量介入
 
 输出格式要求：
@@ -482,21 +486,29 @@ def receive_node(state: ReceiveState) -> ReceiveState:
     # 步骤2：多轮采样语义校验（消除单次调用随机性）
     # ------------------------------------------------------------------
     # 对同一描述调用多次 LLM API，通过投票统计获得稳定结果。
+    # 使用线程池并行执行，将顺序3轮改为并行，总耗时从 3×15s 降至约 1×15s。
     # 任何一轮调用异常均单独捕获，不影响其他轮次。
     parsed_results: list[dict] = []
-    for round_idx in range(SEMANTIC_CHECK_ROUNDS):
-        try:
-            parsed = _call_llm_once(description)
-            parsed = _apply_hard_rules(description, parsed)
-            parsed_results.append(parsed)
-        except Exception as exc:
-            logger.warning(
-                "语义校验第 %d 轮 API 异常，继续尝试下一轮。描述='%s'，异常=%s",
-                round_idx + 1,
-                description,
-                exc,
-            )
-            continue
+
+    def _call_with_hard_rules(desc: str) -> dict:
+        parsed = _call_llm_once(desc)
+        return _apply_hard_rules(desc, parsed)
+
+    with ThreadPoolExecutor(max_workers=SEMANTIC_CHECK_ROUNDS) as executor:
+        futures = [
+            executor.submit(_call_with_hard_rules, description)
+            for _ in range(SEMANTIC_CHECK_ROUNDS)
+        ]
+        for future in futures:
+            try:
+                parsed_results.append(future.result())
+            except Exception as exc:
+                logger.warning(
+                    "语义校验某轮 API 异常，继续收集其他轮次结果。描述='%s'，异常=%s",
+                    description,
+                    exc,
+                )
+                continue
 
     # 所有轮次均失败 -> 明确标记为 API异常
     if not parsed_results:

@@ -76,11 +76,11 @@ _FUZZY_MEDICAL_RE = re.compile(
     re.IGNORECASE,
 )
 _FUZZY_POLICE_RE = re.compile(
-    r"绑架|抢劫|杀人|持刀|行凶|强奸|强盗|性侵|猥亵|骚扰|盗窃|偷窃|偷东西|打架|斗殴|暴力|威胁|恐吓",
+    r"绑架|抢劫|杀人|持刀|行凶|强奸|强盗|性侵|猥亵|骚扰|盗窃|偷窃|偷东西|打架|斗殴|暴力|威胁|恐吓|暴恐|寻仇|吸毒",
     re.IGNORECASE,
 )
 _FUZZY_FIRE_RE = re.compile(
-    r"着火|火灾|燃气泄漏|被困|爆炸",
+    r"着火|火灾|燃气泄漏|被困|爆炸|起火|煤气泄漏",
     re.IGNORECASE,
 )
 
@@ -150,7 +150,15 @@ def dispatch_node(state: DispatchState) -> DispatchState:
             else "119消防急救中心（外部资源）"
         )
     elif scene_tag == "紧急救援":
-        inferred = _infer_emergency_type(state.get("description", "")) or "fire"
+        inferred = _infer_emergency_type(state.get("description", ""))
+        if not inferred:
+            # 无法通过关键词直接推断时，根据描述进一步区分，不默认fire
+            desc = state.get("description", "")
+            if re.search(r"火灾|起火|着火|燃气泄漏|煤气泄漏|爆炸|坍塌|电梯困人|高空坠物", desc):
+                inferred = "fire"
+            else:
+                # 无法明确推断的紧急救援，优先公安（110），因为治安类事件在社会场景中更常见
+                inferred = "police"
         handler = (
             "119消防急救中心（外部资源）" if inferred == "fire"
             else "110公安急救中心（外部资源）" if inferred == "police"

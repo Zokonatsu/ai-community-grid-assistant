@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime
 from typing import Any
@@ -629,7 +630,15 @@ async def create_event(
         if scene_tag in ("生命急救", "紧急救援") and not request.confirmed:
             inferred = dispatch_agent._infer_emergency_type(request.description)
             if not inferred:
-                inferred = "medical" if scene_tag == "生命急救" else "fire"
+                if scene_tag == "生命急救":
+                    inferred = "medical"
+                else:
+                    # 紧急救援不默认fire，根据描述进一步区分
+                    desc = request.description
+                    if re.search(r"火灾|起火|着火|燃气泄漏|煤气泄漏|爆炸|坍塌|电梯困人|高空坠物", desc):
+                        inferred = "fire"
+                    else:
+                        inferred = "police"
             return EventResponse(
                 success=True,
                 error=f"检测到高风险描述「{request.description.strip()}」，请确认是否向外部急救资源求助",
