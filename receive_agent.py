@@ -267,7 +267,7 @@ RECEIVE_SYSTEM_PROMPT = """你是一名社区事务信息提取助手。请根�
 
 网格员职责范围定义：
 - 正面清单（网格员负责处理）：社区安全、公共设施故障、邻里纠纷、环境卫生、消防安全、物业维修、社区咨询建议等涉及社区公共利益或网格员职责范围内的事件。
-- 负面清单（网格员不负责处理）：个人私事（如买菜、做饭、个人出行）、医疗诊断、商业交易、超出本社区范围的事件、日常闲聊、无意义的问候或测试字符串等。
+- 负面清单（网格员不负责处理）：个人私事（如买菜、做饭、个人出行、逛街）、医疗诊断、商业交易、超出本社区范围的事件、日常闲聊、无意义的问候或测试字符串、家养宠物死亡、个人投资理财、纯个人情感倾诉等。
 - 边界模糊判断标准：如果事件不涉及社区公共利益或网格员职责，应判定为管辖外（is_valid 为 false）。
 
 判断规则：
@@ -279,18 +279,23 @@ Few-shot 示例：
 - "楼上漏水" → is_valid=true，event_type="物业维修"，urgency="中"，scene_tag="常规"（公共设施/物业维修，涉及邻里共同利益）
 - "我去买菜了" → is_valid=false，reject_reason="个人私事，不在网格员管辖范围"（属于个人日常生活，与社区公共利益无关）
 - "割腕" → is_valid=true，event_type="安全隐患"，urgency="高"，scene_tag="生命急救"（生命安全紧急情况，网格员必须介入上报）
+- "我家狗死了" → is_valid=false，reject_reason="家养宠物死亡，不属于网格员职责范围"（家养宠物事务属于个人私事，不涉及社区公共利益）
+- "夫妻吵架声音很大" → is_valid=true，event_type="邻里纠纷"，urgency="中"，scene_tag="常规"（邻里纠纷类，由调解员处理）
+- "楼下路灯不亮了" → is_valid=true，event_type="公共设施"，urgency="中"，scene_tag="常规"（公共设施损坏，由工程部处理）
+- "楼道里有股煤气味" → is_valid=true，event_type="安全隐患"，urgency="高"，scene_tag="紧急救援"（燃气泄漏安全隐患，由安保部处理并上报119）
+- "我想聊聊我的感情问题" → is_valid=false，reject_reason="个人情感倾诉，不属于网格员职责范围"（纯个人情感问题与社区公共事务无关）
 
 字段要求：
 1. is_valid（布尔值）：描述是否为有效的社区事务
 2. reject_reason（字符串）：当 is_valid 为 false 时，说明拒绝原因；为 true 时返回空字符串 ""
 3. address（字符串）：描述中涉及的具体地址或位置信息。如果描述中没有提到具体地址，返回空字符串""
-4. event_type（字符串）：事件类型，只能从以下类别中选择一项：
-   - 物业维修：如水电故障、房屋维修、电梯问题、下水道堵塞等
-   - 环境卫生：如垃圾清理、绿化养护、异味污染等
-   - 安全隐患：如火灾风险、燃气泄漏、盗窃、高空坠物等
-   - 邻里纠纷：如噪音扰民、宠物管理、停车争执、占用公共空间等
-   - 公共设施：如路灯损坏、道路破损、健身器材故障、门禁失灵等
-   - 其他：不属于以上类别的特殊情况
+4. event_type（字符串）：事件类型，只能从以下类别中选择一项。选择时必须结合各部门职责范围进行判断：
+   - 物业维修（对应处理方：物业部）：房屋维修、水电故障、门禁电梯故障、物业相关投诉、下水道堵塞、管道漏水等
+   - 环境卫生（对应处理方：环卫部）：垃圾清理、垃圾分类、绿化养护、异味污染、公共区域清洁等
+   - 安全隐患（对应处理方：安保部）：社区治安、安全隐患排查、防盗防骗、可疑人员报告、火灾风险、燃气泄漏、盗窃、高空坠物等
+   - 邻里纠纷（对应处理方：调解员）：邻里纠纷、家庭矛盾、噪音扰民、宠物扰民、停车争执、占用公共空间等
+   - 公共设施（对应处理方：工程部）：公共设施损坏（路灯、道路、井盖）、基础设施维护、健身器材故障、小区大门损坏等
+   - 其他（对应处理方：综合部）：仅当事件确实属于网格员职责范围，且经过仔细判断确实无法归入安保部、物业部、工程部、环卫部、调解员中的任何一类时，才可使用。严禁将个人私事、闲聊、明显无效输入归为"其他"。
 5. urgency（字符串）：紧急程度，只能从"高"/"中"/"低"中选择一项：
    - 高：涉及人身安全、火灾、燃气泄漏、电梯困人等紧急情况
    - 中：影响居民正常生活但无直接人身危险，如停水停电、下水道堵塞等
@@ -707,6 +712,71 @@ if __name__ == "__main__":
     print(f"  scene_tag  : {result_3['scene_tag']}")
     print(f"  handler    : {result_3['handler']}")
     print(f"  confidence : {result_3.get('confidence', 'N/A')}")
+
+    # 测试用例4：家养宠物死亡——应被识别为无效输入
+    test_case_4 = "我家狗死了"
+    print("=" * 50)
+    print("【测试用例4】输入：", test_case_4)
+    result_4 = graph.invoke({"description": test_case_4})
+    print("输出结果：")
+    print(f"  address    : {result_4['address']}")
+    print(f"  event_type : {result_4['event_type']}")
+    print(f"  urgency    : {result_4['urgency']}")
+    print(f"  scene_tag  : {result_4['scene_tag']}")
+    print(f"  handler    : {result_4['handler']}")
+    print(f"  confidence : {result_4.get('confidence', 'N/A')}")
+
+    # 测试用例5：邻里纠纷——应由调解员处理
+    test_case_5 = "夫妻吵架声音很大"
+    print("=" * 50)
+    print("【测试用例5】输入：", test_case_5)
+    result_5 = graph.invoke({"description": test_case_5})
+    print("输出结果：")
+    print(f"  address    : {result_5['address']}")
+    print(f"  event_type : {result_5['event_type']}")
+    print(f"  urgency    : {result_5['urgency']}")
+    print(f"  scene_tag  : {result_5['scene_tag']}")
+    print(f"  handler    : {result_5['handler']}")
+    print(f"  confidence : {result_5.get('confidence', 'N/A')}")
+
+    # 测试用例6：公共设施损坏——应由工程部处理
+    test_case_6 = "楼下路灯不亮了"
+    print("=" * 50)
+    print("【测试用例6】输入：", test_case_6)
+    result_6 = graph.invoke({"description": test_case_6})
+    print("输出结果：")
+    print(f"  address    : {result_6['address']}")
+    print(f"  event_type : {result_6['event_type']}")
+    print(f"  urgency    : {result_6['urgency']}")
+    print(f"  scene_tag  : {result_6['scene_tag']}")
+    print(f"  handler    : {result_6['handler']}")
+    print(f"  confidence : {result_6.get('confidence', 'N/A')}")
+
+    # 测试用例7：个人情感倾诉——应被识别为无效输入
+    test_case_7 = "我想聊聊我的感情问题"
+    print("=" * 50)
+    print("【测试用例7】输入：", test_case_7)
+    result_7 = graph.invoke({"description": test_case_7})
+    print("输出结果：")
+    print(f"  address    : {result_7['address']}")
+    print(f"  event_type : {result_7['event_type']}")
+    print(f"  urgency    : {result_7['urgency']}")
+    print(f"  scene_tag  : {result_7['scene_tag']}")
+    print(f"  handler    : {result_7['handler']}")
+    print(f"  confidence : {result_7.get('confidence', 'N/A')}")
+
+    # 测试用例8：安全隐患——应由安保部处理并触发紧急救援
+    test_case_8 = "楼道里有股煤气味"
+    print("=" * 50)
+    print("【测试用例8】输入：", test_case_8)
+    result_8 = graph.invoke({"description": test_case_8})
+    print("输出结果：")
+    print(f"  address    : {result_8['address']}")
+    print(f"  event_type : {result_8['event_type']}")
+    print(f"  urgency    : {result_8['urgency']}")
+    print(f"  scene_tag  : {result_8['scene_tag']}")
+    print(f"  handler    : {result_8['handler']}")
+    print(f"  confidence : {result_8.get('confidence', 'N/A')}")
 
     print("=" * 50)
     print("测试完成。")
