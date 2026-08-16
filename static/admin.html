@@ -708,6 +708,17 @@
                 }
             });
 
+            // 保存当前焦点位置和光标，避免重建DOM后光标消失
+            let focusId = null;
+            let selStart = 0;
+            let selEnd = 0;
+            const activeEl = document.activeElement;
+            if (activeEl && acceptedContainer.contains(activeEl) && activeEl.tagName === 'TEXTAREA') {
+                focusId = activeEl.id;
+                selStart = activeEl.selectionStart;
+                selEnd = activeEl.selectionEnd;
+            }
+
             const pendingContainer = document.getElementById('reviewPendingContainer');
             if (pendingEvents.length === 0) {
                 pendingContainer.innerHTML = '<div class="empty">暂无待审核事件</div>';
@@ -750,6 +761,15 @@
                         </div>
                     </div>
                 `).join('');
+            }
+
+            // 重新渲染后恢复焦点和光标位置
+            if (focusId) {
+                const newEl = document.getElementById(focusId);
+                if (newEl) {
+                    newEl.focus();
+                    newEl.setSelectionRange(selStart, selEnd);
+                }
             }
         }
 
