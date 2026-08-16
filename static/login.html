@@ -89,6 +89,7 @@
             display: block;
             width: 100%;
             padding: 11px;
+            min-height: 44px;
             background: #1a56db;
             color: #fff;
             border: none;
@@ -119,6 +120,22 @@
             color: #888;
         }
         .hidden { display: none; }
+
+        /* ===== 移动端适配 ===== */
+        @media (max-width: 768px) {
+            .form-group input,
+            .form-group select {
+                font-size: 16px; /* 防止 iOS 聚焦时自动放大 */
+            }
+        }
+        @media (max-width: 480px) {
+            body {
+                padding: 16px 12px;
+            }
+            .card {
+                padding: 20px 16px;
+            }
+        }
     </style>
 </head>
 <body>

@@ -326,6 +326,70 @@
             cursor: pointer;
             text-decoration: underline;
         }
+
+        /* ===== 移动端适配 ===== */
+        @media (max-width: 768px) {
+            .container {
+                padding: 16px 12px;
+            }
+            header h1 {
+                font-size: 22px;
+            }
+            textarea {
+                font-size: 16px; /* 防止 iOS 聚焦时自动放大 */
+            }
+            .btn {
+                min-height: 44px;
+            }
+            .card {
+                padding: 18px 16px;
+            }
+            /* 事件列表表格 → 卡片式布局 */
+            #listContainer table thead {
+                display: none;
+            }
+            #listContainer table,
+            #listContainer table tbody,
+            #listContainer table tr,
+            #listContainer table td {
+                display: block;
+                width: 100%;
+            }
+            #listContainer table tr {
+                background: #fff;
+                border: 1px solid #eee;
+                border-radius: 10px;
+                padding: 12px 14px;
+                margin-bottom: 12px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            }
+            #listContainer table tr:hover {
+                background: #fff;
+            }
+            #listContainer table td {
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: 2px 12px;
+                padding: 6px 0;
+                border-bottom: none;
+                font-size: 14px;
+                overflow-wrap: anywhere;
+            }
+            #listContainer table td::before {
+                content: attr(data-label);
+                color: #888;
+                flex-shrink: 0;
+                font-weight: 500;
+            }
+            #listContainer table td:first-child {
+                padding-top: 0;
+            }
+            #listContainer table td:last-child {
+                padding-bottom: 0;
+            }
+        }
     </style>
 </head>
 <body>
@@ -849,13 +913,13 @@
                 };
                 const rows = events.map(e => `
                     <tr>
-                        <td>${e.created_at || '-'}</td>
-                        <td>${e.description || '-'}</td>
-                        <td>${e.event_type || '-'}</td>
-                        <td><span class="tag ${urgencyClass(e.urgency)}">${e.urgency || '-'}</span></td>
-                        <td><span class="tag ${sceneClass(e.scene_tag)}">${e.scene_tag || '-'}</span></td>
-                        <td>${e.handler || '-'}</td>
-                        <td>${statusCell(e)}</td>
+                        <td data-label="创建时间">${e.created_at || '-'}</td>
+                        <td data-label="描述">${e.description || '-'}</td>
+                        <td data-label="类型">${e.event_type || '-'}</td>
+                        <td data-label="紧急程度"><span class="tag ${urgencyClass(e.urgency)}">${e.urgency || '-'}</span></td>
+                        <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${e.scene_tag || '-'}</span></td>
+                        <td data-label="处理部门">${e.handler || '-'}</td>
+                        <td data-label="状态">${statusCell(e)}</td>
                     </tr>
                 `).join('');
                 container.innerHTML = `
