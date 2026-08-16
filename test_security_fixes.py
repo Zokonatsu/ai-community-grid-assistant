@@ -11,19 +11,38 @@ import json
 import os
 import sys
 import io
+import shutil
 
 # 强制使用 UTF-8 输出，解决 Windows GBK 编码问题
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
-# 清理旧数据以确保测试默认管理员创建逻辑
+# 备份并清空 data/secure，确保测试默认管理员创建逻辑
 DATA_DIR = "./data"
-USERS_FILE = os.path.join(DATA_DIR, "users.json")
-SESSIONS_FILE = os.path.join(DATA_DIR, "sessions.json")
+SECURE_DIR = "./secure"
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+BAK_DATA_DIR = os.path.join(PROJECT_DIR, "data.bak.test_security")
+BAK_SECURE_DIR = os.path.join(PROJECT_DIR, "secure.bak.test_security")
 
-for f in [USERS_FILE, SESSIONS_FILE]:
-    if os.path.exists(f):
-        os.remove(f)
+def _backup(src, bak):
+    if os.path.exists(bak):
+        shutil.rmtree(bak, ignore_errors=True)
+    if os.path.exists(src):
+        os.rename(src, bak)
+
+def _restore(src, bak):
+    if os.path.exists(src):
+        shutil.rmtree(src, ignore_errors=True)
+    if os.path.exists(bak):
+        os.rename(bak, src)
+
+for src, bak in [(DATA_DIR, BAK_DATA_DIR), (SECURE_DIR, BAK_SECURE_DIR)]:
+    _backup(src, bak)
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(SECURE_DIR, exist_ok=True)
+
+# 设置账号数据加密密钥（64 位 hex，固定测试值）
+os.environ["DATA_ENCRYPTION_KEY"] = "1" * 64
 
 # 重新导入 auth 模块（会触发 _init_auth 创建默认管理员）
 import importlib
@@ -263,3 +282,7 @@ for name, status, detail in results:
 
 print(f"\n总计: {passed + failed} 项测试, {passed} 通过, {failed} 失败")
 print("=" * 60)
+
+# 恢复被备份的 data/secure 目录
+for src, bak in [(DATA_DIR, BAK_DATA_DIR), (SECURE_DIR, BAK_SECURE_DIR)]:
+    _restore(src, bak)

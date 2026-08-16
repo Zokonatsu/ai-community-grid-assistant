@@ -11,6 +11,8 @@ services:
       - LLM_API_KEY=${LLM_API_KEY}
       - LLM_BASE_URL=${LLM_BASE_URL}
       - LLM_MODEL=${LLM_MODEL}
+      - DATA_ENCRYPTION_KEY=${DATA_ENCRYPTION_KEY}
     volumes:
       - ./data:/app/data
+      - ./secure:/app/secure
     restart: unless-stopped

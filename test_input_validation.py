@@ -26,12 +26,22 @@ sys.path.insert(0, PROJECT_DIR)
 # 使用临时 data 目录
 TEST_DATA_DIR = tempfile.mkdtemp(prefix="test_validation_")
 ORIGINAL_DATA_DIR = os.path.join(PROJECT_DIR, "data")
-BAK_DATA_DIR = os.path.join(PROJECT_DIR, "data.bak")
+BAK_DATA_DIR = os.path.join(PROJECT_DIR, "data.bak.test_validation")
+ORIGINAL_SECURE_DIR = os.path.join(PROJECT_DIR, "secure")
+BAK_SECURE_DIR = os.path.join(PROJECT_DIR, "secure.bak.test_validation")
 
 def setup_test_env():
+    # 清理上次异常退出残留的备份目录
+    for bak in (BAK_DATA_DIR, BAK_SECURE_DIR):
+        if os.path.exists(bak):
+            shutil.rmtree(bak, ignore_errors=True)
     if os.path.exists(ORIGINAL_DATA_DIR):
         os.rename(ORIGINAL_DATA_DIR, BAK_DATA_DIR)
     os.makedirs(TEST_DATA_DIR, exist_ok=True)
+    # secure/ 一并备份并清空（账号/会话加密文件在此生成）
+    if os.path.exists(ORIGINAL_SECURE_DIR):
+        os.rename(ORIGINAL_SECURE_DIR, BAK_SECURE_DIR)
+    os.makedirs(ORIGINAL_SECURE_DIR, exist_ok=True)
 
 def teardown_test_env():
     if os.path.exists(TEST_DATA_DIR):
@@ -40,12 +50,18 @@ def teardown_test_env():
         if os.path.exists(ORIGINAL_DATA_DIR):
             shutil.rmtree(ORIGINAL_DATA_DIR, ignore_errors=True)
         os.rename(BAK_DATA_DIR, ORIGINAL_DATA_DIR)
+    if os.path.exists(ORIGINAL_SECURE_DIR):
+        shutil.rmtree(ORIGINAL_SECURE_DIR, ignore_errors=True)
+    if os.path.exists(BAK_SECURE_DIR):
+        os.rename(BAK_SECURE_DIR, ORIGINAL_SECURE_DIR)
 
 setup_test_env()
 
 # 预置测试环境变量，避免导入 config 时因缺失必填项报错
 os.environ["LLM_API_KEY"] = "test-key"
 os.environ["LLM_BASE_URL"] = "http://test"
+# 账号数据加密密钥（64 位 hex，仅测试用固定值，确保与本测试生成的 secure/ 数据一致）
+os.environ["DATA_ENCRYPTION_KEY"] = "1" * 64
 
 # ------------------------------------------------------------------
 # 测试结果收集

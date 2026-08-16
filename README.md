@@ -33,14 +33,20 @@ pip install -r requirements.txt
 
 ### 3. 配置环境变量
 
-在项目根目录创建 `.env` 文件：
+在项目根目录创建 `.env` 文件（模板见 `.env.example`）：
 
 ```env
 LLM_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_MODEL=deepseek-chat
+
+# 账号数据加密密钥（必填，缺失则服务拒绝启动）
+DATA_ENCRYPTION_KEY=<64 位十六进制>
 ```
 
 > **注意**：`LLM_API_KEY` 请替换为你的真实密钥。
+> `DATA_ENCRYPTION_KEY` 用于加密账号/会话数据，生成方式：
+> `python -c "import secrets; print(secrets.token_hex(32))"`。密钥需单独备份，丢失即账号数据永久无法解密。
 
 ### 4. 启动服务
 
@@ -152,12 +158,20 @@ ai-community-grid-assistant/
 ├── receive_agent.py     # 接收Agent：调用 DeepSeek API 提取 address / event_type / urgency
 ├── dispatch_agent.py    # 派发Agent：根据 event_type 和 urgency 分配 handler
 ├── record_agent.py      # 记录Agent：将结果持久化到 ./data/events.jsonl
+├── auth.py              # 用户注册/登录/Token 校验（账号数据加密存取）
+├── secure_store.py      # AES-256-GCM 加密存储封装（含密钥生成/轮换 CLI）
+├── config.py            # 集中配置：校验 LLM_API_KEY、DATA_ENCRYPTION_KEY
 ├── requirements.txt     # 项目依赖及版本号
-├── .env                 # 环境变量（API Key、Base URL）
+├── .env                 # 环境变量（API Key、加密密钥）
 ├── static/
-│   └── index.html       # 前端管理页面：事件提交表单与事件列表展示
+│   ├── index.html       # 前端页面：事件提交与列表展示
+│   ├── login.html       # 登录/注册页
+│   └── admin.html       # 管理后台（审核、派单查看）
 ├── data/
-│   └── events.jsonl     # 持久化数据文件（JSON Lines 格式）
+│   └── events.jsonl     # 事件记录（JSON Lines 格式，明文）
+├── secure/
+│   ├── users.json.enc      # 账号数据（AES-256-GCM 加密）
+│   └── sessions.json.enc   # 会话 Token（AES-256-GCM 加密）
 └── README.md            # 项目说明文档
 ```
 
@@ -241,6 +255,20 @@ curl -X POST http://127.0.0.1:8000/api/events \
 ```json
 {"description":"我家楼下下水道堵了","address":"","event_type":"物业维修","urgency":"中","handler":"物业部","status":"已派单","created_at":"2026-07-29 14:30:00"}
 ```
+
+## 账号数据加密存储
+
+用户账号与会话数据（用户名、手机号、身份证号、会话 Token 等）使用 **AES-256-GCM** 加密后存入 `secure/` 目录（`users.json.enc`、`sessions.json.enc`），密钥来自环境变量 `DATA_ENCRYPTION_KEY`。
+
+- 密码仍以 PBKDF2+HMAC-SHA256 哈希存储，不存明文。
+- 加密文件二进制自包含（魔数 + nonce + 密文），目录或文件被泄露时无法直接读取内容。
+- 解密失败或密钥不匹配时服务**拒绝启动**（fail-fast），绝不静默重建数据造成覆盖。
+- 密钥工具：
+  ```bash
+  python secure_store.py genkey                    # 生成新密钥
+  DATA_ENCRYPTION_KEY=<旧密钥> python secure_store.py rekey --new <新密钥>   # 轮换密钥（重加密）
+  ```
+- 首次从旧版本升级时，`data/users.json` 等明文数据会自动加密迁移到 `secure/`，原文件改名为 `*.migrated.bak`。
 
 ---
 

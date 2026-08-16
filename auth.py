@@ -17,14 +17,23 @@ import threading
 from datetime import datetime, timedelta
 from typing import Any
 
+from secure_store import load_encrypted, save_encrypted
+
 logger = logging.getLogger("auth")
 
 # ------------------------------------------------------------------
 # 数据文件路径
+# 账号/会话数据使用 AES-256-GCM 加密存于 secure/（密钥见环境变量
+# DATA_ENCRYPTION_KEY）；明文 events/tasks 等仍存于 data/。
 # ------------------------------------------------------------------
 DATA_DIR = "./data"
-USERS_FILE = os.path.join(DATA_DIR, "users.json")
-SESSIONS_FILE = os.path.join(DATA_DIR, "sessions.json")
+SECURE_DIR = "./secure"
+USERS_FILE = os.path.join(SECURE_DIR, "users.json.enc")
+SESSIONS_FILE = os.path.join(SECURE_DIR, "sessions.json.enc")
+
+# 旧版明文文件（首次升级时用于迁移到加密存储）
+LEGACY_USERS_FILE = os.path.join(DATA_DIR, "users.json")
+LEGACY_SESSIONS_FILE = os.path.join(DATA_DIR, "sessions.json")
 
 # ------------------------------------------------------------------
 # 内存缓存与并发锁
@@ -35,33 +44,85 @@ _auth_lock = threading.Lock()
 
 
 # ------------------------------------------------------------------
-# 工具函数：文件读写
+# 工具函数：文件读写（账号/会话走加密存储）
 # ------------------------------------------------------------------
 def _ensure_data_dir() -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
 
 
-def _load_json(path: str) -> dict[str, Any]:
+def _load_json(kind: str, path: str) -> dict[str, Any]:
+    """读取加密存储文件。
+
+    文件不存在 -> 返回 {}（安全默认）；
+    文件存在但解密/解析失败 -> 抛错 fail-fast，绝不静默返回 {}，
+    否则上层会误判"无用户"并重建 admin 覆盖真实数据。
+    """
+    return load_encrypted(kind, path)
+
+
+def _save_json(kind: str, path: str, data: dict[str, Any]) -> None:
+    """加密并原子写入存储文件。写失败抛错，让注册/登录返回失败，
+    而不是"表面成功、重启丢数据"。
+    """
+    _ensure_data_dir()
+    save_encrypted(kind, path, data)
+
+
+# ------------------------------------------------------------------
+# 旧版明文数据迁移
+# ------------------------------------------------------------------
+def _read_plaintext_json(path: str) -> dict[str, Any] | None:
+    """读取旧版明文 JSON；文件不存在或解析失败返回 None。"""
     if not os.path.exists(path):
-        return {}
+        return None
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-            if isinstance(data, dict):
-                return data
-            return {}
+            return data if isinstance(data, dict) else None
     except (json.JSONDecodeError, OSError, TypeError) as exc:
-        logger.error("加载文件失败，path=%s，异常=%s", path, exc)
-        return {}
+        logger.error("读取旧版明文文件失败，path=%s，异常=%s", path, exc)
+        return None
 
 
-def _save_json(path: str, data: dict[str, Any]) -> None:
-    _ensure_data_dir()
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except (OSError, TypeError, ValueError) as exc:
-        logger.error("保存文件失败，path=%s，异常=%s", path, exc)
+def _rename_to_bak(path: str) -> None:
+    """旧文件改名 .migrated.bak，保留现场以便回退。"""
+    if not os.path.exists(path):
+        return
+    bak = path + ".migrated.bak"
+    if os.path.exists(bak):
+        os.remove(bak)
+    os.replace(path, bak)
+
+
+def _migrate_legacy_to_secure() -> None:
+    """把旧版明文 data/users.json、sessions.json 迁移为 secure/ 加密文件。
+
+    优先级：secure 加密文件为权威。仅当 secure 文件不存在、旧明文存在时才迁移；
+    已迁移后（secure 已存在）直接忽略明文，绝不回退。
+    """
+    if os.path.exists(USERS_FILE) or os.path.exists(SESSIONS_FILE):
+        return  # 已有加密数据，以 secure 为权威，不做迁移
+
+    users_legacy_exists = os.path.exists(LEGACY_USERS_FILE)
+    sessions_legacy_exists = os.path.exists(LEGACY_SESSIONS_FILE)
+    if not users_legacy_exists and not sessions_legacy_exists:
+        return
+
+    if users_legacy_exists:
+        data = _read_plaintext_json(LEGACY_USERS_FILE) or {}
+        if data:
+            _save_json("users", USERS_FILE, data)
+            logger.info("已迁移 %d 个用户账号到加密存储", len(data))
+        _rename_to_bak(LEGACY_USERS_FILE)
+
+    if sessions_legacy_exists:
+        data = _read_plaintext_json(LEGACY_SESSIONS_FILE) or {}
+        if data:
+            _save_json("sessions", SESSIONS_FILE, data)
+            logger.info("已迁移 %d 条会话到加密存储", len(data))
+        _rename_to_bak(LEGACY_SESSIONS_FILE)
+
+    logger.info("明文账号数据已迁移，原文件已改名 *.migrated.bak")
 
 
 # ------------------------------------------------------------------
@@ -69,8 +130,11 @@ def _save_json(path: str, data: dict[str, Any]) -> None:
 # ------------------------------------------------------------------
 def _init_auth() -> None:
     global _users, _sessions
-    _users = _load_json(USERS_FILE)
-    _sessions = _load_json(SESSIONS_FILE)
+    # 首次升级：把旧版明文账号数据迁移到加密存储（幂等，secure 为权威）
+    _migrate_legacy_to_secure()
+
+    _users = _load_json("users", USERS_FILE)
+    _sessions = _load_json("sessions", SESSIONS_FILE)
     _cleanup_expired_sessions()
 
     # 若系统中没有任何用户，自动创建默认管理员账号
@@ -86,7 +150,7 @@ def _init_auth() -> None:
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         _users[admin_id] = admin_user
-        _save_json(USERS_FILE, _users)
+        _save_json("users", USERS_FILE, _users)
         logger.info("系统初始化：已创建默认管理员账号 admin / admin123456，请及时修改密码")
 
 
@@ -140,7 +204,7 @@ def _cleanup_expired_sessions() -> None:
     for t in expired:
         _sessions.pop(t, None)
     if expired:
-        _save_json(SESSIONS_FILE, _sessions)
+        _save_json("sessions", SESSIONS_FILE, _sessions)
         logger.info("清理 %d 条过期会话", len(expired))
 
 
@@ -197,7 +261,7 @@ def register_user(
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         _users[user_id] = user
-        _save_json(USERS_FILE, _users)
+        _save_json("users", USERS_FILE, _users)
 
     # 返回脱敏后的用户信息
     public_user = {
@@ -241,7 +305,7 @@ def login_user(username: str, password: str) -> tuple[bool, str, dict[str, Any] 
             "user_id": user["id"],
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
-        _save_json(SESSIONS_FILE, _sessions)
+        _save_json("sessions", SESSIONS_FILE, _sessions)
 
     public_user = {
         "id": user["id"],
@@ -268,7 +332,7 @@ def logout_user(token: str | None) -> bool:
     with _auth_lock:
         if token in _sessions:
             del _sessions[token]
-            _save_json(SESSIONS_FILE, _sessions)
+            _save_json("sessions", SESSIONS_FILE, _sessions)
             return True
     return False
 
@@ -294,7 +358,7 @@ def get_current_user(token: str | None) -> dict[str, Any] | None:
         cutoff = (datetime.now() - timedelta(days=_SESSION_TTL_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
         if created < cutoff:
             _sessions.pop(token, None)
-            _save_json(SESSIONS_FILE, _sessions)
+            _save_json("sessions", SESSIONS_FILE, _sessions)
             return None
 
         user = _users.get(session.get("user_id"))

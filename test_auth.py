@@ -26,15 +26,18 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(PROJECT_DIR)
 sys.path.insert(0, PROJECT_DIR)
 
-# 备份真实 data 目录，使用临时空目录
+# 备份真实 data / secure 目录，使用临时空目录
 ORIGINAL_DATA_DIR = os.path.join(PROJECT_DIR, "data")
 BAK_DATA_DIR = os.path.join(PROJECT_DIR, "data.bak.test_auth")
+ORIGINAL_SECURE_DIR = os.path.join(PROJECT_DIR, "secure")
+BAK_SECURE_DIR = os.path.join(PROJECT_DIR, "secure.bak.test_auth")
 
 def setup_test_env():
-    """备份 data 目录，确保干净状态"""
+    """备份 data/secure 目录，确保干净状态"""
     # 如果上次测试异常退出，清理残留的备份目录
-    if os.path.exists(BAK_DATA_DIR):
-        shutil.rmtree(BAK_DATA_DIR, ignore_errors=True)
+    for bak in (BAK_DATA_DIR, BAK_SECURE_DIR):
+        if os.path.exists(bak):
+            shutil.rmtree(bak, ignore_errors=True)
     if os.path.exists(ORIGINAL_DATA_DIR):
         os.rename(ORIGINAL_DATA_DIR, BAK_DATA_DIR)
     os.makedirs(ORIGINAL_DATA_DIR, exist_ok=True)
@@ -42,19 +45,29 @@ def setup_test_env():
     for f in ["users.json", "sessions.json", "tasks.json"]:
         with open(os.path.join(ORIGINAL_DATA_DIR, f), "w", encoding="utf-8") as fh:
             json.dump({}, fh)
+    # secure/ 同样备份并用空目录（账号/会话加密文件在此生成）
+    if os.path.exists(ORIGINAL_SECURE_DIR):
+        os.rename(ORIGINAL_SECURE_DIR, BAK_SECURE_DIR)
+    os.makedirs(ORIGINAL_SECURE_DIR, exist_ok=True)
 
 def teardown_test_env():
-    """恢复原始 data 目录"""
+    """恢复原始 data/secure 目录"""
     if os.path.exists(ORIGINAL_DATA_DIR):
         shutil.rmtree(ORIGINAL_DATA_DIR, ignore_errors=True)
     if os.path.exists(BAK_DATA_DIR):
         os.rename(BAK_DATA_DIR, ORIGINAL_DATA_DIR)
+    if os.path.exists(ORIGINAL_SECURE_DIR):
+        shutil.rmtree(ORIGINAL_SECURE_DIR, ignore_errors=True)
+    if os.path.exists(BAK_SECURE_DIR):
+        os.rename(BAK_SECURE_DIR, ORIGINAL_SECURE_DIR)
 
 setup_test_env()
 
 # 预置测试环境变量，避免导入 config 时因缺失必填项报错
 os.environ["LLM_API_KEY"] = "test-key"
 os.environ["LLM_BASE_URL"] = "http://test"
+# 账号数据加密密钥（64 位 hex，仅测试用固定值，确保与本测试生成的 secure/ 数据一致）
+os.environ["DATA_ENCRYPTION_KEY"] = "1" * 64
 
 # 重新加载 auth 模块以使用空数据
 import auth
@@ -70,8 +83,23 @@ mock_receive_result = {
     "handler": "",
 }
 
+
+def _mock_receive_node(state):
+    """按输入区分返回：过短/问候等无效输入返回"无效输入"，其余返回固定正常语义结果。
+
+    保持 main.py 的无效输入拦截路径真实可测（main.py 对 event_type="无效输入" 返回
+    success=False），否则固定有效 mock 会让任何输入都建任务。
+    """
+    import receive_agent as _ra
+
+    desc = (state.get("description") or "").strip()
+    if not _ra._is_valid_input(desc):
+        return {"description": desc, "address": "", "event_type": "无效输入", "urgency": "", "handler": ""}
+    return dict(mock_receive_result, description=desc)
+
+
 with patch("receive_agent.OpenAI"), \
-     patch("receive_agent.receive_node", return_value=mock_receive_result), \
+     patch("receive_agent.receive_node", side_effect=_mock_receive_node), \
      patch("workflow.workflow") as mock_workflow, \
      patch("dispatch_agent.logger"), \
      patch("record_agent.logger"):
@@ -355,44 +383,38 @@ print("\n" + "=" * 70)
 print("  Test 4: 管理员注册 -> 登录 -> 首页显示管理后台入口")
 print("=" * 70)
 
-ADMIN_USER = "test_admin_李四"
+# 管理员使用系统内置默认账号（首次启动 auth._init_auth 自动创建）。
+# 公开注册入口已按安全策略禁止创建管理员角色（见 test_security_fixes 测试2），
+# 因此不再尝试注册管理员，改为直接登录内置 admin。
+ADMIN_USER = "admin"
 ADMIN_PASS = "admin123456"
-ADMIN_PHONE = "13800138002"
-ADMIN_NAME = "李四"
 
-# 4.1 注册管理员账号
-reg_result = register(ADMIN_USER, ADMIN_PASS, ADMIN_NAME, ADMIN_PHONE, "admin")
-if reg_result.get("success"):
-    results.add_pass("4.1 注册管理员账号", f"用户名={ADMIN_USER}, 角色=admin")
-else:
-    results.add_fail("4.1 注册管理员账号", "success=True", f"error={reg_result.get('error')}")
-
-# 4.2 管理员登录
+# 4.1 管理员登录（内置默认管理员）
 login_result = login(ADMIN_USER, ADMIN_PASS)
 admin_token = None
 if login_result.get("success") and login_result.get("data", {}).get("token"):
     admin_token = login_result["data"]["token"]
     user = login_result["data"]["user"]
     if user.get("role") == "admin":
-        results.add_pass("4.2 管理员登录", f"获得token, role=admin, username={user.get('username')}")
+        results.add_pass("4.1 管理员登录", f"获得token, role=admin, username={user.get('username')}")
     else:
-        results.add_fail("4.2 管理员登录", "role=admin", f"role={user.get('role')}")
+        results.add_fail("4.1 管理员登录", "role=admin", f"role={user.get('role')}")
 else:
-    results.add_fail("4.2 管理员登录", "success=True", f"error={login_result.get('error')}")
+    results.add_fail("4.1 管理员登录", "success=True", f"error={login_result.get('error')}")
 
-# 4.3 管理员获取自身信息 -> role=admin
+# 4.2 管理员获取自身信息 -> role=admin
 if admin_token:
     res = get_me(admin_token)
     if res.status_code == 200:
         me = res.json()
         if me.get("role") == "admin":
-            results.add_pass("4.3 GET /api/auth/me 验证管理员身份", f"role={me.get('role')}, username={me.get('username')}")
+            results.add_pass("4.2 GET /api/auth/me 验证管理员身份", f"role={me.get('role')}, username={me.get('username')}")
         else:
-            results.add_fail("4.3 GET /api/auth/me", "role=admin", f"role={me.get('role')}")
+            results.add_fail("4.2 GET /api/auth/me", "role=admin", f"role={me.get('role')}")
     else:
-        results.add_fail("4.3 GET /api/auth/me", "200 OK", f"{res.status_code}")
+        results.add_fail("4.2 GET /api/auth/me", "200 OK", f"{res.status_code}")
 else:
-    results.add_error("4.3 GET /api/auth/me", "无可用 token")
+    results.add_error("4.2 GET /api/auth/me", "无可用 token")
 
 # 4.4 前端：index.html 根据 role 显示管理后台入口
 # index.html:315-318 当 role==='admin' 时显示 admin-link

@@ -78,9 +78,25 @@ vim .env
 ```env
 LLM_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_MODEL=deepseek-chat
+
+# 账号数据加密密钥（必填，缺失则服务拒绝启动）
+DATA_ENCRYPTION_KEY=<64 位十六进制>
 ```
 
 > **注意**：`LLM_API_KEY` 必须替换为真实密钥。`.env` 文件已加入 `.gitignore`，不会上传至代码仓库。
+
+### 3.2.1 生成账号加密密钥
+
+`DATA_ENCRYPTION_KEY` 用于加密 `secure/` 目录下的账号/会话数据（AES-256-GCM）。生成方式：
+
+```bash
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+将输出复制到 `.env` 的 `DATA_ENCRYPTION_KEY`。
+
+> **⚠️ 密钥必须单独备份**（与服务器上的加密数据分开存放）。密钥 + 加密文件两者缺一不可：密钥丢失 = 全部账号数据永久无法解密，无法找回。
 
 ### 3.3 启动服务
 
@@ -179,9 +195,14 @@ docker compose down
 ### 5.5 备份数据
 
 ```bash
-# 数据文件路径
+# 事件/任务等明文数据
 cp ./data/events.jsonl ./data/events.jsonl.bak.$(date +%Y%m%d)
+
+# 加密后的账号/会话数据（连同密钥一起备份）
+cp -r ./secure ./secure.bak.$(date +%Y%m%d)
 ```
+
+> **注意**：`secure/` 下的文件已加密，需与 `.env` 中的 `DATA_ENCRYPTION_KEY` 一起备份才可用。
 
 ---
 
@@ -213,8 +234,27 @@ cp ./data/events.jsonl ./data/events.jsonl.bak.$(date +%Y%m%d)
   ```
 - 定期轮换 `LLM_API_KEY`。
 - 禁止将密钥硬编码在代码中或提交至 Git 仓库。
+- `DATA_ENCRYPTION_KEY` 需单独备份（与加密数据分开存放），并限制读取权限：
+  ```bash
+  chmod 700 secure          # 目录仅所有者可进入
+  chmod 600 secure/*.enc    # 加密文件仅所有者可读写
+  ```
+- 如需轮换 `DATA_ENCRYPTION_KEY`（重加密现有数据），在服务器上执行：
+  ```bash
+  python3 secure_store.py genkey        # 生成新密钥
+  DATA_ENCRYPTION_KEY=<旧密钥> python3 secure_store.py rekey --new <新密钥>
+  # 然后把 .env 中 DATA_ENCRYPTION_KEY 更新为新密钥并重启服务
+  ```
 
-### 6.3 容器安全
+### 6.3 首次升级迁移说明
+
+旧版本账号数据以明文存放在 `data/users.json`、`data/sessions.json`。升级到本版本后，首次启动会自动将其加密迁移到 `secure/`，原文件改名为 `*.migrated.bak` 保留现场。
+
+- **迁移是幂等的**：`secure/` 一旦存在加密文件即为权威，明文数据不再被读取。
+- 迁移后请确认原账号仍可登录，再手动清理 `data/users.json.migrated.bak`。
+- **切勿**删除 `secure/` 下的加密文件或丢失密钥，否则账号数据无法恢复。
+
+### 6.4 容器安全
 
 - 容器以非 root 用户运行（已在 Dockerfile 中配置）。
 - 定期更新基础镜像：
