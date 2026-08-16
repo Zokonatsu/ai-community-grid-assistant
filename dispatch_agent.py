@@ -155,13 +155,14 @@ def dispatch_node(state: DispatchState) -> DispatchState:
     elif scene_tag == "紧急救援":
         inferred = _infer_emergency_type(state.get("description", ""))
         if not inferred:
-            # 无法通过关键词直接推断时，根据描述进一步区分，不默认fire
+            # 无法通过关键词直接推断时，根据描述进一步区分
             desc = state.get("description", "")
             if re.search(r"火灾|起火|着火|燃气泄漏|煤气泄漏|煤气味|燃气味|煤气|燃气|爆炸|坍塌|电梯困人|高空坠物", desc):
                 inferred = "fire"
             else:
-                # 无法明确推断的紧急救援，优先公安（110），因为治安类事件在社会场景中更常见
-                inferred = "police"
+                # 无法明确推断的紧急救援，默认消防（119）：紧急救援即救援类场景，
+                # 与生命急救默认医疗（120）对称；治安类（110）由明确的police关键词触发。
+                inferred = "fire"
         handler = (
             "119消防急救中心（外部资源）" if inferred == "fire"
             else "110公安急救中心（外部资源）" if inferred == "police"

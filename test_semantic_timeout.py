@@ -5,10 +5,10 @@ test_semantic_timeout.py
 测试范围：main.py 中 create_event 端点的语义校验阶段异常处理逻辑
 
 测试用例：
-  1. 语义校验超时 → 10秒内返回明确错误，不创建后台任务
-  2. 语义校验 API异常 → 快速失败，返回明确错误，不创建后台任务
-  3. 语义校验 无效输入 → 返回无效输入错误，不创建后台任务
-  4. 语义校验 其他Exception → 快速失败，不创建后台任务
+  1. 语义校验超时 → 转待审核事件，消息不丢失（success=true）
+  2. 语义校验 API异常 → 转待审核事件，消息不丢失（success=true）
+  3. 语义校验 无效输入 → 返回无效输入错误，不创建任务
+  4. 语义校验 其他Exception → 转待审核事件，消息不丢失（success=true）
   5. 正常输入语义校验通过 → 流程不受影响
 """
 
@@ -18,6 +18,7 @@ import os
 import sys
 import time
 import io
+import shutil
 from unittest.mock import patch, MagicMock
 
 # 强制使用 UTF-8 输出，解决 Windows GBK 编码问题
@@ -30,6 +31,32 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(PROJECT_DIR)
 sys.path.insert(0, PROJECT_DIR)
+
+# 备份并清空 data/secure，避免触碰真实数据或触发明文迁移
+ORIGINAL_DATA_DIR = os.path.join(PROJECT_DIR, "data")
+BAK_DATA_DIR = os.path.join(PROJECT_DIR, "data.bak.test_semantic")
+ORIGINAL_SECURE_DIR = os.path.join(PROJECT_DIR, "secure")
+BAK_SECURE_DIR = os.path.join(PROJECT_DIR, "secure.bak.test_semantic")
+
+def _backup(src, bak):
+    if os.path.exists(bak):
+        shutil.rmtree(bak, ignore_errors=True)
+    if os.path.exists(src):
+        os.rename(src, bak)
+
+def _restore(src, bak):
+    if os.path.exists(src):
+        shutil.rmtree(src, ignore_errors=True)
+    if os.path.exists(bak):
+        os.rename(bak, src)
+
+for src, bak in [(ORIGINAL_DATA_DIR, BAK_DATA_DIR), (ORIGINAL_SECURE_DIR, BAK_SECURE_DIR)]:
+    _backup(src, bak)
+os.makedirs(ORIGINAL_DATA_DIR, exist_ok=True)
+os.makedirs(ORIGINAL_SECURE_DIR, exist_ok=True)
+
+# 账号数据加密密钥（64 位 hex，固定测试值），须在 import main（触发 import auth）前设置
+os.environ["DATA_ENCRYPTION_KEY"] = "1" * 64
 
 # ------------------------------------------------------------------
 # 测试结果收集
@@ -75,16 +102,17 @@ results = TestResults()
 # 测试组 1: 语义校验API调用超时
 # ==================================================================
 print("=" * 70)
-print("  测试组 1: 语义校验API调用超时 → 10秒内返回错误，不创建任务")
+print("  测试组 1: 语义校验API调用超时 → 转待审核，消息不丢失")
 print("=" * 70)
 
 async def test_timeout():
     """
-    模拟 receive_node 耗时超过10秒，验证超时处理。
+    模拟语义校验超时，验证消息不丢失（转待审核事件）。
 
-    注意：由于 asyncio.to_thread 使用线程池，wait_for 超时后线程可能继续运行，
-    但异常会被立即抛出，响应会在超时后尽快返回。
-    核心验证点是：超时后返回正确错误、不创建任务、不创建后台任务。
+    让 mock 的 receive_node 直接抛出 asyncio.TimeoutError，触发 main.py 中
+    asyncio.wait_for 的 `except asyncio.TimeoutError` 分支（Python 3.11+ 下
+    wait_for 会透传内层抛出的 TimeoutError）。该分支创建 status='待审核'
+    的事件并返回 success=true，保证超时消息不丢失、转人工审核。
     """
     import main as main_module
 
@@ -104,13 +132,11 @@ async def test_timeout():
         mock_user = {"id": "test-user-1", "username": "testuser", "role": "resident",
                      "real_name": "测试用户", "phone": "13800000001", "created_at": "2025-01-01"}
 
-        # Mock receive_node: 用 time.sleep(12) 超过 10s 超时阈值
-        # 由于线程池的调度特性，wait_for 会在 ~10s 超时但 response 返回时间
-        # 取决于线程池释放时机。核心验证的是超时后的行为逻辑。
+        # Mock receive_node: 直接抛出 asyncio.TimeoutError，模拟语义校验超时。
+        # main.py 的 `asyncio.wait_for(..., timeout=50.0)` 透传该异常，
+        # 进入 `except asyncio.TimeoutError` 分支 → 创建待审核事件（消息不丢失）。
         def slow_receive_node(state):
-            time.sleep(12)
-            return {"description": state.get("description", ""), "address": "某小区",
-                    "event_type": "物业维修", "urgency": "中", "handler": ""}
+            raise asyncio.TimeoutError("模拟语义校验超时")
 
         with patch.object(main_module, "receive_node", side_effect=slow_receive_node), \
              patch.object(main_module.auth, "get_current_user", return_value=mock_user):
@@ -127,45 +153,51 @@ async def test_timeout():
             elapsed = time.time() - start_time
             data = response.json()
 
-            # wait_for timeout=10s + 线程池开销，允许在 14 秒内返回
-            print(f"\n  [测试1.1] 响应应在超时后返回 (实际: {elapsed:.2f}秒, 预期≤14秒)")
-            if elapsed <= 14.0:
+            # TimeoutError 立即抛出，响应应快速返回
+            print(f"\n  [测试1.1] 响应应快速返回 (实际: {elapsed:.2f}秒, 预期≤5秒)")
+            if elapsed <= 5.0:
                 results.add_pass("1.1 响应在合理时间内返回", f"实际 {elapsed:.2f}秒")
             else:
-                results.add_fail("1.1 响应在合理时间内返回", "≤ 14秒",
+                results.add_fail("1.1 响应在合理时间内返回", "≤ 5秒",
                                  f"{elapsed:.2f}秒", "响应时间过长")
 
-            print(f"  [测试1.2] 响应 success 应为 false")
+            print(f"  [测试1.2] 响应 success 应为 true（消息不丢失）")
             print(f"    响应内容: {json.dumps(data, ensure_ascii=False)}")
-            if data.get("success") == False:
-                results.add_pass("1.2 success=false", f"error='{data.get('error')}'")
+            if data.get("success") == True:
+                results.add_pass("1.2 success=true（消息不丢失）",
+                                 f"event_id='{data.get('data', {}).get('event_id')}'")
             else:
-                results.add_fail("1.2 success=false", "false",
+                results.add_fail("1.2 success=true（消息不丢失）", "true",
                                  f"{data.get('success')}", f"data={data}")
 
-            print(f"  [测试1.3] 错误消息应包含'超时'")
-            error = data.get("error", "")
-            if "超时" in error:
-                results.add_pass("1.3 error包含'超时'", f"error='{error}'")
+            # 超时分支返回 event_type=待审核, status=待审核
+            print(f"  [测试1.3] 应返回待审核事件")
+            rdata = data.get("data", {})
+            if rdata.get("event_type") == "待审核" and rdata.get("status") == "待审核":
+                results.add_pass("1.3 返回待审核事件",
+                                 f"event_type='{rdata.get('event_type')}', status='{rdata.get('status')}'")
             else:
-                results.add_fail("1.3 error包含'超时'", "包含'超时'",
-                                 f"'{error}'")
+                results.add_fail("1.3 返回待审核事件", "event_type='待审核', status='待审核'",
+                                 f"event_type='{rdata.get('event_type')}', status='{rdata.get('status')}'")
 
-            print(f"  [测试1.4] 不应创建任何任务 (tasks 为空)")
+            # 已创建待审核任务（消息不丢失的核心：不丢弃、转人工审核）
+            print(f"  [测试1.4] 应创建待审核任务")
             task_count = len(main_module._tasks)
-            if task_count == 0:
-                results.add_pass("1.4 未创建任务", f"当前任务数: {task_count}")
+            if task_count >= 1:
+                results.add_pass("1.4 已创建任务", f"当前任务数: {task_count}")
             else:
-                results.add_fail("1.4 未创建任务", "0个任务",
+                results.add_fail("1.4 已创建任务", "≥1个任务",
                                  f"{task_count}个任务", f"tasks={main_module._tasks}")
 
-            print(f"  [测试1.5] 不应创建后台任务")
-            bg_count = len(main_module._background_tasks)
-            if bg_count == 0:
-                results.add_pass("1.5 未创建后台任务", f"后台任务数: {bg_count}")
+            print(f"  [测试1.5] 待审核任务应标注超时原因")
+            event_id = rdata.get("event_id", "")
+            task = main_module._tasks.get(event_id, {})
+            if task.get("status") == "待审核" and "超时" in task.get("error", ""):
+                results.add_pass("1.5 任务标注超时原因",
+                                 f"status='{task.get('status')}', error='{task.get('error')}'")
             else:
-                results.add_fail("1.5 未创建后台任务", "0个",
-                                 f"{bg_count}个")
+                results.add_fail("1.5 任务标注超时原因", "status='待审核' 且 error包含'超时'",
+                                 f"status='{task.get('status')}', error='{task.get('error')}'")
 
     finally:
         # 恢复原始状态
@@ -177,7 +209,7 @@ async def test_timeout():
 # 测试组 2: 语义校验API返回"API异常"
 # ==================================================================
 print("\n" + "=" * 70)
-print("  测试组 2: 语义校验返回 API异常 → 快速失败，不创建任务")
+print("  测试组 2: 语义校验返回 API异常 → 转待审核，消息不丢失")
 print("=" * 70)
 
 async def test_api_error():
@@ -221,30 +253,33 @@ async def test_api_error():
                 results.add_fail("2.1 快速返回", "≤ 2秒",
                                  f"{elapsed:.2f}秒")
 
-            print(f"  [测试2.2] success=false, error包含'暂不可用'")
+            print(f"  [测试2.2] success=true（消息不丢失），返回待审核事件")
             print(f"    响应内容: {json.dumps(data, ensure_ascii=False)}")
-            if data.get("success") == False and "暂不可用" in data.get("error", ""):
-                results.add_pass("2.2 返回API不可用错误", f"error='{data.get('error')}'")
+            rdata = data.get("data", {})
+            if data.get("success") == True and rdata.get("event_type") == "待审核" \
+                    and rdata.get("status") == "待审核":
+                results.add_pass("2.2 转待审核", f"event_type='{rdata.get('event_type')}'")
             else:
-                results.add_fail("2.2 返回API不可用错误",
-                                 "success=false, error包含'暂不可用'",
-                                 f"success={data.get('success')}, error='{data.get('error')}'")
+                results.add_fail("2.2 转待审核",
+                                 "success=true, event_type='待审核', status='待审核'",
+                                 f"success={data.get('success')}, data={rdata}")
 
-            print(f"  [测试2.3] 不应创建任何任务")
+            print(f"  [测试2.3] 应创建待审核任务")
             task_count = len(main_module._tasks)
-            if task_count == 0:
-                results.add_pass("2.3 未创建任务", f"当前任务数: {task_count}")
+            if task_count >= 1:
+                results.add_pass("2.3 已创建任务", f"当前任务数: {task_count}")
             else:
-                results.add_fail("2.3 未创建任务", "0个任务",
+                results.add_fail("2.3 已创建任务", "≥1个任务",
                                  f"{task_count}个任务")
 
-            print(f"  [测试2.4] 不应创建后台任务")
-            bg_count = len(main_module._background_tasks)
-            if bg_count == 0:
-                results.add_pass("2.4 未创建后台任务", f"后台任务数: {bg_count}")
+            print(f"  [测试2.4] 待审核任务应标注异常原因")
+            event_id = rdata.get("event_id", "")
+            task = main_module._tasks.get(event_id, {})
+            if task.get("status") == "待审核" and "异常" in task.get("error", ""):
+                results.add_pass("2.4 任务标注异常原因", f"error='{task.get('error')}'")
             else:
-                results.add_fail("2.4 未创建后台任务", "0个",
-                                 f"{bg_count}个")
+                results.add_fail("2.4 任务标注异常原因", "status='待审核' 且 error包含'异常'",
+                                 f"status='{task.get('status')}', error='{task.get('error')}'")
 
     finally:
         main_module._tasks = original_tasks
@@ -333,7 +368,7 @@ async def test_invalid_input():
 # 测试组 4: 语义校验时 receive_node 抛出意外异常
 # ==================================================================
 print("\n" + "=" * 70)
-print("  测试组 4: receive_node 抛异常 → 快速失败，不创建任务")
+print("  测试组 4: receive_node 抛异常 → 转待审核，消息不丢失")
 print("=" * 70)
 
 async def test_exception():
@@ -376,30 +411,33 @@ async def test_exception():
                 results.add_fail("4.1 快速返回", "≤ 2秒",
                                  f"{elapsed:.2f}秒")
 
-            print(f"  [测试4.2] success=false, error包含'暂不可用'")
+            print(f"  [测试4.2] success=true（消息不丢失），返回待审核事件")
             print(f"    响应内容: {json.dumps(data, ensure_ascii=False)}")
-            if data.get("success") == False and "暂不可用" in data.get("error", ""):
-                results.add_pass("4.2 返回服务不可用错误", f"error='{data.get('error')}'")
+            rdata = data.get("data", {})
+            if data.get("success") == True and rdata.get("event_type") == "待审核" \
+                    and rdata.get("status") == "待审核":
+                results.add_pass("4.2 转待审核", f"event_type='{rdata.get('event_type')}'")
             else:
-                results.add_fail("4.2 返回服务不可用错误",
-                                 "success=false, error包含'暂不可用'",
-                                 f"success={data.get('success')}, error='{data.get('error')}'")
+                results.add_fail("4.2 转待审核",
+                                 "success=true, event_type='待审核', status='待审核'",
+                                 f"success={data.get('success')}, data={rdata}")
 
-            print(f"  [测试4.3] 不应创建任何任务")
+            print(f"  [测试4.3] 应创建待审核任务")
             task_count = len(main_module._tasks)
-            if task_count == 0:
-                results.add_pass("4.3 未创建任务", f"当前任务数: {task_count}")
+            if task_count >= 1:
+                results.add_pass("4.3 已创建任务", f"当前任务数: {task_count}")
             else:
-                results.add_fail("4.3 未创建任务", "0个任务",
+                results.add_fail("4.3 已创建任务", "≥1个任务",
                                  f"{task_count}个任务")
 
-            print(f"  [测试4.4] 不应创建后台任务")
-            bg_count = len(main_module._background_tasks)
-            if bg_count == 0:
-                results.add_pass("4.4 未创建后台任务", f"后台任务数: {bg_count}")
+            print(f"  [测试4.4] 待审核任务应标注异常原因")
+            event_id = rdata.get("event_id", "")
+            task = main_module._tasks.get(event_id, {})
+            if task.get("status") == "待审核" and "异常" in task.get("error", ""):
+                results.add_pass("4.4 任务标注异常原因", f"error='{task.get('error')}'")
             else:
-                results.add_fail("4.4 未创建后台任务", "0个",
-                                 f"{bg_count}个")
+                results.add_fail("4.4 任务标注异常原因", "status='待审核' 且 error包含'异常'",
+                                 f"status='{task.get('status')}', error='{task.get('error')}'")
 
     finally:
         main_module._tasks = original_tasks
@@ -542,10 +580,10 @@ def test_code_structure():
     source = inspect.getsource(main_module.create_event)
 
     print("\n  [测试6.1] asyncio.wait_for 超时保护存在")
-    if "asyncio.wait_for" in source and "timeout=10.0" in source:
-        results.add_pass("6.1 wait_for timeout=10.0 存在", "已确认")
+    if "asyncio.wait_for" in source and "timeout=50.0" in source:
+        results.add_pass("6.1 wait_for timeout=50.0 存在", "已确认")
     else:
-        results.add_fail("6.1 wait_for timeout=10.0 存在", "存在", "未找到")
+        results.add_fail("6.1 wait_for timeout=50.0 存在", "存在", "未找到")
 
     print("  [测试6.2] asyncio.TimeoutError 被单独捕获")
     if "asyncio.TimeoutError" in source:
@@ -553,29 +591,33 @@ def test_code_structure():
     else:
         results.add_fail("6.2 TimeoutError 单独捕获", "存在", "未找到")
 
-    print("  [测试6.3] TimeoutError / Exception 捕获在 task 创建之前")
-    # 查找关键代码行的顺序
-    timeout_pos = source.find("asyncio.TimeoutError")
-    task_create_pos = source.find('_tasks[event_id]')
-    if timeout_pos > 0 and task_create_pos > 0 and timeout_pos < task_create_pos:
-        results.add_pass("6.3 异常捕获在任务创建之前", f"TimeoutError位置={timeout_pos}, 任务创建位置={task_create_pos}")
+    print("  [测试6.3] 超时/异常处理器内部创建待审核任务（消息不丢失）")
+    # 消息不丢失设计：超时/异常处理器内部创建 _tasks[event_id]（status=待审核）。
+    # （旧设计的"异常处理在任务创建之前"线性排序已不成立：硬规则分支先建任务，
+    #   语义校验失败时改为在处理器内兜底建待审核任务。）
+    timeout_pos = source.find("except asyncio.TimeoutError")
+    exc_pos = source.find("except Exception")
+    task_in_timeout = source.find("_tasks[event_id]", timeout_pos)
+    task_in_exc = source.find("_tasks[event_id]", exc_pos)
+    if timeout_pos > 0 and task_in_timeout > timeout_pos and exc_pos > 0 and task_in_exc > exc_pos:
+        results.add_pass("6.3 处理器内创建待审核任务",
+                         f"TimeoutError→任务@偏移{task_in_timeout}, Exception→任务@偏移{task_in_exc}")
     else:
-        results.add_fail("6.3 异常捕获在任务创建之前",
-                         "TimeoutError < 任务创建",
-                         f"TimeoutError={timeout_pos}, 任务创建={task_create_pos}")
+        results.add_fail("6.3 处理器内创建待审核任务",
+                         "超时/异常处理器内部含 _tasks[event_id]", "未找到")
 
-    print("  [测试6.4] 超时错误消息明确 (包含'超时')")
-    # 查找超时 error message
-    if '"AI 服务响应超时，请稍后重试"' in source:
-        results.add_pass("6.4 超时错误消息明确", "'AI 服务响应超时，请稍后重试'")
+    print("  [测试6.4] 超时错误消息明确 (任务 error 包含'超时')")
+    # 消息不丢失设计：错误原因标注在任务 error 字段上
+    if '"语义校验超时，已转人工审核"' in source:
+        results.add_pass("6.4 超时错误消息明确", "'语义校验超时，已转人工审核'")
     else:
-        results.add_fail("6.4 超时错误消息明确", "存在'AI 服务响应超时'", "未找到")
+        results.add_fail("6.4 超时错误消息明确", "存在'语义校验超时，已转人工审核'", "未找到")
 
-    print("  [测试6.5] API异常错误消息明确 (包含'暂不可用')")
-    if '"AI 服务暂不可用，请稍后重试"' in source:
-        results.add_pass("6.5 API异常错误消息明确", "'AI 服务暂不可用，请稍后重试'")
+    print("  [测试6.5] API异常错误消息明确 (任务 error 包含'异常')")
+    if '"语义校验服务异常，已转人工审核"' in source:
+        results.add_pass("6.5 API异常错误消息明确", "'语义校验服务异常，已转人工审核'")
     else:
-        results.add_fail("6.5 API异常错误消息明确", "存在'AI 服务暂不可用'", "未找到")
+        results.add_fail("6.5 API异常错误消息明确", "存在'语义校验服务异常，已转人工审核'", "未找到")
 
     print("  [测试6.6] 语义校验返回 event_type 判断逻辑存在")
     checks = [
@@ -610,8 +652,12 @@ if __name__ == "__main__":
 
     print()
     if all_pass:
-        print("🎉 全部测试通过！语义校验API超时修复有效。")
+        print("🎉 全部测试通过！语义校验超时/异常消息不丢失。")
     else:
         print("⚠️  部分测试失败，详见上方详情。")
+
+    # 恢复被备份的 data/secure 目录
+    for src, bak in [(ORIGINAL_DATA_DIR, BAK_DATA_DIR), (ORIGINAL_SECURE_DIR, BAK_SECURE_DIR)]:
+        _restore(src, bak)
 
     sys.exit(0 if all_pass else 1)

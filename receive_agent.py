@@ -389,6 +389,11 @@ def _is_valid_input(description: str) -> bool:
     ):
         return True
 
+    # 长度不足 3 个字符过于简短，无法构成有效描述
+    # （生命急救/紧急救援/模糊急救旁路已在上方优先放行，不受此限制）
+    if len(cleaned) < 3:
+        return False
+
     # 纯数字或纯标点符号（无任何字母/汉字）
     if cleaned.isdigit() or all(not c.isalnum() for c in cleaned):
         return False

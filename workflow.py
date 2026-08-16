@@ -31,7 +31,10 @@ import dispatch_agent
 import record_agent
 
 # 复用 receive_agent 的节点函数（负责调用LLM API提取结构化信息）
-receive_node = receive_agent.receive_node
+# 使用薄包装：运行时按 receive_agent.receive_node 查找，
+# 使测试在 import 之后 patch receive_agent.receive_node 也能作用于本图。
+def receive_node(state):
+    return receive_agent.receive_node(state)
 
 # 复用 dispatch_agent 的节点函数（负责根据event_type和urgency分配处理方）
 dispatch_node = dispatch_agent.dispatch_node

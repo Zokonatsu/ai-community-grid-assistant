@@ -23,15 +23,18 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(PROJECT_DIR)
 sys.path.insert(0, PROJECT_DIR)
 
-# 备份真实 data 目录，使用临时空目录
+# 备份真实 data/secure 目录，使用临时空目录
 ORIGINAL_DATA_DIR = os.path.join(PROJECT_DIR, "data")
 BAK_DATA_DIR = os.path.join(PROJECT_DIR, "data.bak.test_scene_tag")
+ORIGINAL_SECURE_DIR = os.path.join(PROJECT_DIR, "secure")
+BAK_SECURE_DIR = os.path.join(PROJECT_DIR, "secure.bak.test_scene_tag")
 
 
 def setup_test_env():
-    """备份 data 目录，确保干净状态"""
-    if os.path.exists(BAK_DATA_DIR):
-        shutil.rmtree(BAK_DATA_DIR, ignore_errors=True)
+    """备份 data/secure 目录，确保干净状态"""
+    for bak in (BAK_DATA_DIR, BAK_SECURE_DIR):
+        if os.path.exists(bak):
+            shutil.rmtree(bak, ignore_errors=True)
     if os.path.exists(ORIGINAL_DATA_DIR):
         os.rename(ORIGINAL_DATA_DIR, BAK_DATA_DIR)
     os.makedirs(ORIGINAL_DATA_DIR, exist_ok=True)
@@ -39,14 +42,22 @@ def setup_test_env():
     for f in ["users.json", "sessions.json", "tasks.json"]:
         with open(os.path.join(ORIGINAL_DATA_DIR, f), "w", encoding="utf-8") as fh:
             json.dump({}, fh)
+    # secure/ 同样备份并用空目录（账号/会话加密文件在此生成）
+    if os.path.exists(ORIGINAL_SECURE_DIR):
+        os.rename(ORIGINAL_SECURE_DIR, BAK_SECURE_DIR)
+    os.makedirs(ORIGINAL_SECURE_DIR, exist_ok=True)
 
 
 def teardown_test_env():
-    """恢复原始 data 目录"""
+    """恢复原始 data/secure 目录"""
     if os.path.exists(ORIGINAL_DATA_DIR):
         shutil.rmtree(ORIGINAL_DATA_DIR, ignore_errors=True)
     if os.path.exists(BAK_DATA_DIR):
         os.rename(BAK_DATA_DIR, ORIGINAL_DATA_DIR)
+    if os.path.exists(ORIGINAL_SECURE_DIR):
+        shutil.rmtree(ORIGINAL_SECURE_DIR, ignore_errors=True)
+    if os.path.exists(BAK_SECURE_DIR):
+        os.rename(BAK_SECURE_DIR, ORIGINAL_SECURE_DIR)
 
 
 setup_test_env()
@@ -54,6 +65,8 @@ setup_test_env()
 # 预置测试环境变量，避免导入 config 时因缺失必填项报错
 os.environ["LLM_API_KEY"] = "test-key"
 os.environ["LLM_BASE_URL"] = "http://test"
+# 账号数据加密密钥（64 位 hex，仅测试用固定值，确保与本测试生成的 secure/ 数据一致）
+os.environ["DATA_ENCRYPTION_KEY"] = "1" * 64
 
 # 重新加载模块
 import auth
@@ -207,6 +220,10 @@ with patch("receive_agent.OpenAI"), \
     from fastapi.testclient import TestClient
 
 client = TestClient(app)
+# 手动进入 TestClient 上下文：保持事件循环常驻（persistent portal）。
+# 否则每次请求都新建事件循环，后台 asyncio.create_task 派单任务随请求结束被取消，
+# 模块 C 轮询将永远停在"处理中"。
+client.__enter__()
 
 
 # ------------------------------------------------------------------
@@ -761,6 +778,7 @@ else:
 try:
     all_pass = results.summary()
 finally:
+    client.__exit__(None, None, None)
     teardown_test_env()
 
 print()

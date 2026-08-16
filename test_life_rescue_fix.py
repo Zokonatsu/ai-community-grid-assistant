@@ -31,13 +31,16 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(PROJECT_DIR)
 sys.path.insert(0, PROJECT_DIR)
 
-# 备份并初始化干净的 data 目录
+# 备份并初始化干净的 data/secure 目录
 ORIGINAL_DATA_DIR = os.path.join(PROJECT_DIR, "data")
 BAK_DATA_DIR = os.path.join(PROJECT_DIR, "data.bak.test_life_rescue")
+ORIGINAL_SECURE_DIR = os.path.join(PROJECT_DIR, "secure")
+BAK_SECURE_DIR = os.path.join(PROJECT_DIR, "secure.bak.test_life_rescue")
 
 def setup():
-    if os.path.exists(BAK_DATA_DIR):
-        shutil.rmtree(BAK_DATA_DIR, ignore_errors=True)
+    for bak in (BAK_DATA_DIR, BAK_SECURE_DIR):
+        if os.path.exists(bak):
+            shutil.rmtree(bak, ignore_errors=True)
     if os.path.exists(ORIGINAL_DATA_DIR):
         os.rename(ORIGINAL_DATA_DIR, BAK_DATA_DIR)
     os.makedirs(ORIGINAL_DATA_DIR, exist_ok=True)
@@ -45,18 +48,28 @@ def setup():
     for f in ["users.json", "sessions.json", "tasks.json"]:
         with open(os.path.join(ORIGINAL_DATA_DIR, f), "w", encoding="utf-8") as fh:
             json.dump({}, fh)
+    # secure/ 一并备份并清空（账号/会话加密文件在此生成）
+    if os.path.exists(ORIGINAL_SECURE_DIR):
+        os.rename(ORIGINAL_SECURE_DIR, BAK_SECURE_DIR)
+    os.makedirs(ORIGINAL_SECURE_DIR, exist_ok=True)
 
 def teardown():
     if os.path.exists(ORIGINAL_DATA_DIR):
         shutil.rmtree(ORIGINAL_DATA_DIR, ignore_errors=True)
     if os.path.exists(BAK_DATA_DIR):
         os.rename(BAK_DATA_DIR, ORIGINAL_DATA_DIR)
+    if os.path.exists(ORIGINAL_SECURE_DIR):
+        shutil.rmtree(ORIGINAL_SECURE_DIR, ignore_errors=True)
+    if os.path.exists(BAK_SECURE_DIR):
+        os.rename(BAK_SECURE_DIR, ORIGINAL_SECURE_DIR)
 
 setup()
 
 # 设置环境变量，避免 config.py 报错
 os.environ["LLM_API_KEY"] = "test-key-for-life-rescue-test"
 os.environ["LLM_BASE_URL"] = "http://test"
+# 账号数据加密密钥（64 位 hex，仅测试用固定值，确保与本测试生成的 secure/ 数据一致）
+os.environ["DATA_ENCRYPTION_KEY"] = "1" * 64
 
 # ------------------------------------------------------------------
 # 测试结果收集
@@ -242,8 +255,19 @@ def run_api_tests():
                 json={"description": desc},
                 headers={"Authorization": "Bearer test-token"},
             )
-            elapsed = time.time() - start
             data = resp.json()
+            # 硬规则命中 → 确认弹窗（scene_tag 置空）：模拟前端二次确认
+            # （与 static/index.html submitWithConfirm / test_scene_tag.submit_event 一致），
+            # 带 confirmed=True + emergency_type 再次提交，第二次响应才携带完整场景标签。
+            if data.get("success") and data.get("data", {}).get("confirmation_required"):
+                emergency_type = data.get("data", {}).get("emergency_type", "")
+                resp = client.post(
+                    "/api/events",
+                    json={"description": desc, "confirmed": True, "emergency_type": emergency_type},
+                    headers={"Authorization": "Bearer test-token"},
+                )
+                data = resp.json()
+            elapsed = time.time() - start
 
             print(f"\n  [{keyword}] 输入: '{desc}'")
             print(f"    响应耗时: {elapsed:.3f}秒")
