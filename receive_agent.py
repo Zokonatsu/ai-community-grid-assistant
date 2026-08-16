@@ -18,6 +18,7 @@ receive_agent.py
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import TypedDict
 
 from openai import OpenAI
@@ -66,6 +67,37 @@ _EMERGENCY_RESCUE_RE = re.compile(
 )
 
 
+# 模糊急救关键词：短词无上下文时需要前端二次确认
+_FUZZY_MEDICAL_RE = re.compile(
+    r"吐血|上吊|晕倒|猝死|窒息|中毒",
+    re.IGNORECASE,
+)
+_FUZZY_POLICE_RE = re.compile(
+    r"绑架|抢劫|杀人|持刀|行凶",
+    re.IGNORECASE,
+)
+_FUZZY_FIRE_RE = re.compile(
+    r"着火|火灾|燃气泄漏|被困|爆炸",
+    re.IGNORECASE,
+)
+
+
+def _check_fuzzy_emergency(description: str) -> dict | None:
+    """
+    模糊急救检查：命中高风险词表且长度≤4字符时，返回需要确认的结果。
+
+    不调用 LLM，不创建任务，仅返回确认标识供前端二次确认。
+    """
+    cleaned = description.strip()
+    if len(cleaned) > 4:
+        return None
+
+    if _FUZZY_MEDICAL_RE.search(cleaned):
+        return {"confirmation_required": True, "emergency_type": "medical"}
+    if _FUZZY_POLICE_RE.search(cleaned):
+        return {"confirmation_required": True, "emergency_type": "police"}
+    if _FUZZY_FIRE_RE.search(cleaned):
+        return {"confirmation_required": True, "emergency_type": "fire"}
 def _apply_hard_rules(description: str, parsed: dict) -> dict:
     """
     对模型返回结果应用硬规则兜底。
@@ -84,6 +116,34 @@ def _apply_hard_rules(description: str, parsed: dict) -> dict:
     return parsed
 
 
+def _resolve_emergency_type(description: str, scene_tag: str) -> str:
+    """
+    根据描述和场景标签推断 emergency_type，用于接收模块向派发模块传递明确结论。
+
+    当接收模块已判定为生命急救或紧急救援，但 emergency_type 未设置时，
+    通过关键词匹配补全，避免下游派发模块因信息不足而错误 fallback。
+    """
+    if scene_tag == "生命急救":
+        return "medical"
+    if scene_tag == "紧急救援":
+        # fire 关键词：与 dispatch_agent 的推断规则保持一致
+        if _FUZZY_FIRE_RE.search(description) or re.search(
+            r"煤气味|燃气味|煤气|燃气", description, re.IGNORECASE
+        ):
+            return "fire"
+        if _FUZZY_POLICE_RE.search(description):
+            return "police"
+        # 兜底：按描述中更完整的救援类型关键词区分
+        if re.search(
+            r"火灾|起火|着火|燃气泄漏|煤气泄漏|爆炸|坍塌|电梯困人|高空坠物",
+            description,
+            re.IGNORECASE,
+        ):
+            return "fire"
+        return "police"
+    return ""
+
+
 def _check_hard_rules_first(description: str) -> dict | None:
     """
     前置硬规则检查：在调用任何 LLM API 之前执行。
@@ -100,6 +160,7 @@ def _check_hard_rules_first(description: str) -> dict | None:
             "scene_tag": "生命急救",
             "handler": "",
             "confidence": "high",
+            "emergency_type": "medical",
         }
     if _EMERGENCY_RESCUE_RE.search(description):
         return {
@@ -110,6 +171,7 @@ def _check_hard_rules_first(description: str) -> dict | None:
             "scene_tag": "紧急救援",
             "handler": "",
             "confidence": "high",
+            "emergency_type": "fire",
         }
     return None
 
@@ -146,7 +208,7 @@ def _vote_on_results(results: list[dict]) -> tuple[dict, str]:
     """
     对多轮采样结果进行投票，返回最可信的结果及置信度。
 
-    投票维度：is_valid、event_type、urgency、scene_tag、address
+    投票维度：is_valid、event_type、urgency、scene_tag
     置信度规则：
         - high  ：所有结果完全一致
         - medium：存在多数（≥2/3）一致的结果
@@ -165,13 +227,11 @@ def _vote_on_results(results: list[dict]) -> tuple[dict, str]:
         return results[0], "medium"
 
     def _result_key(r: dict):
-        # address 允许为空，但为空时属于高风险场景，在后续逻辑中单独处理
         return (
             r.get("is_valid"),
             r.get("event_type"),
             r.get("urgency"),
             r.get("scene_tag"),
-            r.get("address", ""),
         )
 
     from collections import Counter
@@ -212,6 +272,9 @@ class ReceiveState(TypedDict):
         scene_tag:   场景标签，限定为：生命急救/紧急救援/常规。根据描述自动判断。
         handler:     处理方标识，初始为空字符串 ""，由派发Agent后续填充。
         confidence:  语义校验置信度，high/medium/low/none，由多轮投票计算得出。
+        confirmation_required: 是否需要前端二次确认（模糊急救短词触发）。
+        emergency_type: 模糊急救类型，medical/police/fire。
+        confirmed:   用户是否已确认高风险描述（用于模糊急救二次提交）。
     """
     description: str
     address: str
@@ -220,6 +283,9 @@ class ReceiveState(TypedDict):
     scene_tag: str
     handler: str
     confidence: str
+    confirmation_required: bool
+    emergency_type: str
+    confirmed: bool
 
 
 # ------------------------------------------------------------------
@@ -227,29 +293,47 @@ class ReceiveState(TypedDict):
 # ------------------------------------------------------------------
 RECEIVE_SYSTEM_PROMPT = """你是一名社区事务信息提取助手。请根据居民的问题描述，先判断这是否是一条有效的社区事务描述，再提取以下字段并以JSON格式返回。
 
+网格员职责范围定义：
+- 正面清单（网格员负责处理）：社区安全、公共设施故障、邻里纠纷、环境卫生、消防安全、物业维修、社区咨询建议等涉及社区公共利益或网格员职责范围内的事件。
+- 负面清单（网格员不负责处理）：个人私事（如买菜、做饭、个人出行、逛街）、医疗诊断、商业交易、超出本社区范围的事件、日常闲聊、无意义的问候或测试字符串、家养宠物死亡、个人投资理财、纯个人情感倾诉等。
+- 边界模糊判断标准：如果事件不涉及社区公共利益或网格员职责，应判定为管辖外（is_valid 为 false）。
+
 判断规则：
 - 如果描述包含具体的社区事务内容（如设施损坏、环境问题、安全隐患、邻里矛盾、咨询建议等），则 is_valid 为 true。
 - 如果描述仅为无意义的问候语、闲聊、测试字符串、与社区事务完全无关的内容，则 is_valid 为 false。
 - 特别重要：任何涉及人身安全、生命安全、医疗急救、死亡、严重受伤、火灾、燃气泄漏等紧急情况的描述，无论多么简短，都必须视为有效输入（is_valid 为 true）。社区网格员对这类事件负有介入和上报责任，绝不可因描述简短而拒绝。
 
+Few-shot 示例：
+- "楼上漏水" → is_valid=true，event_type="物业维修"，urgency="中"，scene_tag="常规"（公共设施/物业维修，涉及邻里共同利益）
+- "我去买菜了" → is_valid=false，reject_reason="个人私事，不在网格员管辖范围"（属于个人日常生活，与社区公共利益无关）
+- "割腕" → is_valid=true，event_type="安全隐患"，urgency="高"，scene_tag="生命急救"（生命安全紧急情况，网格员必须介入上报）
+- "我家狗死了" → is_valid=false，reject_reason="家养宠物死亡，不属于网格员职责范围"（家养宠物事务属于个人私事，不涉及社区公共利益）
+- "夫妻吵架声音很大" → is_valid=true，event_type="邻里纠纷"，urgency="中"，scene_tag="常规"（邻里纠纷类，由调解员处理）
+- "楼下路灯不亮了" → is_valid=true，event_type="公共设施"，urgency="中"，scene_tag="常规"（公共设施损坏，由工程部处理）
+- "楼道里有股煤气味" → is_valid=true，event_type="安全隐患"，urgency="高"，scene_tag="紧急救援"（燃气泄漏安全隐患，由安保部处理并上报119）
+- "我想聊聊我的感情问题" → is_valid=false，reject_reason="个人情感倾诉，不属于网格员职责范围"（纯个人情感问题与社区公共事务无关）
+
 字段要求：
 1. is_valid（布尔值）：描述是否为有效的社区事务
 2. reject_reason（字符串）：当 is_valid 为 false 时，说明拒绝原因；为 true 时返回空字符串 ""
 3. address（字符串）：描述中涉及的具体地址或位置信息。如果描述中没有提到具体地址，返回空字符串""
-4. event_type（字符串）：事件类型，只能从以下类别中选择一项：
-   - 物业维修：如水电故障、房屋维修、电梯问题、下水道堵塞等
-   - 环境卫生：如垃圾清理、绿化养护、异味污染等
-   - 安全隐患：如火灾风险、燃气泄漏、盗窃、高空坠物等
-   - 邻里纠纷：如噪音扰民、宠物管理、停车争执、占用公共空间等
-   - 公共设施：如路灯损坏、道路破损、健身器材故障、门禁失灵等
-   - 其他：不属于以上类别的特殊情况
+4. event_type（字符串）：事件类型，只能从以下类别中选择一项。选择时必须结合各部门职责范围进行判断：
+   - 物业维修（对应处理方：物业部）：房屋维修、水电故障、门禁电梯故障、物业相关投诉、下水道堵塞、管道漏水等
+   - 环境卫生（对应处理方：环卫部）：垃圾清理、垃圾分类、绿化养护、异味污染、公共区域清洁等
+   - 安全隐患（对应处理方：安保部）：社区治安、安全隐患排查、防盗防骗、可疑人员报告、火灾风险、燃气泄漏、盗窃、高空坠物等
+   - 邻里纠纷（对应处理方：调解员）：邻里纠纷、家庭矛盾、噪音扰民、宠物扰民、停车争执、占用公共空间等
+   - 公共设施（对应处理方：工程部）：公共设施损坏（路灯、道路、井盖）、基础设施维护、健身器材故障、小区大门损坏等
+   - 其他（对应处理方：综合部）：仅当事件确实属于网格员职责范围，且经过仔细判断确实无法归入安保部、物业部、工程部、环卫部、调解员中的任何一类时，才可使用。严禁将个人私事、闲聊、明显无效输入归为"其他"。
 5. urgency（字符串）：紧急程度，只能从"高"/"中"/"低"中选择一项：
    - 高：涉及人身安全、火灾、燃气泄漏、电梯困人等紧急情况
    - 中：影响居民正常生活但无直接人身危险，如停水停电、下水道堵塞等
    - 低：一般性建议、咨询、不紧急的改善需求
 6. scene_tag（字符串）：场景标签，只能从"生命急救"/"紧急救援"/"常规"中选择一项：
-   - 生命急救：涉及人员生命危险，需要医疗急救力量介入，如心脏骤停、严重外伤大出血、突发重病昏迷、窒息、触电致伤等
-   - 紧急救援：涉及火灾、燃气泄漏、电梯困人、溺水、建筑物坍塌、严重交通事故等需要消防/公安/专业救援力量介入的情况
+   - 生命急救：涉及人员生命危险，需要医疗急救力量（120）介入，如心脏骤停、严重外伤大出血、突发重病昏迷、窒息、触电致伤、溺水等
+   - 紧急救援：需要消防（119）或公安（110）等专业救援力量介入的情况，必须根据描述内容判断具体属于哪类：
+     * 119消防职责范围：火灾、起火、着火、燃气泄漏、煤气泄漏、爆炸、建筑物坍塌、电梯困人、高空坠物等
+     * 110公安职责范围：暴恐袭击、抢劫、盗窃、打架斗殴、寻仇、吸毒、持刀行凶、绑架、强奸、诈骗、聚众闹事、寻衅滋事、严重交通事故等治安或刑事案件
+     * 注意：涉及人身安全威胁、治安犯罪、社会暴力的紧急事件属于110公安，而非119消防
    - 常规：一般社区事务，不需要外部专业急救或救援力量介入
 
 输出格式要求：
@@ -280,7 +364,7 @@ def _is_valid_input(description: str) -> bool:
     无效输入特征：
         - 空字符串或仅包含空白字符
         - 纯数字、纯标点符号等无意义内容
-        - 总长度不足3个字符
+        - 纯问候语、纯闲聊、纯测试字符串
 
     参数:
         description: 居民原始描述。
@@ -293,9 +377,17 @@ def _is_valid_input(description: str) -> bool:
 
     cleaned = description.strip()
 
-    # 长度不足3个字符，直接视为无效
-    if len(cleaned) < 3:
-        return False
+    # 生命急救和紧急救援关键词优先放行，不受长度限制
+    if _LIFE_RESCUE_RE.search(cleaned) or _EMERGENCY_RESCUE_RE.search(cleaned):
+        return True
+
+    # 模糊急救高风险词同样放行，不受长度限制
+    if (
+        _FUZZY_MEDICAL_RE.search(cleaned)
+        or _FUZZY_POLICE_RE.search(cleaned)
+        or _FUZZY_FIRE_RE.search(cleaned)
+    ):
+        return True
 
     # 纯数字或纯标点符号（无任何字母/汉字）
     if cleaned.isdigit() or all(not c.isalnum() for c in cleaned):
@@ -371,7 +463,37 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             hard_result["scene_tag"],
             description,
         )
+        if not state.get("confirmed", False):
+            hard_result["confirmation_required"] = True
+            # emergency_type 已由 _check_hard_rules_first 设置
+        else:
+            hard_result["confirmation_required"] = False
+            hard_result["emergency_type"] = ""
         return hard_result
+
+    # ------------------------------------------------------------------
+    # 步骤0.5：模糊急救检查（高风险短词，需要前端二次确认）
+    # ------------------------------------------------------------------
+    if not state.get("confirmed", False):
+        fuzzy_result = _check_fuzzy_emergency(description)
+        if fuzzy_result is not None:
+            logger.warning(
+                "模糊急救命中（%s），返回确认提示：description='%s'",
+                fuzzy_result["emergency_type"],
+                description,
+            )
+            return {
+                "description": description,
+                "address": "",
+                "event_type": "安全隐患",
+                "urgency": "高",
+                "scene_tag": "",
+                "handler": "",
+                "confidence": "high",
+                "confirmation_required": True,
+                "emergency_type": fuzzy_result["emergency_type"],
+                "confirmed": state.get("confirmed", False),
+            }
 
     # ------------------------------------------------------------------
     # 步骤1：前置机械校验（辅助层）
@@ -389,27 +511,37 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             "scene_tag": "常规",
             "handler": "",
             "confidence": "high",
+            "confirmation_required": False,
+            "emergency_type": "",
         }
 
     # ------------------------------------------------------------------
     # 步骤2：多轮采样语义校验（消除单次调用随机性）
     # ------------------------------------------------------------------
     # 对同一描述调用多次 LLM API，通过投票统计获得稳定结果。
+    # 使用线程池并行执行，将顺序3轮改为并行，总耗时从 3×15s 降至约 1×15s。
     # 任何一轮调用异常均单独捕获，不影响其他轮次。
     parsed_results: list[dict] = []
-    for round_idx in range(SEMANTIC_CHECK_ROUNDS):
-        try:
-            parsed = _call_llm_once(description)
-            parsed = _apply_hard_rules(description, parsed)
-            parsed_results.append(parsed)
-        except Exception as exc:
-            logger.warning(
-                "语义校验第 %d 轮 API 异常，继续尝试下一轮。描述='%s'，异常=%s",
-                round_idx + 1,
-                description,
-                exc,
-            )
-            continue
+
+    def _call_with_hard_rules(desc: str) -> dict:
+        parsed = _call_llm_once(desc)
+        return _apply_hard_rules(desc, parsed)
+
+    with ThreadPoolExecutor(max_workers=SEMANTIC_CHECK_ROUNDS) as executor:
+        futures = [
+            executor.submit(_call_with_hard_rules, description)
+            for _ in range(SEMANTIC_CHECK_ROUNDS)
+        ]
+        for future in futures:
+            try:
+                parsed_results.append(future.result())
+            except Exception as exc:
+                logger.warning(
+                    "语义校验某轮 API 异常，继续收集其他轮次结果。描述='%s'，异常=%s",
+                    description,
+                    exc,
+                )
+                continue
 
     # 所有轮次均失败 -> 明确标记为 API异常
     if not parsed_results:
@@ -426,6 +558,8 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             "scene_tag": "常规",
             "handler": "",
             "confidence": "none",
+            "confirmation_required": False,
+            "emergency_type": state.get("emergency_type", ""),
         }
 
     # 投票：取多数结果并计算置信度
@@ -442,14 +576,36 @@ def receive_node(state: ReceiveState) -> ReceiveState:
                 "语义校验安全兜底：模型判定无效，但命中紧急关键词，降级为待审核。description='%s'",
                 description,
             )
+            scene_tag_val = "生命急救" if _LIFE_RESCUE_RE.search(description) else "紧急救援"
             return {
                 "description": description,
                 "address": "",
                 "event_type": "待审核",
                 "urgency": "高",
-                "scene_tag": "生命急救" if _LIFE_RESCUE_RE.search(description) else "紧急救援",
+                "scene_tag": scene_tag_val,
                 "handler": "",
                 "confidence": "medium",
+                "confirmation_required": False,
+                "emergency_type": _resolve_emergency_type(description, scene_tag_val),
+            }
+
+        # 安全兜底：短词（长度≤4字符）即使模型判断无效，也不直接拒绝，降级为待审核
+        # 短词缺乏上下文，模型容易误判，优先进入人工审核而非直接拦截
+        if len(description.strip()) <= 4:
+            logger.warning(
+                "语义校验安全兜底：模型判定无效，但输入为短词（长度≤4），降级为待审核。description='%s'",
+                description,
+            )
+            return {
+                "description": description,
+                "address": "",
+                "event_type": "待审核",
+                "urgency": "高",
+                "scene_tag": "常规",
+                "handler": "",
+                "confidence": "medium",
+                "confirmation_required": False,
+                "emergency_type": state.get("emergency_type", ""),
             }
 
         reject_reason = merged.get("reject_reason", "语义判断为无效输入")
@@ -467,6 +623,8 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             "scene_tag": "常规",
             "handler": "",
             "confidence": confidence,
+            "confirmation_required": False,
+            "emergency_type": state.get("emergency_type", ""),
         }
 
     # 提取字段，若缺失则使用安全默认值
@@ -491,6 +649,9 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             address,
             confidence,
         )
+        emergency_type_val = state.get("emergency_type", "")
+        if not emergency_type_val and scene_tag in ("生命急救", "紧急救援"):
+            emergency_type_val = _resolve_emergency_type(description, scene_tag)
         return {
             "description": description,
             "address": address,
@@ -499,7 +660,14 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             "scene_tag": scene_tag,
             "handler": "",
             "confidence": confidence,
+            "confirmation_required": False,
+            "emergency_type": emergency_type_val,
         }
+
+    # 若 scene_tag 为外部资源场景但未设置 emergency_type，根据描述推断并传递
+    emergency_type_val = state.get("emergency_type", "")
+    if not emergency_type_val and scene_tag in ("生命急救", "紧急救援"):
+        emergency_type_val = _resolve_emergency_type(description, scene_tag)
 
     # 构建并返回新的状态对象
     # handler 始终初始化为空字符串，不由接收Agent决定处理方
@@ -511,6 +679,8 @@ def receive_node(state: ReceiveState) -> ReceiveState:
         "scene_tag": scene_tag,
         "handler": "",
         "confidence": confidence,
+        "confirmation_required": False,
+        "emergency_type": emergency_type_val,
     }
 
 
@@ -579,6 +749,71 @@ if __name__ == "__main__":
     print(f"  scene_tag  : {result_3['scene_tag']}")
     print(f"  handler    : {result_3['handler']}")
     print(f"  confidence : {result_3.get('confidence', 'N/A')}")
+
+    # 测试用例4：家养宠物死亡——应被识别为无效输入
+    test_case_4 = "我家狗死了"
+    print("=" * 50)
+    print("【测试用例4】输入：", test_case_4)
+    result_4 = graph.invoke({"description": test_case_4})
+    print("输出结果：")
+    print(f"  address    : {result_4['address']}")
+    print(f"  event_type : {result_4['event_type']}")
+    print(f"  urgency    : {result_4['urgency']}")
+    print(f"  scene_tag  : {result_4['scene_tag']}")
+    print(f"  handler    : {result_4['handler']}")
+    print(f"  confidence : {result_4.get('confidence', 'N/A')}")
+
+    # 测试用例5：邻里纠纷——应由调解员处理
+    test_case_5 = "夫妻吵架声音很大"
+    print("=" * 50)
+    print("【测试用例5】输入：", test_case_5)
+    result_5 = graph.invoke({"description": test_case_5})
+    print("输出结果：")
+    print(f"  address    : {result_5['address']}")
+    print(f"  event_type : {result_5['event_type']}")
+    print(f"  urgency    : {result_5['urgency']}")
+    print(f"  scene_tag  : {result_5['scene_tag']}")
+    print(f"  handler    : {result_5['handler']}")
+    print(f"  confidence : {result_5.get('confidence', 'N/A')}")
+
+    # 测试用例6：公共设施损坏——应由工程部处理
+    test_case_6 = "楼下路灯不亮了"
+    print("=" * 50)
+    print("【测试用例6】输入：", test_case_6)
+    result_6 = graph.invoke({"description": test_case_6})
+    print("输出结果：")
+    print(f"  address    : {result_6['address']}")
+    print(f"  event_type : {result_6['event_type']}")
+    print(f"  urgency    : {result_6['urgency']}")
+    print(f"  scene_tag  : {result_6['scene_tag']}")
+    print(f"  handler    : {result_6['handler']}")
+    print(f"  confidence : {result_6.get('confidence', 'N/A')}")
+
+    # 测试用例7：个人情感倾诉——应被识别为无效输入
+    test_case_7 = "我想聊聊我的感情问题"
+    print("=" * 50)
+    print("【测试用例7】输入：", test_case_7)
+    result_7 = graph.invoke({"description": test_case_7})
+    print("输出结果：")
+    print(f"  address    : {result_7['address']}")
+    print(f"  event_type : {result_7['event_type']}")
+    print(f"  urgency    : {result_7['urgency']}")
+    print(f"  scene_tag  : {result_7['scene_tag']}")
+    print(f"  handler    : {result_7['handler']}")
+    print(f"  confidence : {result_7.get('confidence', 'N/A')}")
+
+    # 测试用例8：安全隐患——应由安保部处理并触发紧急救援
+    test_case_8 = "楼道里有股煤气味"
+    print("=" * 50)
+    print("【测试用例8】输入：", test_case_8)
+    result_8 = graph.invoke({"description": test_case_8})
+    print("输出结果：")
+    print(f"  address    : {result_8['address']}")
+    print(f"  event_type : {result_8['event_type']}")
+    print(f"  urgency    : {result_8['urgency']}")
+    print(f"  scene_tag  : {result_8['scene_tag']}")
+    print(f"  handler    : {result_8['handler']}")
+    print(f"  confidence : {result_8.get('confidence', 'N/A')}")
 
     print("=" * 50)
     print("测试完成。")

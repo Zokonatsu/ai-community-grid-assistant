@@ -284,9 +284,19 @@ def register_and_login(username, password, real_name, phone, role="resident"):
 
 
 def submit_event(token, description):
-    """提交事件，返回响应 JSON"""
+    """提交事件，自动处理弹窗确认，返回最终响应 JSON"""
     res = client.post("/api/events", json={"description": description}, headers=auth_header(token))
-    return res.json()
+    data = res.json()
+    # 如果需要确认，自动二次提交（模拟用户点击同意）
+    if data.get("success") and data.get("data", {}).get("confirmation_required"):
+        emergency_type = data.get("data", {}).get("emergency_type", "")
+        res = client.post(
+            "/api/events",
+            json={"description": description, "confirmed": True, "emergency_type": emergency_type},
+            headers=auth_header(token),
+        )
+        data = res.json()
+    return data
 
 
 def get_event_status(token, event_id):
@@ -342,11 +352,11 @@ def test_dispatch_directly(scene_tag, event_type, urgency, expected_handler, tes
                          f"scene_tag='{scene_tag}', event_type='{event_type}', urgency='{urgency}'")
 
 
-# A1: 生命急救 → 急救中心（外部资源）
-test_dispatch_directly("生命急救", "安全隐患", "高", "急救中心（外部资源）",
+# A1: 生命急救 → 120医疗急救中心（外部资源）
+test_dispatch_directly("生命急救", "安全隐患", "高", "120医疗急救中心（外部资源）",
                        "A1 生命急救场景 → 派单给急救中心")
-# A2: 紧急救援 → 应急救援队（外部资源）
-test_dispatch_directly("紧急救援", "安全隐患", "高", "应急救援队（外部资源）",
+# A2: 紧急救援 → 119消防急救中心（外部资源）
+test_dispatch_directly("紧急救援", "安全隐患", "高", "119消防急救中心（外部资源）",
                        "A2 紧急救援场景 → 派单给应急救援队")
 # A3: 常规 + 中紧急 + 物业维修 → 物业部
 test_dispatch_directly("常规", "物业维修", "中", "物业部",
@@ -367,10 +377,10 @@ test_dispatch_directly("常规", "邻里纠纷", "中", "调解员",
 test_dispatch_directly("常规", "公共设施", "低", "工程部",
                        "A8 常规/公共设施/低紧急 → 派单给工程部")
 # A9: 生命急救场景不受 urgency 影响（已经是外部资源，不加[紧急]前缀）
-test_dispatch_directly("生命急救", "其他", "低", "急救中心（外部资源）",
+test_dispatch_directly("生命急救", "其他", "低", "120医疗急救中心（外部资源）",
                        "A9 生命急救不论紧急程度 → 始终派单给急救中心")
 # A10: 紧急救援场景不受 event_type 影响
-test_dispatch_directly("紧急救援", "物业维修", "中", "应急救援队（外部资源）",
+test_dispatch_directly("紧急救援", "物业维修", "中", "119消防急救中心（外部资源）",
                        "A10 紧急救援不论事件类型 → 始终派单给应急救援队")
 
 
@@ -441,8 +451,8 @@ def test_record_persistence(scene_tag, handler, description, user_id, test_name)
         results.add_pass(test_name, f"scene_tag='{scene_tag}' 正确持久化到文件")
 
 
-test_record_persistence("生命急救", "急救中心（外部资源）", "有人晕倒了", user_id, "B1 生命急救持久化")
-test_record_persistence("紧急救援", "应急救援队（外部资源）", "电梯困人了", user_id, "B2 紧急救援持久化")
+test_record_persistence("生命急救", "120医疗急救中心（外部资源）", "有人晕倒了", user_id, "B1 生命急救持久化")
+test_record_persistence("紧急救援", "119消防急救中心（外部资源）", "电梯困人了", user_id, "B2 紧急救援持久化")
 test_record_persistence("常规", "物业部", "下水道堵了", user_id, "B3 常规场景持久化")
 
 
@@ -503,24 +513,24 @@ def test_full_pipeline(description, expected_scene_tag, expected_handler, test_n
                          f"'{description}' → scene_tag='{actual_scene}' → handler='{actual_handler}'")
 
 
-# C1: 人员晕倒 → 生命急救 → 急救中心（外部资源）
-test_full_pipeline("有人晕倒了", "生命急救", "急救中心（外部资源）",
+# C1: 人员晕倒 → 生命急救 → 120医疗急救中心（外部资源）
+test_full_pipeline("有人晕倒了", "生命急救", "120医疗急救中心（外部资源）",
                    "C1 人员晕倒 → 生命急救 → 急救中心")
 
-# C2: 受伤大出血 → 生命急救 → 急救中心（外部资源）
-test_full_pipeline("3号楼有人受伤大出血", "生命急救", "急救中心（外部资源）",
+# C2: 受伤大出血 → 生命急救 → 120医疗急救中心（外部资源）
+test_full_pipeline("3号楼有人受伤大出血", "生命急救", "120医疗急救中心（外部资源）",
                    "C2 受伤大出血 → 生命急救 → 急救中心")
 
-# C3: 电梯困人 → 紧急救援 → 应急救援队（外部资源）
-test_full_pipeline("电梯困人了", "紧急救援", "应急救援队（外部资源）",
+# C3: 电梯困人 → 紧急救援 → 119消防急救中心（外部资源）
+test_full_pipeline("电梯困人了", "紧急救援", "119消防急救中心（外部资源）",
                    "C3 电梯困人 → 紧急救援 → 应急救援队")
 
-# C4: 火灾 → 紧急救援 → 应急救援队（外部资源）
-test_full_pipeline("小区门口发生火灾", "紧急救援", "应急救援队（外部资源）",
+# C4: 火灾 → 紧急救援 → 119消防急救中心（外部资源）
+test_full_pipeline("小区门口发生火灾", "紧急救援", "119消防急救中心（外部资源）",
                    "C4 火灾 → 紧急救援 → 应急救援队")
 
-# C5: 燃气泄漏 → 紧急救援 → 应急救援队（外部资源）
-test_full_pipeline("燃气泄漏了", "紧急救援", "应急救援队（外部资源）",
+# C5: 燃气泄漏 → 紧急救援 → 119消防急救中心（外部资源）
+test_full_pipeline("燃气泄漏了", "紧急救援", "119消防急救中心（外部资源）",
                    "C5 燃气泄漏 → 紧急救援 → 应急救援队")
 
 # C6: 下水道堵塞 → 常规 → 物业部
@@ -697,8 +707,8 @@ print("=" * 70)
 import dispatch_agent
 
 cases = [
-    ("安全隐患", "生命急救", "高", "急救中心（外部资源）"),
-    ("安全隐患", "紧急救援", "高", "应急救援队（外部资源）"),
+    ("安全隐患", "生命急救", "高", "120医疗急救中心（外部资源）"),
+    ("安全隐患", "紧急救援", "高", "119消防急救中心（外部资源）"),
     ("安全隐患", "常规", "高", "[紧急]安保部"),
 ]
 handlers = []
@@ -723,7 +733,7 @@ else:
 
 # F2: 生命急救和紧急救援场景不受紧急程度前缀影响
 results.add_pass("F2 外部资源不受[紧急]前缀影响",
-                 "生命急救→急救中心（外部资源）, 紧急救援→应急救援队（外部资源）"
+                 "生命急救→120医疗急救中心（外部资源）, 紧急救援→119消防急救中心（外部资源）"
                  "——不加[紧急]前缀，因为外部资源本身已是最高优先级")
 
 # F3: 场景标签优先级高于事件类型
@@ -737,12 +747,12 @@ state = {
     "handler": "",
 }
 r = dispatch_agent.dispatch_node(state)
-if r["handler"] == "急救中心（外部资源）":
+if r["handler"] == "120医疗急救中心（外部资源）":
     results.add_pass("F3 场景标签优先于事件类型",
-                     "物业维修+生命急救 → 急救中心（外部资源），而非物业部")
+                     "物业维修+生命急救 → 120医疗急救中心（外部资源），而非物业部")
 else:
     results.add_fail("F3 场景标签优先于事件类型",
-                     "急救中心（外部资源）", r["handler"])
+                     "120医疗急救中心（外部资源）", r["handler"])
 
 
 # ==================================================================

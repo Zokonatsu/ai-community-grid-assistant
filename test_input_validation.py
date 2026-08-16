@@ -287,6 +287,8 @@ with patch.object(receive_agent_module, "receive_node", return_value=mock_invali
     initial: WorkflowState = {
         "description": "你好", "address": "", "event_type": "",
         "urgency": "", "handler": "", "status": "", "created_at": "",
+        "user_id": "", "confidence": "",
+        "confirmation_required": False, "emergency_type": "", "confirmed": False,
     }
     try:
         result = workflow.invoke(initial)
@@ -316,6 +318,8 @@ with patch.object(receive_agent_module, "receive_node", return_value=mock_api_er
     initial: WorkflowState = {
         "description": "小区路灯坏了", "address": "", "event_type": "",
         "urgency": "", "handler": "", "status": "", "created_at": "",
+        "user_id": "", "confidence": "",
+        "confirmation_required": False, "emergency_type": "", "confirmed": False,
     }
     try:
         result = workflow.invoke(initial)
@@ -345,6 +349,8 @@ with patch.object(receive_agent_module, "receive_node", return_value=mock_valid)
     initial: WorkflowState = {
         "description": "我家楼下下水道堵了", "address": "", "event_type": "",
         "urgency": "", "handler": "", "status": "", "created_at": "",
+        "user_id": "", "confidence": "",
+        "confirmation_required": False, "emergency_type": "", "confirmed": False,
     }
     try:
         result = workflow.invoke(initial)

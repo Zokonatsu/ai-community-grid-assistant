@@ -204,6 +204,68 @@
         }
         .role-tag.admin { background: #f3e8ff; color: #7e22ce; }
         .role-tag.resident { background: #eaf0ff; color: #1a56db; }
+        /* 确认弹窗 */
+        .confirm-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .confirm-overlay.hidden { display: none; }
+        .confirm-modal {
+            background: #fff;
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 480px;
+            width: 90%;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+        }
+        .confirm-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #c0392b;
+            margin-bottom: 12px;
+        }
+        .confirm-text {
+            font-size: 15px;
+            color: #333;
+            line-height: 1.6;
+            margin-bottom: 12px;
+        }
+        .confirm-countdown {
+            font-size: 14px;
+            color: #c0392b;
+            font-weight: 600;
+            margin-bottom: 20px;
+        }
+        .confirm-legal {
+            color: #c0392b;
+            font-size: 13px;
+            margin-bottom: 16px;
+            font-weight: bold;
+            line-height: 1.5;
+        }
+        .confirm-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+        .btn-confirm {
+            background: #c0392b;
+            padding: 8px 20px;
+            font-size: 14px;
+        }
+        .btn-confirm:hover { background: #a93226; }
+        .btn-cancel {
+            background: #e5e7eb;
+            color: #374151;
+            padding: 8px 20px;
+            font-size: 14px;
+        }
+        .btn-cancel:hover { background: #d1d5db; }
     </style>
 </head>
 <body>
@@ -283,9 +345,27 @@
         </div>
     </div>
 
+    <!-- 急救确认弹窗 -->
+    <div class="confirm-overlay hidden" id="confirmOverlay">
+        <div class="confirm-modal">
+            <div class="confirm-title" id="confirmTitle">急救确认</div>
+            <div class="confirm-text" id="confirmText"></div>
+            <div class="confirm-countdown" id="confirmCountdown">5 秒后自动确认</div>
+            <div class="confirm-legal" id="confirmLegal"></div>
+            <div class="confirm-buttons">
+                <button class="btn btn-cancel" id="confirmCancel">取消</button>
+                <button class="btn btn-confirm" id="confirmAgree">同意</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const API_BASE = '';
         let pollTimer = null;
+        let confirmTimer = null;
+        let confirmSeconds = 5;
+        let currentDesc = '';
+        let currentEmergencyType = '';
 
         // ------------------------------------------------------------------
         // 认证相关
@@ -387,6 +467,145 @@
                     method: 'POST',
                     headers: getAuthHeaders(),
                     body: JSON.stringify({ description: desc })
+                });
+                if (checkUnauthorized(res)) return;
+                const data = await res.json();
+                if (!data.success) {
+                    error.textContent = data.error || '处理失败';
+                    btn.disabled = false;
+                    loading.style.display = 'none';
+                    return;
+                }
+                const d = data.data;
+                // 模糊急救确认
+                if (d.confirmation_required) {
+                    btn.disabled = false;
+                    loading.style.display = 'none';
+                    showConfirmDialog(desc, d.emergency_type);
+                    return;
+                }
+                // 终态判断：若后端已直接返回最终结果，立即展示，无需轮询
+                const terminalStatuses = ['已完成', '已派单', '待审核', '处理超时', '处理失败', '已拒绝'];
+                if (terminalStatuses.includes(d.status)) {
+                    document.getElementById('r-event_type').textContent = d.event_type || '-';
+                    document.getElementById('r-urgency').textContent = d.urgency || '-';
+                    document.getElementById('r-handler').textContent = d.handler || '-';
+                    document.getElementById('r-status').textContent = d.status || '-';
+                    document.getElementById('r-scene_tag').textContent = d.scene_tag || '-';
+                    document.getElementById('r-created_at').textContent = d.created_at || '-';
+                    document.getElementById('r-address').textContent = d.address || '-';
+                    document.getElementById('result').classList.remove('hidden');
+                    document.getElementById('description').value = '';
+                    loadList();
+                    btn.disabled = false;
+                    loading.style.display = 'none';
+                    return;
+                }
+                // 异步处理中：展示轮询状态并启动轮询
+                document.getElementById('polling-id').textContent = d.event_id;
+                polling.classList.remove('hidden');
+                document.getElementById('description').value = '';
+                loadList();
+                startPolling(d.event_id);
+            } catch (e) {
+                error.textContent = '网络请求失败，请检查服务是否启动';
+            } finally {
+                btn.disabled = false;
+                loading.style.display = 'none';
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // 模糊急救确认弹窗
+        // ------------------------------------------------------------------
+        function showConfirmDialog(desc, emergencyType) {
+            currentDesc = desc;
+            currentEmergencyType = emergencyType;
+            confirmSeconds = 5;
+
+            const titleEl = document.getElementById('confirmTitle');
+            const textEl = document.getElementById('confirmText');
+            const countdownEl = document.getElementById('confirmCountdown');
+            const legalEl = document.getElementById('confirmLegal');
+
+            let text = '';
+            if (emergencyType === 'medical') {
+                text = '您反映的情况属于生命医疗急救，系统将在5秒后向120医疗急救中心求助，是否同意？';
+            } else if (emergencyType === 'police') {
+                text = '您反映的情况属于公安急救，系统将在5秒后向110公安急救中心求助，是否同意？';
+            } else if (emergencyType === 'fire') {
+                text = '您反映的情况属于消防急救，系统将在5秒后向119消防急救中心求助，是否同意？';
+            } else {
+                text = '您反映的情况属于急救事件，系统将在5秒后向相关部门求助，是否同意？';
+            }
+            titleEl.textContent = '急救确认';
+            textEl.textContent = text;
+            countdownEl.textContent = confirmSeconds + ' 秒后自动确认';
+            legalEl.textContent = '注意：恶意虚报、滥用急救资源将承担相应法律责任。';
+
+            const agreeBtn = document.getElementById('confirmAgree');
+            const cancelBtn = document.getElementById('confirmCancel');
+
+            // 移除旧监听，避免重复绑定
+            const newAgreeBtn = agreeBtn.cloneNode(true);
+            const newCancelBtn = cancelBtn.cloneNode(true);
+            agreeBtn.parentNode.replaceChild(newAgreeBtn, agreeBtn);
+            cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+
+            newAgreeBtn.addEventListener('click', onConfirmAgree);
+            newCancelBtn.addEventListener('click', onConfirmCancel);
+
+            document.getElementById('confirmOverlay').classList.remove('hidden');
+
+            if (confirmTimer) clearInterval(confirmTimer);
+            confirmTimer = setInterval(() => {
+                confirmSeconds--;
+                document.getElementById('confirmCountdown').textContent = confirmSeconds + ' 秒后自动确认';
+                if (confirmSeconds <= 0) {
+                    clearInterval(confirmTimer);
+                    confirmTimer = null;
+                    onConfirmAgree();
+                }
+            }, 1000);
+        }
+
+        function closeConfirmDialog() {
+            if (confirmTimer) {
+                clearInterval(confirmTimer);
+                confirmTimer = null;
+            }
+            document.getElementById('confirmOverlay').classList.add('hidden');
+        }
+
+        function onConfirmAgree() {
+            closeConfirmDialog();
+            submitWithConfirm(currentDesc);
+        }
+
+        function onConfirmCancel() {
+            closeConfirmDialog();
+            document.getElementById('error').textContent = '已取消';
+        }
+
+        async function submitWithConfirm(desc) {
+            const btn = document.getElementById('submitBtn');
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+            const result = document.getElementById('result');
+            const polling = document.getElementById('polling');
+
+            error.textContent = '';
+            btn.disabled = true;
+            loading.style.display = 'block';
+            result.classList.add('hidden');
+            polling.classList.add('hidden');
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+
+            try {
+                const res = await fetch(`${API_BASE}/api/events`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ description: desc, confirmed: true, emergency_type: currentEmergencyType })
                 });
                 if (checkUnauthorized(res)) return;
                 const data = await res.json();
