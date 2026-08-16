@@ -134,8 +134,11 @@ def dispatch_node(state: DispatchState) -> DispatchState:
     if not emergency_type:
         emergency_type = _infer_emergency_type(state.get("description", ""))
 
+    # 人工部兜底：待审核事件或明确标记为人工部的事件
+    if emergency_type == "人工部" or event_type == "待审核":
+        handler = "人工部"
     # 若有 emergency_type（来自模糊急救确认），直接按类型分配外部资源处理方
-    if emergency_type == "medical":
+    elif emergency_type == "medical":
         handler = "120医疗急救中心（外部资源）"
     elif emergency_type == "police":
         handler = "110公安急救中心（外部资源）"

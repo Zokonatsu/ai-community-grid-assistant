@@ -116,6 +116,13 @@ def _verify_password(password: str, stored: str) -> bool:
         return False
 
 
+def _mask_id_card(id_card: str) -> str:
+    """身份证号脱敏：显示前6位和后4位，中间用*代替。"""
+    if not id_card or len(id_card) < 10:
+        return id_card
+    return id_card[:6] + "********" + id_card[-4:]
+
+
 # ------------------------------------------------------------------
 # Token 与会话管理
 # ------------------------------------------------------------------
@@ -141,7 +148,7 @@ def _cleanup_expired_sessions() -> None:
 # 用户注册
 # ------------------------------------------------------------------
 def register_user(
-    username: str, password: str, real_name: str, phone: str, role: str = "resident"
+    username: str, password: str, real_name: str, phone: str, id_card: str = "", role: str = "resident"
 ) -> tuple[bool, str, dict[str, Any] | None]:
     """
     注册新用户。
@@ -150,6 +157,7 @@ def register_user(
     username = username.strip()
     real_name = real_name.strip()
     phone = phone.strip()
+    id_card = id_card.strip().upper()
 
     # 基本校验
     if not username or len(username) < 3 or len(username) > 20:
@@ -162,6 +170,8 @@ def register_user(
         return False, "真实姓名不能为空且不能超过 20 个字符", None
     if not re.match(r"^1[3-9]\d{9}$", phone):
         return False, "手机号格式不正确", None
+    if id_card and not re.match(r"^[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dX]$", id_card):
+        return False, "身份证号格式不正确", None
     if role not in ("resident", "admin"):
         return False, "角色类型无效", None
     if role == "admin":
@@ -182,6 +192,7 @@ def register_user(
             "password_hash": _hash_password(password),
             "real_name": real_name,
             "phone": phone,
+            "id_card": id_card,
             "role": role,
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -194,6 +205,7 @@ def register_user(
         "username": user["username"],
         "real_name": user["real_name"],
         "phone": user["phone"],
+        "id_card": _mask_id_card(user.get("id_card", "")),
         "role": user["role"],
         "created_at": user["created_at"],
     }
@@ -236,6 +248,7 @@ def login_user(username: str, password: str) -> tuple[bool, str, dict[str, Any] 
         "username": user["username"],
         "real_name": user["real_name"],
         "phone": user["phone"],
+        "id_card": _mask_id_card(user.get("id_card", "")),
         "role": user["role"],
         "created_at": user["created_at"],
     }
@@ -293,6 +306,26 @@ def get_current_user(token: str | None) -> dict[str, Any] | None:
         "username": user["username"],
         "real_name": user["real_name"],
         "phone": user["phone"],
+        "id_card": _mask_id_card(user.get("id_card", "")),
+        "role": user["role"],
+        "created_at": user["created_at"],
+    }
+
+
+def get_user_by_id(user_id: str) -> dict[str, Any] | None:
+    """
+    根据用户ID获取完整用户信息（含原始身份证号，供后台审核使用）。
+    """
+    with _auth_lock:
+        user = _users.get(user_id)
+        if user is None:
+            return None
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "real_name": user["real_name"],
+        "phone": user["phone"],
+        "id_card": user.get("id_card", ""),
         "role": user["role"],
         "created_at": user["created_at"],
     }
