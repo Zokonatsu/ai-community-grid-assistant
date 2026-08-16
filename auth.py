@@ -17,14 +17,20 @@ import threading
 from datetime import datetime, timedelta
 from typing import Any
 
-from secure_store import load_encrypted, save_encrypted
+import cloud_store
+from secure_store import decrypt, encrypt, load_encrypted, save_encrypted
 
 logger = logging.getLogger("auth")
+
+# 账号存储后端：file（本地加密文件，默认/测试）| cloudbase（腾讯云 COS 云存储）
+AUTH_STORE = os.getenv("AUTH_STORE", "file").strip().lower()
 
 # ------------------------------------------------------------------
 # 数据文件路径
 # 账号/会话数据使用 AES-256-GCM 加密存于 secure/（密钥见环境变量
 # DATA_ENCRYPTION_KEY）；明文 events/tasks 等仍存于 data/。
+# AUTH_STORE=cloudbase 时，用户数据改为读写云存储（cloud_store），
+# 会话数据仍保留本地 secure/sessions.json.enc。
 # ------------------------------------------------------------------
 DATA_DIR = "./data"
 SECURE_DIR = "./secure"
@@ -69,6 +75,31 @@ def _save_json(kind: str, path: str, data: dict[str, Any]) -> None:
 
 
 # ------------------------------------------------------------------
+# 用户数据存储分发（本地加密文件 / 云存储）
+# ------------------------------------------------------------------
+def _load_users() -> dict[str, Any]:
+    """读取用户数据，按 AUTH_STORE 分发。
+
+    云存储模式：对象不存在 -> 返回 {}（安全默认，视为空库）；
+    其它异常 -> 抛错 fail-fast，防止误判"无用户"重建 admin 覆盖云端数据。
+    """
+    if AUTH_STORE == "cloudbase":
+        blob = cloud_store.download(cloud_store.USERS_OBJECT_KEY)
+        if blob is None:
+            return {}
+        return decrypt("users", blob)
+    return _load_json("users", USERS_FILE)
+
+
+def _save_users(data: dict[str, Any]) -> None:
+    """保存用户数据：先 AES-256-GCM 加密，再按 AUTH_STORE 写入本地或云存储。"""
+    if AUTH_STORE == "cloudbase":
+        cloud_store.upload(cloud_store.USERS_OBJECT_KEY, encrypt("users", data))
+        return
+    _save_json("users", USERS_FILE, data)
+
+
+# ------------------------------------------------------------------
 # 旧版明文数据迁移
 # ------------------------------------------------------------------
 def _read_plaintext_json(path: str) -> dict[str, Any] | None:
@@ -99,7 +130,10 @@ def _migrate_legacy_to_secure() -> None:
 
     优先级：secure 加密文件为权威。仅当 secure 文件不存在、旧明文存在时才迁移；
     已迁移后（secure 已存在）直接忽略明文，绝不回退。
+    云存储模式：用户数据来自云端，跳过本地明文迁移。
     """
+    if AUTH_STORE == "cloudbase":
+        return
     if os.path.exists(USERS_FILE) or os.path.exists(SESSIONS_FILE):
         return  # 已有加密数据，以 secure 为权威，不做迁移
 
@@ -133,7 +167,7 @@ def _init_auth() -> None:
     # 首次升级：把旧版明文账号数据迁移到加密存储（幂等，secure 为权威）
     _migrate_legacy_to_secure()
 
-    _users = _load_json("users", USERS_FILE)
+    _users = _load_users()
     _sessions = _load_json("sessions", SESSIONS_FILE)
     _cleanup_expired_sessions()
 
@@ -150,7 +184,7 @@ def _init_auth() -> None:
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         _users[admin_id] = admin_user
-        _save_json("users", USERS_FILE, _users)
+        _save_users(_users)
         logger.info("系统初始化：已创建默认管理员账号 admin / admin123456，请及时修改密码")
 
 
@@ -261,7 +295,7 @@ def register_user(
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         _users[user_id] = user
-        _save_json("users", USERS_FILE, _users)
+        _save_users(_users)
 
     # 返回脱敏后的用户信息
     public_user = {

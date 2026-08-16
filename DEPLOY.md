@@ -122,6 +122,67 @@ curl http://127.0.0.1:8000/health
 
 浏览器访问 `http://<服务器公网IP>:8000/` 即可进入前端管理页面。
 
+### 3.5 云存储模式（账号数据上云，可选）
+
+默认模式下账号数据保存在服务器的本地加密文件 `secure/users.json.enc`。若希望账号数据存在**腾讯云对象存储**（服务器重装/重建也不丢账号），可开启云存储模式。
+
+> **实现说明**：腾讯云 CloudBase 云存储底层即为对象存储（COS）。本项目使用腾讯云官方 **COS Python SDK**（`cos-python-sdk-v5`）读写，无数据库依赖。
+
+**数据放哪：**
+
+| 数据 | 云存储模式 | 说明 |
+|:---|:---|:---|
+| 账号（含密码哈希） | ☁️ 云端对象 `users.json.enc` | AES-256-GCM 加密后上传，云端只见密文 |
+| 会话（session） | 💻 本地 `secure/sessions.json.enc` | 短期数据，登出即删，无需上云 |
+| 事件/任务 | 💻 本地 `data/` | 明文事件数据，不上云 |
+
+**配置步骤：**
+
+1. 登录腾讯云控制台，在「对象存储 COS」创建存储桶，**权限建议私有读写**。
+2. 在「访问管理 CAM」创建**仅限该存储桶读写**的子账号，记录其 API 密钥 `SecretId` / `SecretKey`。
+3. 在服务器 `.env` 增加（密钥只放服务器，切勿提交/外泄）：
+
+   ```env
+   AUTH_STORE=cloudbase
+   COS_REGION=ap-guangzhou          # 存储桶所在地域
+   COS_BUCKET=your-bucket-name      # 存储桶名称
+   COS_SECRET_ID=<SecretId>
+   COS_SECRET_KEY=<SecretKey>
+   ```
+
+   `AUTH_STORE` 缺省为 `file`（本地模式）；`AUTH_STORE=cloudbase` 时缺任一 `COS_*` 服务将拒绝启动。
+
+4. **首次启用前**，把本地已有账号迁移到云端（仅需一次）：
+
+   ```bash
+   # 服务器上执行；要求 .env 已配置 COS_* 且本地存在 secure/users.json.enc
+   docker compose exec app python migrate_to_cloud.py
+   ```
+
+   - 脚本把加密 blob **字节原样**上传，本地文件保留（回滚备份）；
+   - 上传完成后重启服务，账号即读写云端。
+
+5. 重启生效：
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+**回滚到本地模式：**
+
+```bash
+# .env 中改回 AUTH_STORE=file，重启即可
+docker compose restart
+```
+
+> 回滚后服务读取本地 `secure/users.json.enc`（迁移时已保留）。若本地文件已过期，可在回滚前先切回 `cloudbase` 拉取最新数据再上传覆盖本地。
+
+**云存储模式注意事项：**
+
+- **备份**：账号权威数据在云端对象 `users.json.enc`。仍建议定期下载一份 `secure/users.json.enc`（连同 `DATA_ENCRYPTION_KEY`）作为异地备份。
+- **并发写**：对象存储为"后写覆盖"（last-writer-wins）。当前单实例由进程锁串行写入，安全；若将来部署多实例，需引入分布式锁或改按用户分对象存储（文档待补）。
+- **密钥轮换**：云上 blob 同样用 `DATA_ENCRYPTION_KEY` 加密，轮换密钥需先下载→重加密→重新上传。
+
 ---
 
 ## 4. Nginx 反向代理配置（可选）
@@ -203,6 +264,8 @@ cp -r ./secure ./secure.bak.$(date +%Y%m%d)
 ```
 
 > **注意**：`secure/` 下的文件已加密，需与 `.env` 中的 `DATA_ENCRYPTION_KEY` 一起备份才可用。
+>
+> **云存储模式**（`AUTH_STORE=cloudbase`）：账号权威数据在云端，此处的 `secure/users.json.enc` 为本地回滚备份，仍建议定期下载到服务器外保存。
 
 ---
 
