@@ -698,6 +698,16 @@
             const pendingEvents = allEvents.filter(e => e.status === '待审核');
             const acceptedEvents = allEvents.filter(e => e.status === '已受理');
 
+            // 保存已受理输入框中用户正在输入的内容，避免定时刷新时丢失
+            const savedReplies = {};
+            const acceptedContainer = document.getElementById('reviewAcceptedContainer');
+            acceptedContainer.querySelectorAll('textarea[id^="reply-text-"]').forEach(textarea => {
+                const key = textarea.id.replace('reply-text-', '');
+                if (textarea.value.trim()) {
+                    savedReplies[key] = textarea.value;
+                }
+            });
+
             const pendingContainer = document.getElementById('reviewPendingContainer');
             if (pendingEvents.length === 0) {
                 pendingContainer.innerHTML = '<div class="empty">暂无待审核事件</div>';
@@ -722,7 +732,6 @@
                 `).join('');
             }
 
-            const acceptedContainer = document.getElementById('reviewAcceptedContainer');
             if (acceptedEvents.length === 0) {
                 acceptedContainer.innerHTML = '<div class="empty">暂无已受理事件</div>';
             } else {
@@ -736,7 +745,7 @@
                         </div>
                         <div class="review-desc">${e.description || '-'}</div>
                         <div class="reply-box visible" id="reply-box-${e.created_at}">
-                            <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容"></textarea>
+                            <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容">${savedReplies[e.created_at] || ''}</textarea>
                             <button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>
                         </div>
                     </div>
