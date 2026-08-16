@@ -42,9 +42,10 @@ class _FakeClient:
         self.objects: dict[str, bytes] = {}
         self.put_calls: list[tuple[str, str, bytes]] = []
 
-    def put_object(self, bucket: str, key: str, data: bytes) -> None:
-        self.put_calls.append((bucket, key, bytes(data)))
-        self.objects[key] = bytes(data)
+    def put_object(self, Bucket: str, Key: str, Body: bytes, **kwargs) -> None:
+        # 与真实 SDK 签名 put_object(Bucket, Body, Key) 保持一致（参数名即关键字名）
+        self.put_calls.append((Bucket, Key, bytes(Body)))
+        self.objects[Key] = bytes(Body)
 
     def get_object(self, bucket: str, key: str) -> dict:
         if key in self.objects:
@@ -93,7 +94,7 @@ def test_download_error_raises():
 def test_upload_error_raises():
     fake = _install_fake()
 
-    def boom(bucket: str, key: str, data: bytes):
+    def boom(Bucket: str, Key: str, Body: bytes, **kwargs):
         raise RuntimeError("permission denied")
 
     fake.put_object = boom

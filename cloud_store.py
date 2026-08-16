@@ -127,7 +127,10 @@ def upload(key: str, data: bytes) -> None:
     """上传对象内容（覆盖写）。失败一律 raise，避免"表面成功、重启丢数据"。"""
     client, bucket = _get_client()
     try:
-        client.put_object(bucket, key, data)
+        # 注意：cos-python-sdk-v5 的签名是 put_object(Bucket, Body, Key)，
+        # Body 是第 2 参数、Key 是第 3 参数；用关键字传参防止位置错序
+        # 把二进制 blob 误传给 Key（会被 to_unicode 解码失败）。
+        client.put_object(Bucket=bucket, Key=key, Body=data)
     except Exception as exc:
         raise CloudStoreError(f"云存储上传失败（key={key}）：{exc}") from exc
     logger.info("云存储上传成功：%s（%d 字节）", key, len(data))
