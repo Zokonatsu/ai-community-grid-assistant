@@ -20,9 +20,14 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 # 备份并清空 data/secure，确保测试默认管理员创建逻辑
 DATA_DIR = "./data"
 SECURE_DIR = "./secure"
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BAK_DATA_DIR = os.path.join(PROJECT_DIR, "data.bak.test_security")
 BAK_SECURE_DIR = os.path.join(PROJECT_DIR, "secure.bak.test_security")
+
+# 固定以仓库根为工作目录并加入 sys.path，保证从 tests/ 目录执行时
+# 也能正确解析 ./data、./secure、static/ 并 import auth
+os.chdir(PROJECT_DIR)
+sys.path.insert(0, PROJECT_DIR)
 
 def _backup(src, bak):
     if os.path.exists(bak):

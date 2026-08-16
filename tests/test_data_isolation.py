@@ -21,7 +21,7 @@ from unittest.mock import patch
 # ------------------------------------------------------------------
 # 测试环境准备
 # ------------------------------------------------------------------
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(PROJECT_DIR)
 sys.path.insert(0, PROJECT_DIR)
 
