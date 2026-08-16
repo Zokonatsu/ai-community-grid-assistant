@@ -254,6 +254,8 @@
         .tag-processing { background: #e5e7eb; color: #6b7280; }
         .tag-failed { background: #ffe0e0; color: #c0392b; }
         .tag-success { background: #e0f2e9; color: #27ae60; }
+        .tag-pending { background: #fff3cd; color: #d97706; }
+        .tag-accepted { background: #dbeafe; color: #2563eb; }
         .tag-scene-life { background: #fde8e8; color: #c0392b; }
         .tag-scene-rescue { background: #fff3cd; color: #d97706; }
         .tag-scene-normal { background: #eaf0ff; color: #1a56db; }
@@ -733,10 +735,7 @@
                             <div><span class="tag ${statusClass(e.status)}">${e.status}</span></div>
                         </div>
                         <div class="review-desc">${e.description || '-'}</div>
-                        <div class="review-actions">
-                            <button class="btn-sm" onclick="toggleReplyBox('${e.created_at}')">回复</button>
-                        </div>
-                        <div class="reply-box" id="reply-box-${e.created_at}">
+                        <div class="reply-box visible" id="reply-box-${e.created_at}">
                             <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容"></textarea>
                             <button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>
                         </div>
@@ -769,10 +768,8 @@
                 }
                 const data = await res.json();
                 if (data.success) {
-                    // 展开回复框
-                    const box = document.getElementById(`reply-box-${createdAt}`);
-                    if (box) box.classList.add('visible');
-                    loadData();
+                    // 成功受理后刷新数据
+                    await loadData();
                 }
             } catch (e) {
                 alert('网络请求失败');
@@ -810,7 +807,8 @@
                 }
                 const data = await res.json();
                 if (data.success) {
-                    loadData();
+                    alert('回复提交成功');
+                    await loadData();
                 }
             } catch (e) {
                 alert('网络请求失败');
