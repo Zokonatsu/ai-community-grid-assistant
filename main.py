@@ -410,6 +410,7 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
                 "user_name": task.get("user_name", ""),
                 "user_phone": task.get("user_phone", ""),
                 "user_id_card": task.get("user_id_card", ""),
+                "emergency_type": task.get("emergency_type", ""),
             })
 
     # 按 created_at 降序排列，最新的记录展示在最前面
@@ -474,6 +475,7 @@ async def create_event(
                     "user_name": current_user.get("real_name", ""),
                     "user_phone": current_user.get("phone", ""),
                     "user_id_card": current_user.get("id_card", ""),
+                    "emergency_type": hard_rule_result.get("emergency_type", ""),
                     "reply": "",
                 }
                 _save_tasks(_tasks)
@@ -568,6 +570,7 @@ async def create_event(
                     "user_name": current_user.get("real_name", ""),
                     "user_phone": current_user.get("phone", ""),
                     "user_id_card": current_user.get("id_card", ""),
+                    "emergency_type": "人工部",
                     "reply": "",
                 }
                 _save_tasks(_tasks)
@@ -625,6 +628,7 @@ async def create_event(
                     "user_name": current_user.get("real_name", ""),
                     "user_phone": current_user.get("phone", ""),
                     "user_id_card": current_user.get("id_card", ""),
+                    "emergency_type": "人工部",
                     "reply": "",
                 }
                 _save_tasks(_tasks)
@@ -746,6 +750,7 @@ async def create_event(
                     "user_name": current_user.get("real_name", ""),
                     "user_phone": current_user.get("phone", ""),
                     "user_id_card": current_user.get("id_card", ""),
+                    "emergency_type": "人工部",
                     "reply": "",
                 }
                 _save_tasks(_tasks)
@@ -803,6 +808,7 @@ async def create_event(
                     "user_name": current_user.get("real_name", ""),
                     "user_phone": current_user.get("phone", ""),
                     "user_id_card": current_user.get("id_card", ""),
+                    "emergency_type": semantic_result.get("emergency_type", ""),
                     "reply": "",
                 }
                 _save_tasks(_tasks)
@@ -850,6 +856,7 @@ async def create_event(
                 "user_name": current_user.get("real_name", ""),
                 "user_phone": current_user.get("phone", ""),
                 "user_id_card": current_user.get("id_card", ""),
+                "emergency_type": semantic_result.get("emergency_type", ""),
                 "reply": "",
             }
             _save_tasks(_tasks)
@@ -899,6 +906,7 @@ async def create_event(
                     "user_name": current_user.get("real_name", ""),
                     "user_phone": current_user.get("phone", ""),
                     "user_id_card": current_user.get("id_card", ""),
+                    "emergency_type": "人工部",
                     "reply": "",
                 }
                 _save_tasks(_tasks)

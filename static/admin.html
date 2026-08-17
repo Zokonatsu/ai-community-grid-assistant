@@ -311,6 +311,35 @@
         .review-card.accepted {
             border-left-color: #2563eb;
         }
+        .review-collapsed {
+            display: none;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px dashed #e5e7eb;
+        }
+        .review-collapsed.visible {
+            display: block;
+        }
+        .review-expand-btn {
+            background: #f3f4f6;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 14px;
+            font-size: 13px;
+            color: #666;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        .review-expand-btn:hover {
+            background: #e5e7eb;
+        }
+        .collapsed-card {
+            background: #fafafa;
+            border-radius: 8px;
+            padding: 12px;
+            margin-top: 8px;
+            border-left: 3px solid #d97706;
+        }
         .review-header {
             display: flex;
             justify-content: space-between;
@@ -608,7 +637,7 @@
             const total = events.length;
             const today = todayStr();
             const todayCount = events.filter(e => (e.created_at || '').startsWith(today)).length;
-            const pending = events.filter(e => e.status === '处理中' || e.status === '待审核' || e.status === '已受理').length;
+            const pending = events.filter(e => e.emergency_type === '人工部' && (e.status === '待审核' || e.status === '已受理')).length;
             const done = events.filter(e => e.status === '已完成' || e.status === '已派单').length;
 
             document.getElementById('stat-total').textContent = total;
@@ -695,8 +724,8 @@
         }
 
         function renderReviewLists() {
-            const pendingEvents = allEvents.filter(e => e.status === '待审核');
-            const acceptedEvents = allEvents.filter(e => e.status === '已受理');
+            const pendingEvents = allEvents.filter(e => e.emergency_type === '人工部' && e.status === '待审核');
+            const acceptedEvents = allEvents.filter(e => e.emergency_type === '人工部' && e.status === '已受理');
 
             // 保存已受理输入框中用户正在输入的内容，避免定时刷新时丢失
             const savedReplies = {};
@@ -723,24 +752,65 @@
             if (pendingEvents.length === 0) {
                 pendingContainer.innerHTML = '<div class="empty">暂无待审核事件</div>';
             } else {
-                pendingContainer.innerHTML = pendingEvents.map(e => `
-                    <div class="review-card" id="card-${e.created_at}">
-                        <div class="review-header">
-                            <div class="review-user">
-                                <strong>${e.user_name || '-'}</strong> &nbsp;| &nbsp;📱 ${e.user_phone || '-'} &nbsp;| &nbsp;🆔 ${e.user_id_card || '-'}
+                // 按身份证号分组
+                const grouped = {};
+                for (const e of pendingEvents) {
+                    const key = e.user_id_card || 'unknown';
+                    if (!grouped[key]) grouped[key] = [];
+                    grouped[key].push(e);
+                }
+                let html = '';
+                for (const [idCard, events] of Object.entries(grouped)) {
+                    const first = events[0];
+                    const rest = events.slice(1);
+                    const safeId = idCard.replace(/[^a-zA-Z0-9]/g, '_');
+                    html += `
+                        <div class="review-card" id="card-${first.created_at}">
+                            <div class="review-header">
+                                <div class="review-user">
+                                    <strong>${first.user_name || '-'}</strong> &nbsp;| &nbsp;📱 ${first.user_phone || '-'} &nbsp;| &nbsp;🆔 ${first.user_id_card || '-'}
+                                </div>
+                                <div><span class="tag ${statusClass(first.status)}">${first.status}</span></div>
                             </div>
-                            <div><span class="tag ${statusClass(e.status)}">${e.status}</span></div>
-                        </div>
-                        <div class="review-desc">${e.description || '-'}</div>
-                        <div class="review-actions">
-                            <button class="btn-sm btn-accept" onclick="acceptEvent('${e.created_at}')">受理</button>
-                        </div>
-                        <div class="reply-box" id="reply-box-${e.created_at}">
-                            <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容"></textarea>
-                            <button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>
-                        </div>
-                    </div>
-                `).join('');
+                            <div class="review-desc">${first.description || '-'}</div>
+                            <div class="review-actions">
+                                <button class="btn-sm btn-accept" onclick="acceptEvent('${first.created_at}')">受理</button>
+                            </div>
+                            <div class="reply-box" id="reply-box-${first.created_at}">
+                                <textarea id="reply-text-${first.created_at}" placeholder="请输入回复内容"></textarea>
+                                <button class="btn-sm btn-done" onclick="submitReply('${first.created_at}')">提交回复</button>
+                            </div>
+                    `;
+                    if (rest.length > 0) {
+                        html += `
+                            <button class="review-expand-btn" id="expand-btn-${safeId}" onclick="toggleCollapsed('${safeId}')">展开该用户其余 ${rest.length} 条待审核事件</button>
+                            <div class="review-collapsed" id="collapsed-${safeId}">
+                        `;
+                        for (const e of rest) {
+                            html += `
+                                <div class="collapsed-card" id="card-${e.created_at}">
+                                    <div class="review-header">
+                                        <div class="review-user">
+                                            <strong>${e.user_name || '-'}</strong> &nbsp;| &nbsp;📱 ${e.user_phone || '-'} &nbsp;| &nbsp;🆔 ${e.user_id_card || '-'}
+                                        </div>
+                                        <div><span class="tag ${statusClass(e.status)}">${e.status}</span></div>
+                                    </div>
+                                    <div class="review-desc">${e.description || '-'}</div>
+                                    <div class="review-actions">
+                                        <button class="btn-sm btn-accept" onclick="acceptEvent('${e.created_at}')">受理</button>
+                                    </div>
+                                    <div class="reply-box" id="reply-box-${e.created_at}">
+                                        <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容"></textarea>
+                                        <button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>
+                                    </div>
+                                </div>
+                            `;
+                        }
+                        html += `</div>`;
+                    }
+                    html += `</div>`;
+                }
+                pendingContainer.innerHTML = html;
             }
 
             if (acceptedEvents.length === 0) {
@@ -771,6 +841,14 @@
                     newEl.setSelectionRange(selStart, selEnd);
                 }
             }
+        }
+
+        function toggleCollapsed(safeId) {
+            const collapsed = document.getElementById('collapsed-' + safeId);
+            const btn = document.getElementById('expand-btn-' + safeId);
+            if (!collapsed || !btn) return;
+            const isVisible = collapsed.classList.toggle('visible');
+            btn.textContent = isVisible ? '收起' : '展开该用户其余 ' + (collapsed.children.length) + ' 条待审核事件';
         }
 
         async function acceptEvent(createdAt) {
