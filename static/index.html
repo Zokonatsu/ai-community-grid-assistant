@@ -3,431 +3,52 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 社区网格员助手</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
-            background: #f5f7fa;
-            color: #333;
-            line-height: 1.6;
-        }
-        .container {
-            max-width: 960px;
-            margin: 0 auto;
-            padding: 24px 16px;
-        }
-        header {
-            text-align: center;
-            margin-bottom: 32px;
-        }
-        header h1 {
-            font-size: 28px;
-            color: #1a56db;
-            margin-bottom: 8px;
-        }
-        header p {
-            color: #666;
-            font-size: 14px;
-        }
-        .card {
-            background: #fff;
-            border-radius: 10px;
-            padding: 24px;
-            margin-bottom: 24px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-        }
-        .card h2 {
-            font-size: 18px;
-            margin-bottom: 16px;
-            color: #111;
-            border-left: 4px solid #1a56db;
-            padding-left: 10px;
-        }
-        textarea {
-            width: 100%;
-            padding: 12px;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            font-size: 15px;
-            resize: vertical;
-            min-height: 80px;
-            font-family: inherit;
-        }
-        textarea:focus {
-            outline: none;
-            border-color: #1a56db;
-        }
-        .btn {
-            display: inline-block;
-            margin-top: 12px;
-            padding: 10px 28px;
-            background: #1a56db;
-            color: #fff;
-            border: none;
-            border-radius: 8px;
-            font-size: 15px;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .btn:hover { background: #164bc7; }
-        .btn:disabled { background: #9bb3e6; cursor: not-allowed; }
-        .result {
-            margin-top: 20px;
-            padding: 16px;
-            background: #f0f7ff;
-            border-radius: 8px;
-            border: 1px solid #c2d8ff;
-        }
-        .result.hidden { display: none; }
-        .result-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-            gap: 12px;
-            margin-top: 12px;
-        }
-        .result-item {
-            background: #fff;
-            padding: 10px 12px;
-            border-radius: 6px;
-            border: 1px solid #e2e8f0;
-        }
-        .result-item .label {
-            font-size: 12px;
-            color: #888;
-            margin-bottom: 4px;
-        }
-        .result-item .value {
-            font-size: 15px;
-            color: #222;
-            font-weight: 500;
-        }
-        .error {
-            margin-top: 12px;
-            color: #c0392b;
-            font-size: 14px;
-        }
-        /* 轮询状态提示区域 */
-        .polling {
-            margin-top: 20px;
-            padding: 16px;
-            background: #f0f7ff;
-            border-radius: 8px;
-            border: 1px solid #c2d8ff;
-        }
-        .polling.hidden { display: none; }
-        .polling-id {
-            font-size: 12px;
-            color: #666;
-            margin-top: 8px;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        }
-        .spinner {
-            display: inline-block;
-            width: 14px;
-            height: 14px;
-            border: 2px solid #1a56db;
-            border-top-color: transparent;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-right: 8px;
-            vertical-align: middle;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .loading { color: #1a56db; font-size: 14px; margin-top: 8px; }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 14px;
-        }
-        th, td {
-            text-align: left;
-            padding: 12px;
-            border-bottom: 1px solid #eee;
-        }
-        th {
-            background: #f8fafc;
-            color: #555;
-            font-weight: 600;
-        }
-        tr:hover { background: #f8fafc; }
-        .tag {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 500;
-        }
-        .tag-high { background: #ffe0e0; color: #c0392b; }
-        .tag-medium { background: #fff3cd; color: #856404; }
-        .tag-low { background: #e0f2e9; color: #27ae60; }
-        /* 状态标签扩展 */
-        .tag-processing { background: #e5e7eb; color: #6b7280; }
-        .tag-failed { background: #ffe0e0; color: #c0392b; }
-        .tag-success { background: #e0f2e9; color: #27ae60; }
-        .tag-pending { background: #fff3cd; color: #d97706; }
-        .tag-accepted { background: #dbeafe; color: #2563eb; }
-        .tag-scene-life { background: #fde8e8; color: #c0392b; }
-        .tag-scene-rescue { background: #fff3cd; color: #d97706; }
-        .tag-scene-normal { background: #eaf0ff; color: #1a56db; }
-        .empty { text-align: center; color: #999; padding: 40px 0; }
-        /* 顶部用户栏 */
-        .userbar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            background: #fff;
-            border-radius: 10px;
-            padding: 12px 16px;
-            margin-bottom: 16px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-            font-size: 14px;
-        }
-        .userbar .user-info {
-            color: #555;
-        }
-        .userbar .user-info strong {
-            color: #1a56db;
-        }
-        .userbar .user-actions a {
-            color: #1a56db;
-            text-decoration: none;
-            margin-left: 12px;
-            cursor: pointer;
-        }
-        .userbar .user-actions a:hover { text-decoration: underline; }
-        .userbar .role-tag {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 500;
-            margin-left: 8px;
-        }
-        .role-tag.admin { background: #f3e8ff; color: #7e22ce; }
-        .role-tag.resident { background: #eaf0ff; color: #1a56db; }
-        /* 确认弹窗 */
-        .confirm-overlay {
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.5);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-        }
-        .confirm-overlay.hidden { display: none; }
-        .confirm-modal {
-            background: #fff;
-            border-radius: 12px;
-            padding: 24px;
-            max-width: 480px;
-            width: 90%;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.15);
-        }
-        .confirm-title {
-            font-size: 18px;
-            font-weight: 600;
-            color: #c0392b;
-            margin-bottom: 12px;
-        }
-        .confirm-text {
-            font-size: 15px;
-            color: #333;
-            line-height: 1.6;
-            margin-bottom: 12px;
-        }
-        .confirm-countdown {
-            font-size: 14px;
-            color: #c0392b;
-            font-weight: 600;
-            margin-bottom: 20px;
-        }
-        .confirm-legal {
-            color: #c0392b;
-            font-size: 13px;
-            margin-bottom: 16px;
-            font-weight: bold;
-            line-height: 1.5;
-        }
-        .confirm-buttons {
-            display: flex;
-            justify-content: flex-end;
-            gap: 12px;
-        }
-        .btn-confirm {
-            background: #c0392b;
-            padding: 8px 20px;
-            font-size: 14px;
-        }
-        .btn-confirm:hover { background: #a93226; }
-        .btn-cancel {
-            background: #e5e7eb;
-            color: #374151;
-            padding: 8px 20px;
-            font-size: 14px;
-        }
-        .btn-cancel:hover { background: #d1d5db; }
-        /* 回复查看弹窗 */
-        .reply-overlay {
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.5);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-        }
-        .reply-overlay.hidden { display: none; }
-        .reply-modal {
-            background: #fff;
-            border-radius: 12px;
-            padding: 24px;
-            max-width: 480px;
-            width: 90%;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.15);
-            position: relative;
-        }
-        .reply-close {
-            position: absolute;
-            top: 12px;
-            left: 12px;
-            width: 28px;
-            height: 28px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
-            color: #666;
-            cursor: pointer;
-            border-radius: 6px;
-            transition: background 0.2s;
-        }
-        .reply-close:hover { background: #f3f4f6; color: #111; }
-        .reply-title {
-            font-size: 18px;
-            font-weight: 600;
-            color: #1a56db;
-            margin-bottom: 16px;
-            padding-left: 32px;
-        }
-        .reply-content {
-            font-size: 15px;
-            color: #333;
-            line-height: 1.7;
-            background: #f8fafc;
-            padding: 16px;
-            border-radius: 8px;
-            white-space: pre-wrap;
-            word-break: break-word;
-        }
-        .reply-link {
-            color: #1a56db;
-            cursor: pointer;
-            text-decoration: underline;
-        }
-
-        /* ===== 移动端适配 ===== */
-        @media (max-width: 768px) {
-            .container {
-                padding: 16px 12px;
-            }
-            header h1 {
-                font-size: 22px;
-            }
-            textarea {
-                font-size: 16px; /* 防止 iOS 聚焦时自动放大 */
-            }
-            .btn {
-                min-height: 44px;
-            }
-            .card {
-                padding: 18px 16px;
-            }
-            /* 事件列表表格 → 卡片式布局 */
-            #listContainer table thead {
-                display: none;
-            }
-            #listContainer table,
-            #listContainer table tbody,
-            #listContainer table tr,
-            #listContainer table td {
-                display: block;
-                width: 100%;
-            }
-            #listContainer table tr {
-                background: #fff;
-                border: 1px solid #eee;
-                border-radius: 10px;
-                padding: 12px 14px;
-                margin-bottom: 12px;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-            }
-            #listContainer table tr:hover {
-                background: #fff;
-            }
-            #listContainer table td {
-                display: flex;
-                flex-wrap: wrap;
-                justify-content: space-between;
-                align-items: flex-start;
-                gap: 2px 12px;
-                padding: 6px 0;
-                border-bottom: none;
-                font-size: 14px;
-                overflow-wrap: anywhere;
-            }
-            #listContainer table td::before {
-                content: attr(data-label);
-                color: #888;
-                flex-shrink: 0;
-                font-weight: 500;
-            }
-            #listContainer table td:first-child {
-                padding-top: 0;
-            }
-            #listContainer table td:last-child {
-                padding-bottom: 0;
-            }
-        }
-    </style>
+    <title>知·社区网格</title>
+    <link rel="stylesheet" href="/common.css">
 </head>
 <body>
-    <div class="container">
-        <!-- 用户栏 -->
+    <!-- 顶部栏：左标题 + 右用户区 -->
+    <div class="topbar">
+        <div class="topbar-title">
+            知·社区网格
+            <span class="topbar-sub">社区事件提交与派单</span>
+        </div>
+
         <div class="userbar" id="userbar" style="display:none;">
             <div class="user-info">
-                👤 欢迎，<strong id="user-name">-</strong>
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-3.9 3.6-6.5 8-6.5s8 2.6 8 6.5"/></svg>
+                欢迎，<strong id="user-name">-</strong>
                 <span class="role-tag" id="user-role">-</span>
             </div>
             <div class="user-actions">
-                <a id="admin-link" style="display:none;" href="/admin.html">🏠 进入管理后台</a>
-                <a onclick="logout()">🚪 退出登录</a>
+                <a id="admin-link" style="display:none;" href="/admin.html">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+                    进入管理后台
+                </a>
+                <a onclick="logout()">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
+                    退出登录
+                </a>
             </div>
         </div>
+    </div>
 
-        <header>
-            <h1>AI 社区网格员助手</h1>
-            <p>智能接收居民诉求，自动提取信息并派发处理部门</p>
-        </header>
-
+    <div class="container">
         <div class="card">
             <h2>事件提交</h2>
             <textarea id="description" placeholder="请输入居民问题描述，例如：我家楼下下水道堵了"></textarea>
             <button class="btn" id="submitBtn" onclick="submitEvent()">提交处理</button>
-            <div class="loading" id="loading" style="display:none;">AI 处理中，请稍候…</div>
+            <div class="loading" id="loading" style="display:none;"><span class="dot"></span>正在处理，请稍候</div>
             <div class="error" id="error"></div>
 
             <!-- 异步轮询状态提示 -->
             <div class="polling hidden" id="polling">
-                <div style="font-weight:600; margin-bottom:8px;">
-                    <span class="spinner"></span>事件已提交，正在处理中…
-                </div>
+                <div><span class="spinner"></span>事件已提交，正在处理中</div>
                 <div class="polling-id">事件 ID：<span id="polling-id"></span></div>
             </div>
 
             <div class="result hidden" id="result">
-                <div style="font-weight:600; margin-bottom:8px;">处理结果</div>
+                <div>处理结果</div>
                 <div class="result-grid">
                     <div class="result-item">
                         <div class="label">事件类型</div>
@@ -464,31 +85,33 @@
         <div class="card">
             <h2>事件列表</h2>
             <div id="listContainer">
-                <div class="empty">加载中…</div>
+                <div class="empty">加载中</div>
             </div>
         </div>
     </div>
 
     <!-- 急救确认弹窗 -->
-    <div class="confirm-overlay hidden" id="confirmOverlay">
-        <div class="confirm-modal">
-            <div class="confirm-title" id="confirmTitle">急救确认</div>
-            <div class="confirm-text" id="confirmText"></div>
-            <div class="confirm-countdown" id="confirmCountdown">5 秒后自动确认</div>
-            <div class="confirm-legal" id="confirmLegal"></div>
-            <div class="confirm-buttons">
+    <div class="overlay hidden" id="confirmOverlay">
+        <div class="modal">
+            <div class="modal-title is-danger" id="confirmTitle">急救确认</div>
+            <div class="modal-text" id="confirmText"></div>
+            <div class="modal-countdown" id="confirmCountdown">5 秒后自动确认</div>
+            <div class="modal-legal" id="confirmLegal"></div>
+            <div class="modal-buttons">
                 <button class="btn btn-cancel" id="confirmCancel">取消</button>
-                <button class="btn btn-confirm" id="confirmAgree">同意</button>
+                <button class="btn btn-danger" id="confirmAgree">同意</button>
             </div>
         </div>
     </div>
 
     <!-- 回复查看弹窗 -->
-    <div class="reply-overlay hidden" id="replyOverlay">
-        <div class="reply-modal">
-            <div class="reply-close" onclick="closeReplyDialog()">×</div>
-            <div class="reply-title">人工回复</div>
-            <div class="reply-content" id="replyText"></div>
+    <div class="overlay hidden" id="replyOverlay">
+        <div class="modal">
+            <div class="modal-close" onclick="closeReplyDialog()" aria-label="关闭">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </div>
+            <div class="modal-title" style="padding-left:32px;">人工回复</div>
+            <div class="modal-content" id="replyText"></div>
         </div>
     </div>
 

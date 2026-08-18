@@ -3,145 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>登录 / 注册 - AI 社区网格员助手</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
-            background: #f5f7fa;
-            color: #333;
-            line-height: 1.6;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 24px 16px;
-        }
-        .auth-container {
-            width: 100%;
-            max-width: 420px;
-        }
-        .auth-header {
-            text-align: center;
-            margin-bottom: 24px;
-        }
-        .auth-header h1 {
-            font-size: 24px;
-            color: #1a56db;
-            margin-bottom: 6px;
-        }
-        .auth-header p {
-            color: #666;
-            font-size: 14px;
-        }
-        .card {
-            background: #fff;
-            border-radius: 10px;
-            padding: 28px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-        }
-        .tabs {
-            display: flex;
-            margin-bottom: 20px;
-            border-bottom: 1px solid #eee;
-        }
-        .tab {
-            flex: 1;
-            text-align: center;
-            padding: 10px 0;
-            cursor: pointer;
-            font-size: 15px;
-            color: #666;
-            border-bottom: 2px solid transparent;
-            transition: all 0.2s;
-        }
-        .tab.active {
-            color: #1a56db;
-            border-bottom-color: #1a56db;
-            font-weight: 600;
-        }
-        .form-group {
-            margin-bottom: 16px;
-        }
-        .form-group label {
-            display: block;
-            font-size: 13px;
-            color: #555;
-            margin-bottom: 6px;
-            font-weight: 500;
-        }
-        .form-group input,
-        .form-group select {
-            width: 100%;
-            padding: 10px 12px;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            font-size: 14px;
-            font-family: inherit;
-            background: #fff;
-        }
-        .form-group input:focus,
-        .form-group select:focus {
-            outline: none;
-            border-color: #1a56db;
-        }
-        .btn {
-            display: block;
-            width: 100%;
-            padding: 11px;
-            min-height: 44px;
-            background: #1a56db;
-            color: #fff;
-            border: none;
-            border-radius: 8px;
-            font-size: 15px;
-            cursor: pointer;
-            transition: background 0.2s;
-            margin-top: 8px;
-        }
-        .btn:hover { background: #164bc7; }
-        .btn:disabled { background: #9bb3e6; cursor: not-allowed; }
-        .error {
-            margin-top: 12px;
-            color: #c0392b;
-            font-size: 13px;
-            text-align: center;
-        }
-        .success {
-            margin-top: 12px;
-            color: #27ae60;
-            font-size: 13px;
-            text-align: center;
-        }
-        .hint {
-            margin-top: 16px;
-            text-align: center;
-            font-size: 12px;
-            color: #888;
-        }
-        .hidden { display: none; }
-
-        /* ===== 移动端适配 ===== */
-        @media (max-width: 768px) {
-            .form-group input,
-            .form-group select {
-                font-size: 16px; /* 防止 iOS 聚焦时自动放大 */
-            }
-        }
-        @media (max-width: 480px) {
-            body {
-                padding: 16px 12px;
-            }
-            .card {
-                padding: 20px 16px;
-            }
-        }
-    </style>
+    <title>登录 · 知·社区网格</title>
+    <link rel="stylesheet" href="/common.css">
 </head>
-<body>
+<body class="auth-body">
     <div class="auth-container">
         <div class="auth-header">
-            <h1>AI 社区网格员助手</h1>
+            <h1>知·社区网格</h1>
             <p>用户登录与实名认证</p>
         </div>
         <div class="card">
@@ -160,7 +28,7 @@
                     <label for="login-password">密码</label>
                     <input type="password" id="login-password" placeholder="请输入密码" required>
                 </div>
-                <button type="submit" class="btn" id="login-btn">登录</button>
+                <button type="submit" class="btn btn-block" id="login-btn">登录</button>
                 <div class="error hidden" id="login-error"></div>
             </form>
 
@@ -197,7 +65,7 @@
                     </select>
                     <input type="hidden" id="reg-role-value" value="resident">
                 </div>
-                <button type="submit" class="btn" id="register-btn">注册</button>
+                <button type="submit" class="btn btn-block" id="register-btn">注册</button>
                 <div class="error hidden" id="register-error"></div>
                 <div class="success hidden" id="register-success"></div>
             </form>

@@ -3,76 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>后台管理 - AI 社区网格员助手</title>
+    <title>管理后台 · 知·社区网格</title>
+    <link rel="stylesheet" href="/common.css">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
-            background: #f5f7fa;
-            color: #333;
-            line-height: 1.6;
-        }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 24px 16px;
-        }
-        /* 顶部导航 */
-        .topbar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 24px;
-            flex-wrap: wrap;
-            gap: 12px;
-        }
-        .topbar h1 {
-            font-size: 22px;
-            color: #1a56db;
-        }
-        .topbar .nav-links a {
-            color: #1a56db;
-            text-decoration: none;
-            font-size: 14px;
-            margin-left: 16px;
-            cursor: pointer;
-        }
-        .topbar .nav-links a:hover { text-decoration: underline; }
-        .topbar .user-info {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            font-size: 14px;
-            color: #555;
-        }
-        .topbar .user-info strong {
-            color: #1a56db;
-        }
-        .role-tag {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 500;
-        }
-        .role-tag.admin { background: #f3e8ff; color: #7e22ce; }
+        /* ==========================================================================
+           管理后台专属样式 · 复用 common.css 设计 token
+           ========================================================================== */
+        .container { max-width: 1200px; }
 
-        .card {
-            background: #fff;
-            border-radius: 10px;
-            padding: 24px;
-            margin-bottom: 24px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-        }
-        .card h2 {
-            font-size: 18px;
-            margin-bottom: 16px;
-            color: #111;
-            border-left: 4px solid #1a56db;
-            padding-left: 10px;
-        }
-
-        /* 统计卡片 */
+        /* ---- 统计卡片 ---- */
         .stat-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -80,67 +19,51 @@
             margin-bottom: 24px;
         }
         .stat-card {
-            background: #fff;
-            border-radius: 10px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
             padding: 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            box-shadow: var(--shadow);
             display: flex;
             align-items: center;
             gap: 14px;
         }
         .stat-icon {
-            width: 48px;
-            height: 48px;
-            border-radius: 10px;
+            width: 44px;
+            height: 44px;
+            border-radius: var(--radius-md);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 22px;
             flex-shrink: 0;
         }
-        .stat-icon.blue { background: #eaf0ff; }
-        .stat-icon.green { background: #e0f2e9; }
-        .stat-icon.orange { background: #fff3cd; }
-        .stat-icon.purple { background: #f3e8ff; }
-        .stat-info .stat-value {
-            font-size: 26px;
+        .stat-icon .icon { width: 20px; height: 20px; }
+        .stat-icon.blue   { background: var(--accent-soft);  color: var(--accent); }
+        .stat-icon.green  { background: var(--success-soft); color: var(--success); }
+        .stat-icon.orange { background: var(--warning-soft); color: var(--warning); }
+        .stat-icon.purple { background: var(--muted-soft);   color: var(--text-2); }
+        .stat-value {
+            font-size: 24px;
             font-weight: 700;
-            color: #111;
+            color: var(--text-1);
             line-height: 1.2;
+            font-variant-numeric: tabular-nums;
         }
-        .stat-info .stat-label {
-            font-size: 13px;
-            color: #888;
-            margin-top: 2px;
-        }
+        .stat-label { font-size: 13px; color: var(--text-3); margin-top: 2px; }
 
-        /* 图表布局 */
+        /* ---- 图表 ---- */
         .charts-row {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-            gap: 24px;
+            gap: 20px;
             margin-bottom: 24px;
         }
-        .chart-container h3 {
-            font-size: 15px;
-            color: #555;
-            margin-bottom: 16px;
-            font-weight: 600;
-        }
-        .bar-chart {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-        .bar-item {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
+        .bar-chart { display: flex; flex-direction: column; gap: 12px; }
+        .bar-item { display: flex; align-items: center; gap: 10px; }
         .bar-label {
             width: 80px;
             font-size: 13px;
-            color: #555;
+            color: var(--text-2);
             text-align: right;
             flex-shrink: 0;
             white-space: nowrap;
@@ -149,168 +72,71 @@
         }
         .bar-track {
             flex: 1;
-            height: 22px;
-            background: #f1f5f9;
-            border-radius: 4px;
+            height: 20px;
+            background: var(--surface-2);
+            border-radius: var(--radius-pill);
             overflow: hidden;
-            position: relative;
         }
         .bar-fill {
             height: 100%;
-            border-radius: 4px;
+            border-radius: var(--radius-pill);
             transition: width 0.6s ease;
             min-width: 4px;
         }
-        .bar-fill.blue { background: #1a56db; }
-        .bar-fill.red { background: #e74c3c; }
-        .bar-fill.orange { background: #f39c12; }
-        .bar-fill.green { background: #27ae60; }
-        .bar-fill.purple { background: #8e44ad; }
-        .bar-fill.cyan { background: #17a2b8; }
+        .bar-fill.blue   { background: var(--accent); }
+        .bar-fill.red    { background: var(--danger); }
+        .bar-fill.orange { background: var(--warning); }
+        .bar-fill.green  { background: var(--success); }
+        .bar-fill.purple { background: var(--accent); }
+        .bar-fill.cyan   { background: var(--accent); }
         .bar-value {
-            width: 36px;
+            min-width: 28px;
             font-size: 13px;
-            color: #333;
-            font-weight: 500;
+            color: var(--text-2);
+            font-weight: 600;
             flex-shrink: 0;
             text-align: right;
+            font-variant-numeric: tabular-nums;
         }
 
-        /* 筛选栏 */
-        .filter-bar {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
-            margin-bottom: 16px;
-            align-items: center;
-        }
-        .filter-bar label {
-            font-size: 13px;
-            color: #666;
-        }
-        .filter-bar select {
-            padding: 6px 10px;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            font-size: 13px;
-            background: #fff;
-            color: #333;
-            cursor: pointer;
-        }
-        .filter-bar select:focus { outline: none; border-color: #1a56db; }
-        .filter-bar .btn-sm {
-            padding: 6px 14px;
-            background: #1a56db;
-            color: #fff;
-            border: none;
-            border-radius: 6px;
-            font-size: 13px;
-            cursor: pointer;
-        }
-        .filter-bar .btn-sm:hover { background: #164bc7; }
-        .filter-bar .btn-refresh {
-            margin-left: auto;
-            background: #fff;
-            color: #1a56db;
-            border: 1px solid #1a56db;
-        }
-        .filter-bar .btn-refresh:hover { background: #f0f7ff; }
-
-        /* 表格 */
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 14px;
-        }
-        th, td {
-            text-align: left;
-            padding: 12px;
-            border-bottom: 1px solid #eee;
-        }
-        th {
-            background: #f8fafc;
-            color: #555;
-            font-weight: 600;
-            cursor: pointer;
-            user-select: none;
-        }
-        th:hover { background: #f1f5f9; }
-        th .sort-indicator {
-            font-size: 11px;
-            color: #999;
-            margin-left: 4px;
-        }
-        tr:hover { background: #f8fafc; }
-        .tag {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 500;
-        }
-        .tag-high { background: #ffe0e0; color: #c0392b; }
-        .tag-medium { background: #fff3cd; color: #856404; }
-        .tag-low { background: #e0f2e9; color: #27ae60; }
-        .tag-processing { background: #e5e7eb; color: #6b7280; }
-        .tag-failed { background: #ffe0e0; color: #c0392b; }
-        .tag-success { background: #e0f2e9; color: #27ae60; }
-        .tag-pending { background: #fff3cd; color: #d97706; }
-        .tag-accepted { background: #dbeafe; color: #2563eb; }
-        .tag-scene-life { background: #fde8e8; color: #c0392b; }
-        .tag-scene-rescue { background: #fff3cd; color: #d97706; }
-        .tag-scene-normal { background: #eaf0ff; color: #1a56db; }
-        .empty { text-align: center; color: #999; padding: 40px 0; }
-
-        /* 分页信息 */
-        .table-footer {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-top: 12px;
-            font-size: 13px;
-            color: #888;
-        }
-
-        /* 人工审核专区 */
-        .review-section {
-            margin-bottom: 24px;
-        }
-        .review-section h2 {
-            font-size: 18px;
-            margin-bottom: 16px;
-            color: #111;
-            border-left: 4px solid #d97706;
-            padding-left: 10px;
-        }
+        /* ---- 人工审核 ---- */
         .review-tabs {
             display: flex;
-            gap: 8px;
-            margin-bottom: 16px;
+            gap: 4px;
+            width: fit-content;
+            padding: 4px;
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-pill);
+            margin-bottom: 18px;
         }
         .review-tab {
-            padding: 6px 16px;
-            border-radius: 6px;
-            font-size: 14px;
-            cursor: pointer;
-            background: #f1f5f9;
-            color: #555;
+            padding: 7px 18px;
             border: none;
+            border-radius: var(--radius-pill);
+            font-size: 14px;
+            font-family: inherit;
+            cursor: pointer;
+            background: transparent;
+            color: var(--text-2);
+            transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
         }
         .review-tab.active {
-            background: #1a56db;
-            color: #fff;
+            background: var(--surface);
+            color: var(--accent);
+            font-weight: 600;
+            box-shadow: var(--shadow);
         }
         .review-card {
-            background: #fff;
-            border-radius: 10px;
-            padding: 16px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--warning);
+            border-radius: var(--radius-lg);
+            padding: 16px 18px;
             margin-bottom: 12px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-            border-left: 4px solid #d97706;
+            box-shadow: var(--shadow);
         }
-        .review-card.accepted {
-            border-left-color: #2563eb;
-        }
+        .review-card.accepted { border-left-color: var(--accent); }
         .review-header {
             display: flex;
             justify-content: space-between;
@@ -320,108 +146,135 @@
             gap: 8px;
         }
         .review-user {
-            font-size: 14px;
-            color: #555;
-        }
-        .review-user strong {
-            color: #111;
-        }
-        .review-desc {
-            font-size: 15px;
-            color: #333;
-            margin-bottom: 12px;
-            line-height: 1.5;
-        }
-        .review-actions {
             display: flex;
+            align-items: center;
             gap: 10px;
             flex-wrap: wrap;
+            font-size: 14px;
+            color: var(--text-2);
         }
-        .review-actions .btn-sm {
-            padding: 6px 14px;
-            background: #1a56db;
+        .review-user strong { color: var(--text-1); }
+        .user-meta {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            color: var(--text-2);
+        }
+        .user-meta .icon { color: var(--text-3); }
+        .review-desc {
+            font-size: 15px;
+            color: var(--text-1);
+            margin-bottom: 12px;
+            line-height: 1.6;
+        }
+        .review-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+        /* ---- 小型按钮 ---- */
+        .btn-sm {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            background: var(--accent);
             color: #fff;
             border: none;
-            border-radius: 6px;
+            border-radius: var(--radius-md);
             font-size: 13px;
-            cursor: pointer;
-        }
-        .review-actions .btn-sm:hover { background: #164bc7; }
-        .review-actions .btn-accept {
-            background: #d97706;
-        }
-        .review-actions .btn-accept:hover { background: #b45309; }
-        .review-actions .btn-done {
-            background: #27ae60;
-        }
-        .review-actions .btn-done:hover { background: #219150; }
-        .reply-box {
-            margin-top: 12px;
-            display: none;
-        }
-        .reply-box.visible {
-            display: block;
-        }
-        .reply-box textarea {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            font-size: 14px;
-            min-height: 60px;
-            resize: vertical;
             font-family: inherit;
+            cursor: pointer;
+            transition: background 0.18s ease, transform 0.12s ease;
         }
-        .reply-box textarea:focus {
-            outline: none;
-            border-color: #1a56db;
+        .btn-sm:hover { background: var(--accent-hover); }
+        .btn-sm:active { transform: scale(0.98); }
+        .btn-sm.btn-accept { background: var(--accent); }
+        .btn-sm.btn-done   { background: var(--success); }
+        .btn-sm.btn-done:hover { filter: brightness(0.92); }
+        .btn-sm.btn-refresh {
+            background: var(--surface);
+            color: var(--text-2);
+            border: 1px solid var(--border-strong);
         }
-        .reply-box .btn-sm {
-            margin-top: 8px;
+        .btn-sm.btn-refresh:hover { background: var(--surface-2); color: var(--text-1); }
+
+        /* ---- 回复输入区 ---- */
+        .reply-box { margin-top: 12px; display: none; }
+        .reply-box.visible { display: block; }
+        .reply-box textarea { min-height: 60px; }
+        .reply-box .btn-sm { margin-top: 8px; }
+
+        /* ---- 筛选栏 ---- */
+        .filter-bar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 10px 12px;
+            margin-bottom: 18px;
+        }
+        .filter-bar label { font-size: 13px; color: var(--text-2); }
+        .filter-bar select { width: auto; min-width: 118px; padding: 8px 10px; }
+        .filter-bar .btn-refresh { margin-left: auto; }
+
+        /* ---- 事件表格（可排序） ---- */
+        #tableContainer table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        #tableContainer thead th {
+            text-align: left;
+            padding: 10px 12px;
+            color: var(--text-3);
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        #tableContainer thead th:hover { color: var(--text-1); }
+        #tableContainer tbody td {
+            padding: 12px;
+            border-top: 1px solid var(--border);
+            color: var(--text-1);
+            vertical-align: top;
+        }
+        #tableContainer tbody tr:hover { background: var(--surface-2); }
+        .sort-indicator {
+            display: inline-flex;
+            margin-left: 5px;
+            color: var(--text-3);
+            vertical-align: -1px;
+        }
+        .sort-indicator .icon { width: 12px; height: 12px; }
+
+        .table-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 12px;
+            font-size: 13px;
+            color: var(--text-3);
         }
 
-        /* ===== 移动端适配 ===== */
+        /* ---- 移动端：表格转卡片 ---- */
         @media (max-width: 768px) {
-            .container {
-                padding: 16px 12px;
-            }
-            .topbar h1 {
-                font-size: 18px;
-            }
-            .card {
-                padding: 18px 16px;
-            }
-            /* 筛选栏触控优化 */
             .filter-bar select,
-            .filter-bar .btn-sm {
-                min-height: 44px;
-                font-size: 15px;
-            }
-            .filter-bar .btn-refresh {
-                margin-left: 0;
-            }
-            /* 事件列表表格 → 卡片式布局 */
-            #tableContainer table thead {
-                display: none;
-            }
+            .filter-bar .btn-sm { min-height: 40px; }
+            .filter-bar .btn-refresh { margin-left: 0; }
+            #tableContainer table thead { display: none; }
             #tableContainer table,
             #tableContainer table tbody,
             #tableContainer table tr,
-            #tableContainer table td {
-                display: block;
-                width: 100%;
-            }
+            #tableContainer table td { display: block; width: 100%; }
             #tableContainer table tr {
-                background: #fff;
-                border: 1px solid #eee;
-                border-radius: 10px;
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-lg);
                 padding: 12px 14px;
                 margin-bottom: 12px;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+                box-shadow: var(--shadow);
             }
-            #tableContainer table tr:hover {
-                background: #fff;
-            }
+            #tableContainer table tr:hover { background: var(--surface); }
             #tableContainer table td {
                 display: flex;
                 flex-wrap: wrap;
@@ -429,68 +282,81 @@
                 align-items: flex-start;
                 gap: 2px 12px;
                 padding: 6px 0;
-                border-bottom: none;
+                border-top: none;
                 font-size: 14px;
                 overflow-wrap: anywhere;
             }
             #tableContainer table td::before {
                 content: attr(data-label);
-                color: #888;
+                color: var(--text-3);
                 flex-shrink: 0;
                 font-weight: 500;
             }
-            #tableContainer table td:first-child {
-                padding-top: 0;
-            }
-            #tableContainer table td:last-child {
-                padding-bottom: 0;
-            }
-            .table-footer {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 4px;
-            }
+            #tableContainer table td:first-child { padding-top: 0; }
+            #tableContainer table td:last-child { padding-bottom: 0; }
+            .table-footer { flex-direction: column; align-items: flex-start; gap: 4px; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="topbar">
-            <h1>📊 街道管理后台</h1>
+    <div class="topbar">
+        <div class="topbar-title">
+            知·社区网格
+            <span class="topbar-sub">管理后台</span>
+        </div>
+        <div class="userbar">
             <div class="user-info">
-                <span>👤 <strong id="user-name">-</strong><span class="role-tag admin" id="user-role">街道管理员</span></span>
-                <div class="nav-links">
-                    <a href="/">← 返回事件提交页</a>
-                    <a onclick="logout()">🚪 退出登录</a>
-                </div>
+                <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="4.6" r="2.4"/><path d="M2.8 13.5c.6-2.5 2.9-3.8 5.2-3.8s4.6 1.3 5.2 3.8"/></svg>
+                <strong id="user-name">-</strong>
+                <span class="role-tag admin" id="user-role">街道管理员</span>
+            </div>
+            <div class="user-actions">
+                <a href="/">
+                    <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8H3.5M7 4.5 3.5 8 7 11.5"/></svg>
+                    返回事件提交页
+                </a>
+                <a onclick="logout()">
+                    <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3H3.8A1.3 1.3 0 0 0 2.5 4.3v7.4A1.3 1.3 0 0 0 3.8 13h2.7"/><path d="M13.5 8H7M11 5.5l3 2.5-3 2.5"/></svg>
+                    退出登录
+                </a>
             </div>
         </div>
+    </div>
 
+    <div class="container">
         <!-- 统计卡片 -->
         <div class="stat-grid" id="statGrid">
             <div class="stat-card">
-                <div class="stat-icon blue">📋</div>
+                <div class="stat-icon blue">
+                    <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="3" width="7" height="10.5" rx="1.5"/><path d="M6.5 6h3M6.5 8.5h3M6.5 11h1.5"/></svg>
+                </div>
                 <div class="stat-info">
                     <div class="stat-value" id="stat-total">-</div>
                     <div class="stat-label">事件总数</div>
                 </div>
             </div>
             <div class="stat-card">
-                <div class="stat-icon green">📈</div>
+                <div class="stat-icon green">
+                    <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 11.5 6 8l2.3 2.3L13.5 5M10.3 5h3.2v3.2"/></svg>
+                </div>
                 <div class="stat-info">
                     <div class="stat-value" id="stat-today">-</div>
                     <div class="stat-label">今日新增</div>
                 </div>
             </div>
             <div class="stat-card">
-                <div class="stat-icon orange">⏳</div>
+                <div class="stat-icon orange">
+                    <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.4"/><path d="M8 4.8V8l2.4 1.5"/></svg>
+                </div>
                 <div class="stat-info">
                     <div class="stat-value" id="stat-pending">-</div>
                     <div class="stat-label">待处理数</div>
                 </div>
             </div>
             <div class="stat-card">
-                <div class="stat-icon purple">✅</div>
+                <div class="stat-icon purple">
+                    <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.8 8.4 6 11.5 13.2 4.3"/></svg>
+                </div>
                 <div class="stat-info">
                     <div class="stat-value" id="stat-done">-</div>
                     <div class="stat-label">已处理数</div>
@@ -500,7 +366,7 @@
 
         <!-- 人工审核专区 -->
         <div class="card review-section">
-            <h2>📝 人工审核</h2>
+            <h2>人工审核</h2>
             <div class="review-tabs">
                 <button class="review-tab active" id="tab-pending" onclick="switchReviewTab('pending')">待审核</button>
                 <button class="review-tab" id="tab-accepted" onclick="switchReviewTab('accepted')">已受理</button>
@@ -570,7 +436,10 @@
                     <option value="常规">常规</option>
                 </select>
                 <button class="btn-sm" onclick="applyFilters()">筛选</button>
-                <button class="btn-sm btn-refresh" onclick="loadData()">🔄 刷新</button>
+                <button class="btn-sm btn-refresh" onclick="loadData()">
+                    <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.2 6.2A4.8 4.8 0 1 0 13 8"/><path d="M13.2 2.8V6h-3.2"/></svg>
+                    刷新
+                </button>
             </div>
             <div id="tableContainer">
                 <div class="empty">加载中…</div>
@@ -586,6 +455,12 @@
         const API_BASE = '';
         let allEvents = [];
         let currentSort = { key: 'created_at', desc: true };
+
+        // 内联极简线性 SVG 图标（stroke 1.5，currentColor）
+        const ICON = {
+            phone: '<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="6" y="2.5" width="4" height="11" rx="1.5"/><path d="M7.5 11.5h1"/></svg>',
+            idcard: '<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="2.5" y="4.5" width="11" height="7" rx="1.5"/><circle cx="6" cy="8" r="1.1"/><path d="M8.5 9.5h4M8.5 6.8h4"/></svg>'
+        };
 
         // ------------------------------------------------------------------
         // 认证相关
@@ -799,7 +674,9 @@
                     <div class="review-card" id="card-${e.created_at}">
                         <div class="review-header">
                             <div class="review-user">
-                                <strong>${e.user_name || '-'}</strong> &nbsp;| &nbsp;📱 ${e.user_phone || '-'} &nbsp;| &nbsp;🆔 ${e.user_id_card || '-'}
+                                <strong>${e.user_name || '-'}</strong>
+                                <span class="user-meta">${ICON.phone}${e.user_phone || '-'}</span>
+                                <span class="user-meta">${ICON.idcard}${e.user_id_card || '-'}</span>
                             </div>
                             <div><span class="tag ${statusClass(e.status)}">${e.status}</span></div>
                         </div>
@@ -822,7 +699,9 @@
                     <div class="review-card accepted" id="card-${e.created_at}">
                         <div class="review-header">
                             <div class="review-user">
-                                <strong>${e.user_name || '-'}</strong> &nbsp;| &nbsp;📱 ${e.user_phone || '-'} &nbsp;| &nbsp;🆔 ${e.user_id_card || '-'}
+                                <strong>${e.user_name || '-'}</strong>
+                                <span class="user-meta">${ICON.phone}${e.user_phone || '-'}</span>
+                                <span class="user-meta">${ICON.idcard}${e.user_id_card || '-'}</span>
                             </div>
                             <div><span class="tag ${statusClass(e.status)}">${e.status}</span></div>
                         </div>
@@ -966,8 +845,13 @@
         }
 
         function sortIndicator(key) {
-            if (currentSort.key !== key) return '⇅';
-            return currentSort.desc ? '↓' : '↑';
+            if (currentSort.key !== key) {
+                return '<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 6 3.5-3 3.5 3M4.5 10l3.5 3 3.5-3"/></svg>';
+            }
+            if (currentSort.desc) {
+                return '<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4v8M4.8 8.6 8 12l3.2-3.4"/></svg>';
+            }
+            return '<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12V4M4.8 7.4 8 4l3.2 3.4"/></svg>';
         }
 
         function sortBy(key) {
