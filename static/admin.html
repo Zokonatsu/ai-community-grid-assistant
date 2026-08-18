@@ -736,6 +736,7 @@
         // 人工审核专区
         // ------------------------------------------------------------------
         let currentReviewTab = 'pending';
+        let expandedUsers = {}; // { safeId: boolean } 用户折叠状态隔离存储
 
         // ------------------------------------------------------------------
         // UI 状态管理器
@@ -743,31 +744,25 @@
         const UIStateManager = {
             capture() {
                 const state = {
-                    collapsed: {},
                     replyBoxes: {},
                     textValues: {},
                     focus: null,
                     scroll: { pending: 0, accepted: 0 }
                 };
 
-                // 1. 分组折叠展开状态
-                document.querySelectorAll('[id^="collapsed-"]').forEach(el => {
-                    state.collapsed[el.id] = el.classList.contains('visible');
-                });
-
-                // 2. 回复框显示状态（待审核区域）
+                // 1. 回复框显示状态（待审核区域）
                 document.querySelectorAll('#reviewPendingContainer .reply-box[id^="reply-box-"]').forEach(el => {
                     state.replyBoxes[el.id] = el.classList.contains('visible');
                 });
 
-                // 3. 文本框输入内容
+                // 2. 文本框输入内容
                 document.querySelectorAll('textarea[id^="reply-text-"]').forEach(el => {
                     if (el.value.trim()) {
                         state.textValues[el.id] = el.value;
                     }
                 });
 
-                // 4. 焦点和光标
+                // 3. 焦点和光标
                 const activeEl = document.activeElement;
                 const reviewSection = document.querySelector('.review-section');
                 if (activeEl && reviewSection && reviewSection.contains(activeEl) && activeEl.tagName === 'TEXTAREA') {
@@ -778,7 +773,7 @@
                     };
                 }
 
-                // 5. 滚动位置
+                // 4. 滚动位置
                 const pendingContainer = document.getElementById('reviewPendingContainer');
                 const acceptedContainer = document.getElementById('reviewAcceptedContainer');
                 if (pendingContainer) state.scroll.pending = pendingContainer.scrollTop;
@@ -789,17 +784,6 @@
 
             restore(state) {
                 if (!state) return;
-
-                // 恢复 collapsed 状态
-                Object.entries(state.collapsed || {}).forEach(([id, wasVisible]) => {
-                    const el = document.getElementById(id);
-                    if (el && wasVisible) {
-                        el.classList.add('visible');
-                        const btnId = id.replace('collapsed-', 'expand-btn-');
-                        const btn = document.getElementById(btnId);
-                        if (btn) btn.textContent = '收起';
-                    }
-                });
 
                 // 恢复 reply-box 可见状态
                 Object.entries(state.replyBoxes || {}).forEach(([id, wasVisible]) => {
@@ -882,9 +866,10 @@
                             </div>
                     `;
                     if (rest.length > 0) {
+                        const isExpanded = !!expandedUsers[safeId];
                         html += `
-                            <button class="review-expand-btn" id="expand-btn-${safeId}" onclick="toggleCollapsed('${safeId}')">展开该用户其余 ${rest.length} 条待审核事件</button>
-                            <div class="review-collapsed" id="collapsed-${safeId}">
+                            <button class="review-expand-btn" id="expand-btn-${safeId}" onclick="toggleCollapsed('${safeId}')">${isExpanded ? '收起' : `展开该用户其余 ${rest.length} 条待审核事件`}</button>
+                            <div class="review-collapsed ${isExpanded ? 'visible' : ''}" id="collapsed-${safeId}">
                         `;
                         for (const e of rest) {
                             html += `
@@ -951,6 +936,7 @@
             const btn = document.getElementById('expand-btn-' + safeId);
             if (!collapsed || !btn) return;
             const isVisible = collapsed.classList.toggle('visible');
+            expandedUsers[safeId] = isVisible;
             btn.textContent = isVisible ? '收起' : '展开该用户其余 ' + (collapsed.children.length) + ' 条待审核事件';
         }
 
