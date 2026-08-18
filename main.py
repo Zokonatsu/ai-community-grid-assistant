@@ -96,6 +96,20 @@ if _tasks:
         _save_tasks(_tasks)
         logger.info("服务启动：已将 %d 条未完成任务标记为失败", recovered_count)
 
+# 数据兼容：将旧版的单条 reply 字符串迁移为 replies 列表
+for task in _tasks.values():
+    if "replies" not in task:
+        task["replies"] = []
+        if task.get("reply"):
+            task["replies"].append({
+                "content": task["reply"],
+                "created_at": task.get("completed_at", task.get("created_at", "")),
+                "reviewer_id": task.get("reviewer_id", ""),
+                "reviewer_name": "",
+            })
+    if "user_read_at" not in task:
+        task["user_read_at"] = ""
+
 # 并发锁：保护内存状态更新与文件写入
 _task_lock = asyncio.Lock()
 
@@ -396,6 +410,20 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
         for task in _tasks.values():
             if current_user.get("role") != "admin" and task.get("user_id") != current_user.get("id"):
                 continue
+            replies = task.get("replies", [])
+            if not replies and task.get("reply"):
+                replies = [{
+                    "content": task["reply"],
+                    "created_at": task.get("completed_at", task.get("created_at", "")),
+                    "reviewer_id": task.get("reviewer_id", ""),
+                    "reviewer_name": "",
+                }]
+            has_new_reply = False
+            if replies:
+                last_reply_at = replies[-1].get("created_at", "")
+                user_read_at = task.get("user_read_at", "")
+                if not user_read_at or last_reply_at > user_read_at:
+                    has_new_reply = True
             events.append({
                 "event_id": task["event_id"],
                 "description": task["description"],
@@ -407,6 +435,8 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
                 "status": task["status"],
                 "created_at": task["created_at"],
                 "reply": task.get("reply", ""),
+                "replies": replies,
+                "has_new_reply": has_new_reply,
                 "user_name": task.get("user_name", ""),
                 "user_phone": task.get("user_phone", ""),
                 "user_id_card": task.get("user_id_card", ""),
@@ -1045,12 +1075,21 @@ async def reply_event(
         task = _tasks.get(event_id)
         if task is None:
             raise HTTPException(status_code=404, detail="事件不存在")
-        if task.get("status") not in ("已受理", "待审核"):
-            raise HTTPException(status_code=400, detail="仅已受理或待审核事件可提交回复")
-        task["status"] = "已完成"
+        if task.get("status") not in ("已受理", "待审核", "已完成"):
+            raise HTTPException(status_code=400, detail="仅已受理、待审核或已完成事件可提交回复")
+        # 首次回复时才将状态设为已完成；如果已经是已完成，保持不动
+        if task.get("status") != "已完成":
+            task["status"] = "已完成"
+        reply_entry = {
+            "content": request.reply,
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "reviewer_id": current_user.get("id", ""),
+            "reviewer_name": current_user.get("real_name", ""),
+        }
+        task.setdefault("replies", []).append(reply_entry)
         task["reply"] = request.reply
         task["reviewer_id"] = current_user.get("id", "")
-        task["completed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        task["completed_at"] = reply_entry["created_at"]
         _save_tasks(_tasks)
 
     # 追加记录到 events.jsonl
@@ -1079,6 +1118,28 @@ async def reply_event(
             "reply": task["reply"],
         },
     }
+
+
+# ------------------------------------------------------------------
+# API 端点：POST /api/events/{event_id}/mark_read
+# ------------------------------------------------------------------
+@app.post("/api/events/{event_id}/mark_read")
+async def mark_event_read(
+    event_id: str,
+    current_user: dict[str, Any] = Depends(get_current_user_dependency),
+) -> dict[str, Any]:
+    """
+    用户查看回复后标记为已读。
+    """
+    async with _task_lock:
+        task = _tasks.get(event_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="事件不存在")
+        if current_user.get("role") != "admin" and task.get("user_id") != current_user.get("id"):
+            raise HTTPException(status_code=403, detail="无权访问此事件")
+        task["user_read_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _save_tasks(_tasks)
+    return {"success": True}
 
 
 # ------------------------------------------------------------------
