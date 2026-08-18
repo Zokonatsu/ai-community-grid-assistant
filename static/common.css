@@ -257,6 +257,62 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 input:disabled, select:disabled { opacity: 0.6; cursor: not-allowed; }
 
 /* --------------------------------------------------------------------------
+   楼栋/单元/房间 三列并排（注册表单）
+   -------------------------------------------------------------------------- */
+.form-row {
+    display: flex;
+    gap: 12px;
+}
+.form-row .form-group {
+    flex: 1;
+    min-width: 0;
+    margin-bottom: 18px;
+}
+
+/* 定位行（注册表单） */
+.locate-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.locate-row .btn { margin-top: 0; }
+.locate-status {
+    font-size: 13px;
+    color: var(--text-2);
+}
+
+/* 事件提交页：实时定位提示 */
+.locate-hint {
+    font-size: 12px;
+    color: var(--text-3);
+    margin-top: 6px;
+    min-height: 16px;
+}
+
+/* 事件提交页：代人办 */
+.beneficiary-proxy {
+    margin-bottom: 16px;
+}
+
+/* 事件提交页：住户审核状态横幅 */
+.review-banner {
+    background: rgba(219, 143, 2, 0.12);
+    color: #b26a00;
+    border: 1px solid rgba(219, 143, 2, 0.35);
+    border-radius: var(--radius-lg);
+    padding: 12px 16px;
+    font-size: 14px;
+    margin-bottom: 16px;
+}
+
+@media (max-width: 640px) {
+    .form-row {
+        flex-direction: column;
+        gap: 0;
+    }
+}
+
+/* --------------------------------------------------------------------------
    Result Grid（事件处理结果 7 项）
    -------------------------------------------------------------------------- */
 .result {
@@ -534,6 +590,26 @@ input:disabled, select:disabled { opacity: 0.6; cursor: not-allowed; }
     margin-top: 16px;
 }
 
+/* 提交确认弹窗：标签 + 值 行 */
+.confirm-row {
+    display: flex;
+    gap: 12px;
+    padding: 5px 0;
+    font-size: 14px;
+    line-height: 1.6;
+}
+.confirm-row + .confirm-row { border-top: 1px solid var(--border); }
+.confirm-label {
+    flex: 0 0 64px;
+    color: var(--text-2);
+    padding-top: 1px;
+}
+.confirm-value {
+    flex: 1;
+    color: var(--text-1);
+    word-break: break-all;
+}
+
 /* 未读红点 + 多回复历史 */
 .unread-badge { color: #e02424; margin-left: 4px; font-size: 12px; }
 .reply-item { padding: 6px 0; }
@@ -675,6 +751,28 @@ input:disabled, select:disabled { opacity: 0.6; cursor: not-allowed; }
     }
     #listContainer table td:first-child { padding-top: 0; }
     #listContainer table td:last-child { padding-bottom: 0; }
+}
+
+/* --------------------------------------------------------------------------
+   移动端：导航精简（操作链接只留图标）+ 定位按钮对齐
+   -------------------------------------------------------------------------- */
+@media (max-width: 640px) {
+    .userbar { gap: 8px; }
+    .userbar .user-actions a { padding: 6px; }
+    .userbar .user-actions a span { display: none; } /* 只显示图标，隐藏文字标签 */
+    .locate-row { align-items: flex-start; }
+    .locate-status { flex: 1; line-height: 1.5; }
+}
+
+/* 极窄屏兜底：顶栏允许换行成两行 */
+@media (max-width: 480px) {
+    .topbar {
+        flex-wrap: wrap;
+        height: auto;
+        padding: 10px 12px;
+        gap: 4px 8px;
+    }
+    .userbar { margin-left: auto; }
 }
 
 /* --------------------------------------------------------------------------

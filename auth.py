@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import cloud_store
+import geo
 from secure_store import decrypt, encrypt, load_encrypted, save_encrypted
 
 logger = logging.getLogger("auth")
@@ -171,6 +172,27 @@ def _init_auth() -> None:
     _sessions = _load_json("sessions", SESSIONS_FILE)
     _cleanup_expired_sessions()
 
+    # 数据兼容：为存量用户补齐住户/定位字段。
+    # 住户注册即生效（status=active），无需人工审核；存量 pending/rejected 一并转 active。
+    changed = False
+    for u in _users.values():
+        for key in ("building", "unit", "room", "register_time"):
+            if key not in u:
+                u[key] = ""
+                changed = True
+        if u.get("status", "active") in ("pending", "rejected"):
+            u["status"] = "active"
+            changed = True
+        if "location_status" not in u:
+            u["location_status"] = "unverified"
+            changed = True
+        for key in ("register_lat", "register_lng"):
+            if key not in u:
+                u[key] = None
+                changed = True
+    if changed:
+        _save_users(_users)
+
     # 若系统中没有任何用户，自动创建默认管理员账号
     if not _users:
         admin_id = secrets.token_hex(16)
@@ -181,6 +203,8 @@ def _init_auth() -> None:
             "real_name": "系统管理员",
             "phone": "13800000000",
             "role": "admin",
+            "status": "active",
+            "location_status": "unverified",
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         _users[admin_id] = admin_user
@@ -221,6 +245,31 @@ def _mask_id_card(id_card: str) -> str:
     return id_card[:6] + "********" + id_card[-4:]
 
 
+def _user_status(user: dict[str, Any]) -> str:
+    """住户审核状态：管理员账号恒为 active。"""
+    if user.get("role") == "admin":
+        return "active"
+    return user.get("status", "active")  # 兼容旧数据（存量住户视为已通过）
+
+
+def _public_user(user: dict[str, Any]) -> dict[str, Any]:
+    """返回对外展示的用户信息（身份证脱敏，含住户/定位字段）。"""
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "real_name": user["real_name"],
+        "phone": user["phone"],
+        "id_card": _mask_id_card(user.get("id_card", "")),
+        "role": user["role"],
+        "created_at": user["created_at"],
+        "status": _user_status(user),
+        "building": user.get("building", ""),
+        "unit": user.get("unit", ""),
+        "room": user.get("room", ""),
+        "location_status": user.get("location_status", "unverified"),
+    }
+
+
 # ------------------------------------------------------------------
 # Token 与会话管理
 # ------------------------------------------------------------------
@@ -246,16 +295,22 @@ def _cleanup_expired_sessions() -> None:
 # 用户注册
 # ------------------------------------------------------------------
 def register_user(
-    username: str, password: str, real_name: str, phone: str, id_card: str = "", role: str = "resident"
+    username: str, password: str, real_name: str, phone: str, id_card: str = "",
+    role: str = "resident", building: str = "", unit: str = "", room: str = "",
+    register_lat: float | None = None, register_lng: float | None = None,
 ) -> tuple[bool, str, dict[str, Any] | None]:
     """
     注册新用户。
+    居民注册必须填写楼栋/单元/房间号，注册即生效（status=active），可直接提交事件。
     返回：(success, message, user_dict)
     """
     username = username.strip()
     real_name = real_name.strip()
     phone = phone.strip()
     id_card = id_card.strip().upper()
+    building = building.strip()
+    unit = unit.strip()
+    room = room.strip()
 
     # 基本校验
     if not username or len(username) < 3 or len(username) > 20:
@@ -274,6 +329,8 @@ def register_user(
         return False, "角色类型无效", None
     if role == "admin":
         return False, "禁止通过注册创建管理员账号", None
+    if role == "resident" and not (building and unit and room):
+        return False, "请填写楼栋、单元和房间号", None
 
     with _auth_lock:
         # 检查用户名是否已存在
@@ -284,6 +341,13 @@ def register_user(
                 return False, "手机号已被注册", None
 
         user_id = secrets.token_hex(16)
+        register_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # 定位越界/失败均允许注册（不挡住真实住户），location_status 标记为 unverified，仅供后台展示。
+        if register_lat is not None and register_lng is not None:
+            within, _dist = geo.is_within_community(register_lat, register_lng)
+            location_status = "verified" if within else "unverified"
+        else:
+            location_status = "unverified"
         user = {
             "id": user_id,
             "username": username,
@@ -292,22 +356,20 @@ def register_user(
             "phone": phone,
             "id_card": id_card,
             "role": role,
-            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "building": building,
+            "unit": unit,
+            "room": room,
+            "status": "active",  # 注册即生效，无需管理员审核
+            "location_status": location_status,
+            "register_lat": register_lat,
+            "register_lng": register_lng,
+            "register_time": register_time,
+            "created_at": register_time,
         }
         _users[user_id] = user
         _save_users(_users)
 
-    # 返回脱敏后的用户信息
-    public_user = {
-        "id": user["id"],
-        "username": user["username"],
-        "real_name": user["real_name"],
-        "phone": user["phone"],
-        "id_card": _mask_id_card(user.get("id_card", "")),
-        "role": user["role"],
-        "created_at": user["created_at"],
-    }
-    return True, "注册成功", public_user
+    return True, "注册成功，请登录", _public_user(user)
 
 
 # ------------------------------------------------------------------
@@ -341,16 +403,7 @@ def login_user(username: str, password: str) -> tuple[bool, str, dict[str, Any] 
         }
         _save_json("sessions", SESSIONS_FILE, _sessions)
 
-    public_user = {
-        "id": user["id"],
-        "username": user["username"],
-        "real_name": user["real_name"],
-        "phone": user["phone"],
-        "id_card": _mask_id_card(user.get("id_card", "")),
-        "role": user["role"],
-        "created_at": user["created_at"],
-    }
-    return True, "登录成功", {"token": token, "user": public_user}
+    return True, "登录成功", {"token": token, "user": _public_user(user)}
 
 
 # ------------------------------------------------------------------
@@ -399,15 +452,7 @@ def get_current_user(token: str | None) -> dict[str, Any] | None:
         if user is None:
             return None
 
-    return {
-        "id": user["id"],
-        "username": user["username"],
-        "real_name": user["real_name"],
-        "phone": user["phone"],
-        "id_card": _mask_id_card(user.get("id_card", "")),
-        "role": user["role"],
-        "created_at": user["created_at"],
-    }
+    return _public_user(user)
 
 
 def get_user_by_id(user_id: str) -> dict[str, Any] | None:
@@ -427,6 +472,47 @@ def get_user_by_id(user_id: str) -> dict[str, Any] | None:
         "role": user["role"],
         "created_at": user["created_at"],
     }
+
+
+# ------------------------------------------------------------------
+# 住户列表（只读，供管理员后台查看）
+# ------------------------------------------------------------------
+def list_users() -> list[dict[str, Any]]:
+    """
+    返回全部居民（仅供管理员后台使用，只读）。
+
+    含完整身份证号、楼栋/单元/房间、注册定位坐标与距中心点米数，
+    便于管理员了解本小区住户构成。注册即生效，无需审核操作。
+    """
+    with _auth_lock:
+        users = []
+        for u in _users.values():
+            if u.get("role") != "resident":
+                continue
+            lat = u.get("register_lat")
+            lng = u.get("register_lng")
+            distance = geo.is_within_community(lat, lng)[1] if (lat is not None and lng is not None) else None
+            users.append({
+                "id": u["id"],
+                "username": u["username"],
+                "real_name": u["real_name"],
+                "phone": u["phone"],
+                "id_card": u.get("id_card", ""),  # 完整身份证，仅管理员可见
+                "role": u["role"],
+                "building": u.get("building", ""),
+                "unit": u.get("unit", ""),
+                "room": u.get("room", ""),
+                "status": _user_status(u),
+                "location_status": u.get("location_status", "unverified"),
+                "register_lat": lat,
+                "register_lng": lng,
+                "register_distance_m": distance,
+                "register_time": u.get("register_time", ""),
+                "created_at": u["created_at"],
+            })
+        # 注册时间倒序（新住户在前）
+        users.sort(key=lambda x: x.get("register_time") or x.get("created_at") or "", reverse=True)
+        return users
 
 
 # ------------------------------------------------------------------

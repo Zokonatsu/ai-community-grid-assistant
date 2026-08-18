@@ -215,7 +215,8 @@ success, message, user = auth.register_user(
     password="test123456",
     real_name="测试居民",
     phone="13900000004",
-    role="resident"
+    role="resident",
+    building="1栋", unit="1单元", room="101"
 )
 print(f"  注册返回: success={success}, message='{message}'")
 if success and user:
@@ -258,7 +259,8 @@ if success:
         password="test123456",
         real_name="重复测试",
         phone="13900000005",
-        role="resident"
+        role="resident",
+        building="1栋", unit="1单元", room="101"
     )
     if not success3:
         print(f"  ✅ 通过：重复用户名被拒绝，message='{message3}'")

@@ -143,13 +143,16 @@ def auth_header(token):
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
-def register(username, password, real_name, phone, role="resident"):
+def register(username, password, real_name, phone, role="resident", building="1栋", unit="1单元", room="101"):
     res = client.post("/api/auth/register", json={
         "username": username,
         "password": password,
         "real_name": real_name,
         "phone": phone,
         "role": role,
+        "building": building,
+        "unit": unit,
+        "room": room,
     })
     return res.json()
 
@@ -214,6 +217,8 @@ login_b = login("resident_b", "pass123456")
 token_b = login_b.get("data", {}).get("token") if login_b.get("success") else None
 user_b = login_b.get("data", {}).get("user") if login_b.get("success") else None
 print(f"  居民B 登录: success={login_b.get('success')}, token={'***' if token_b else 'None'}")
+
+# 注册即生效，无需管理员审核即可提交事件
 
 # 登录管理员
 login_admin = login("admin", "admin123456")

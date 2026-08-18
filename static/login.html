@@ -58,6 +58,29 @@
                     <label for="reg-idcard">身份证号</label>
                     <input type="text" id="reg-idcard" placeholder="请输入18位身份证号" maxlength="18" required>
                 </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="reg-building">楼栋</label>
+                        <input type="text" id="reg-building" placeholder="如：3栋" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-unit">单元</label>
+                        <input type="text" id="reg-unit" placeholder="如：1单元" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-room">房间号</label>
+                        <input type="text" id="reg-room" placeholder="如：1203" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="reg-locate-btn">当前位置定位</label>
+                    <div class="locate-row">
+                        <button type="button" class="btn" id="reg-locate-btn" onclick="locateRegister()">获取定位</button>
+                        <span id="reg-locate-status" class="locate-status">未定位（建议定位以便核验住户）</span>
+                    </div>
+                    <input type="hidden" id="reg-lat">
+                    <input type="hidden" id="reg-lng">
+                </div>
                 <div class="form-group">
                     <label for="reg-role">角色</label>
                     <select id="reg-role" disabled>
@@ -110,6 +133,37 @@
             document.getElementById('register-success').classList.add('hidden');
         }
 
+        // 浏览器定位封装：成功返回 {lat,lng}，失败/拒绝返回 null（不阻塞注册）
+        function getPosition() {
+            return new Promise(resolve => {
+                if (!navigator.geolocation) {
+                    resolve(null);
+                    return;
+                }
+                navigator.geolocation.getCurrentPosition(
+                    pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+                    () => resolve(null),
+                    { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+                );
+            });
+        }
+
+        async function locateRegister() {
+            const statusEl = document.getElementById('reg-locate-status');
+            const btn = document.getElementById('reg-locate-btn');
+            btn.disabled = true;
+            statusEl.textContent = '定位中…';
+            const pos = await getPosition();
+            btn.disabled = false;
+            if (pos) {
+                document.getElementById('reg-lat').value = pos.lat;
+                document.getElementById('reg-lng').value = pos.lng;
+                statusEl.textContent = `已定位（${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}）`;
+            } else {
+                statusEl.textContent = '定位不可用（需 HTTPS 或 localhost），可稍后由管理员核验';
+            }
+        }
+
         async function handleLogin(e) {
             e.preventDefault();
             const username = document.getElementById('login-username').value.trim();
@@ -153,7 +207,12 @@
             const real_name = document.getElementById('reg-realname').value.trim();
             const phone = document.getElementById('reg-phone').value.trim();
             const id_card = document.getElementById('reg-idcard').value.trim().toUpperCase();
+            const building = document.getElementById('reg-building').value.trim();
+            const unit = document.getElementById('reg-unit').value.trim();
+            const room = document.getElementById('reg-room').value.trim();
             const role = document.getElementById('reg-role-value').value;
+            const register_lat = document.getElementById('reg-lat').value ? parseFloat(document.getElementById('reg-lat').value) : null;
+            const register_lng = document.getElementById('reg-lng').value ? parseFloat(document.getElementById('reg-lng').value) : null;
             const btn = document.getElementById('register-btn');
             const errorEl = document.getElementById('register-error');
             const successEl = document.getElementById('register-success');
@@ -171,6 +230,11 @@
                 errorEl.classList.remove('hidden');
                 return;
             }
+            if (!building || !unit || !room) {
+                errorEl.textContent = '请填写楼栋、单元和房间号';
+                errorEl.classList.remove('hidden');
+                return;
+            }
 
             btn.disabled = true;
             btn.textContent = '注册中…';
@@ -179,7 +243,7 @@
                 const res = await fetch(`${API_BASE}/api/auth/register`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password, real_name, phone, id_card, role })
+                    body: JSON.stringify({ username, password, real_name, phone, id_card, role, building, unit, room, register_lat, register_lng })
                 });
                 const data = await res.json();
                 if (!data.success) {
@@ -187,7 +251,7 @@
                     errorEl.classList.remove('hidden');
                     return;
                 }
-                successEl.textContent = '注册成功，请切换到登录页登录';
+                successEl.textContent = '注册成功，请登录';
                 successEl.classList.remove('hidden');
                 document.getElementById('register-form').reset();
             } catch (err) {

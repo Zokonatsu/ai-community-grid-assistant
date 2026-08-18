@@ -68,6 +68,9 @@ register_payload = {
     "real_name": TEST_REAL_NAME,
     "phone": TEST_PHONE,
     "role": "resident",
+    "building": "1栋",
+    "unit": "1单元",
+    "room": "101",
 }
 
 print(f"  -> POST {BASE_URL}/api/auth/register")

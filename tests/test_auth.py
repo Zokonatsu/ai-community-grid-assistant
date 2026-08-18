@@ -164,7 +164,7 @@ results = TestResults()
 def auth_header(token):
     return {"Authorization": f"Bearer {token}"} if token else {}
 
-def register(username, password, real_name, phone, role="resident"):
+def register(username, password, real_name, phone, role="resident", building="1栋", unit="1单元", room="101"):
     """注册新用户，返回 (success, data/error)"""
     res = client.post("/api/auth/register", json={
         "username": username,
@@ -172,6 +172,9 @@ def register(username, password, real_name, phone, role="resident"):
         "real_name": real_name,
         "phone": phone,
         "role": role,
+        "building": building,
+        "unit": unit,
+        "room": room,
     })
     return res.json()
 
@@ -324,7 +327,7 @@ if resident_token:
 else:
     results.add_error("3.3 GET /api/auth/me", "无可用 token，因为 3.2 登录失败")
 
-# 3.4 居民提交有效事件
+# 3.4 居民提交有效事件（注册即生效，无需审核）
 if resident_token:
     # Mock workflow to avoid actual AI processing in background task
     mock_workflow.invoke.return_value = {

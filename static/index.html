@@ -23,11 +23,11 @@
             <div class="user-actions">
                 <a id="admin-link" style="display:none;" href="/admin.html">
                     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
-                    进入管理后台
+                    <span>进入管理后台</span>
                 </a>
                 <a onclick="logout()">
                     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
-                    退出登录
+                    <span>退出登录</span>
                 </a>
             </div>
         </div>
@@ -36,8 +36,40 @@
     <div class="container">
         <div class="card">
             <h2>事件提交</h2>
+            <!-- 提交方式：本人 / 代人办 -->
+            <div class="tabs" id="beneficiary-tabs">
+                <div class="tab active" id="tab-self" onclick="setBeneficiaryType('self')">本人</div>
+                <div class="tab" id="tab-proxy" onclick="setBeneficiaryType('proxy')">代人办</div>
+            </div>
+            <div class="beneficiary-proxy hidden" id="beneficiary-proxy">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="proxy-name">被帮助人姓名</label>
+                        <input type="text" id="proxy-name" placeholder="请输入真实姓名">
+                    </div>
+                    <div class="form-group">
+                        <label for="proxy-phone">手机号</label>
+                        <input type="tel" id="proxy-phone" placeholder="请输入11位手机号">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="proxy-building">楼栋</label>
+                        <input type="text" id="proxy-building" placeholder="如：2栋">
+                    </div>
+                    <div class="form-group">
+                        <label for="proxy-unit">单元</label>
+                        <input type="text" id="proxy-unit" placeholder="如：3单元">
+                    </div>
+                    <div class="form-group">
+                        <label for="proxy-room">房间号</label>
+                        <input type="text" id="proxy-room" placeholder="如：401">
+                    </div>
+                </div>
+            </div>
             <textarea id="description" placeholder="请输入居民问题描述，例如：我家楼下下水道堵了"></textarea>
             <button class="btn" id="submitBtn" onclick="submitEvent()">提交处理</button>
+            <div class="locate-hint" id="locateHint"></div>
             <div class="loading" id="loading" style="display:none;"><span class="dot"></span>正在处理，请稍候</div>
             <div class="error" id="error"></div>
 
@@ -104,6 +136,18 @@
         </div>
     </div>
 
+    <!-- 提交确认弹窗 -->
+    <div class="overlay hidden" id="submitConfirmOverlay">
+        <div class="modal">
+            <div class="modal-title">确认提交信息</div>
+            <div class="modal-content" id="submitConfirmContent"></div>
+            <div class="modal-buttons">
+                <button class="btn btn-cancel" onclick="closeSubmitConfirm()">取消</button>
+                <button class="btn" onclick="confirmAndSubmit()">确认提交</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 回复查看弹窗 -->
     <div class="overlay hidden" id="replyOverlay">
         <div class="modal">
@@ -134,6 +178,21 @@
             return headers;
         }
 
+        // 浏览器定位封装：成功返回 {lat,lng}，失败/拒绝返回 null（不阻塞提交）
+        function getPosition() {
+            return new Promise(resolve => {
+                if (!navigator.geolocation) {
+                    resolve(null);
+                    return;
+                }
+                navigator.geolocation.getCurrentPosition(
+                    pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+                    () => resolve(null),
+                    { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+                );
+            });
+        }
+
         function checkUnauthorized(res) {
             if (res.status === 401) {
                 localStorage.removeItem('token');
@@ -142,6 +201,46 @@
                 return true;
             }
             return false;
+        }
+
+        // ------------------------------------------------------------------
+        // 提交方式：本人 / 代人办
+        // ------------------------------------------------------------------
+        function setBeneficiaryType(type) {
+            const isProxy = type === 'proxy';
+            document.getElementById('tab-self').classList.toggle('active', !isProxy);
+            document.getElementById('tab-proxy').classList.toggle('active', isProxy);
+            document.getElementById('beneficiary-proxy').classList.toggle('hidden', !isProxy);
+        }
+
+        function collectBeneficiary() {
+            const isProxy = document.getElementById('tab-proxy').classList.contains('active');
+            if (!isProxy) return { beneficiary_type: 'self' };
+            const fields = {
+                beneficiary_type: 'proxy',
+                beneficiary_name: document.getElementById('proxy-name').value.trim(),
+                beneficiary_phone: document.getElementById('proxy-phone').value.trim(),
+                beneficiary_building: document.getElementById('proxy-building').value.trim(),
+                beneficiary_unit: document.getElementById('proxy-unit').value.trim(),
+                beneficiary_room: document.getElementById('proxy-room').value.trim()
+            };
+            const missing = [];
+            if (!fields.beneficiary_name) missing.push('姓名');
+            if (!fields.beneficiary_phone) missing.push('手机号');
+            if (!fields.beneficiary_building) missing.push('楼栋');
+            if (!fields.beneficiary_unit) missing.push('单元');
+            if (!fields.beneficiary_room) missing.push('房间号');
+            if (missing.length) {
+                return { error: '代人办请填写被帮助人的' + missing.join('、') };
+            }
+            return fields;
+        }
+
+        function clearBeneficiary() {
+            ['proxy-name', 'proxy-phone', 'proxy-building', 'proxy-unit', 'proxy-room'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.value = '';
+            });
         }
 
         async function initAuth() {
@@ -162,6 +261,7 @@
                     return false;
                 }
                 const user = await res.json();
+                window.currentUser = user;
                 // 显示用户栏
                 document.getElementById('userbar').style.display = 'flex';
                 document.getElementById('user-name').textContent = user.real_name || user.username;
@@ -254,8 +354,55 @@
         // ------------------------------------------------------------------
         // 事件提交与轮询（原有逻辑，仅增加认证头）
         // ------------------------------------------------------------------
+        let pendingSubmit = null;
+
+        // ------------------------------------------------------------------
+        // 提交确认弹窗：本人/代人办提交前先确认信息
+        // ------------------------------------------------------------------
         async function submitEvent() {
             const desc = document.getElementById('description').value.trim();
+            const error = document.getElementById('error');
+            error.textContent = '';
+            if (!desc) { error.textContent = '请输入居民描述'; return; }
+
+            const beneficiary = collectBeneficiary();
+            if (beneficiary.error) { error.textContent = beneficiary.error; return; }
+
+            pendingSubmit = { desc, beneficiary };
+            showSubmitConfirm(desc, beneficiary);
+        }
+
+        function showSubmitConfirm(desc, beneficiary) {
+            const rows = [];
+            rows.push(`<div class="confirm-row"><span class="confirm-label">事件描述</span><span class="confirm-value">${escapeHtml(desc)}</span></div>`);
+            if (beneficiary.beneficiary_type === 'proxy') {
+                rows.push('<div class="confirm-row"><span class="confirm-label">提交方式</span><span class="confirm-value">代人办</span></div>');
+                rows.push(`<div class="confirm-row"><span class="confirm-label">被帮助人</span><span class="confirm-value">${escapeHtml(beneficiary.beneficiary_name)} · ${escapeHtml(beneficiary.beneficiary_phone)} · ${escapeHtml(beneficiary.beneficiary_building)}${escapeHtml(beneficiary.beneficiary_unit)}${escapeHtml(beneficiary.beneficiary_room)}</span></div>`);
+            } else {
+                const u = window.currentUser || {};
+                const addr = [u.building, u.unit, u.room].filter(Boolean).join('');
+                const who = escapeHtml(u.real_name || u.username || '本人') + (addr ? ' · ' + escapeHtml(addr) : '');
+                rows.push(`<div class="confirm-row"><span class="confirm-label">提交人</span><span class="confirm-value">${who}</span></div>`);
+            }
+            document.getElementById('submitConfirmContent').innerHTML = rows.join('');
+            document.getElementById('submitConfirmOverlay').classList.remove('hidden');
+        }
+
+        function closeSubmitConfirm() {
+            document.getElementById('submitConfirmOverlay').classList.add('hidden');
+            pendingSubmit = null;
+        }
+
+        async function confirmAndSubmit() {
+            if (!pendingSubmit) return;
+            const { desc, beneficiary } = pendingSubmit;
+            pendingSubmit = null;
+            document.getElementById('submitConfirmOverlay').classList.add('hidden');
+            await doSubmit(desc, beneficiary);
+        }
+
+        // 实际提交：获取定位 + POST + 处理响应（本人/代人办共用；急救确认后再调用带 extra）
+        async function doSubmit(desc, beneficiary, extra) {
             const btn = document.getElementById('submitBtn');
             const loading = document.getElementById('loading');
             const error = document.getElementById('error');
@@ -263,8 +410,6 @@
             const polling = document.getElementById('polling');
 
             error.textContent = '';
-            if (!desc) { error.textContent = '请输入居民描述'; return; }
-
             btn.disabled = true;
             loading.style.display = 'block';
             result.classList.add('hidden');
@@ -272,10 +417,24 @@
             if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 
             try {
+                // 提交时获取实时定位（失败/拒绝不阻塞提交）
+                const pos = await getPosition();
+                const hint = document.getElementById('locateHint');
+                if (pos) {
+                    hint.textContent = `已获取实时定位（${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}）`;
+                } else {
+                    hint.textContent = '定位不可用，事件仍可提交';
+                }
                 const res = await fetch(`${API_BASE}/api/events`, {
                     method: 'POST',
                     headers: getAuthHeaders(),
-                    body: JSON.stringify({ description: desc })
+                    body: JSON.stringify({
+                        description: desc,
+                        lat: pos ? pos.lat : null,
+                        lng: pos ? pos.lng : null,
+                        ...(extra || {}),
+                        ...beneficiary
+                    })
                 });
                 if (checkUnauthorized(res)) return;
                 const data = await res.json();
@@ -305,6 +464,7 @@
                     document.getElementById('r-address').textContent = d.address || '-';
                     document.getElementById('result').classList.remove('hidden');
                     document.getElementById('description').value = '';
+                    clearBeneficiary();
                     loadList();
                     btn.disabled = false;
                     loading.style.display = 'none';
@@ -314,6 +474,7 @@
                 document.getElementById('polling-id').textContent = d.event_id;
                 polling.classList.remove('hidden');
                 document.getElementById('description').value = '';
+                clearBeneficiary();
                 loadList();
                 startPolling(d.event_id);
             } catch (e) {
@@ -388,72 +549,17 @@
 
         function onConfirmAgree() {
             closeConfirmDialog();
-            submitWithConfirm(currentDesc);
+            const beneficiary = collectBeneficiary();
+            if (beneficiary.error) {
+                document.getElementById('error').textContent = beneficiary.error;
+                return;
+            }
+            doSubmit(currentDesc, beneficiary, { confirmed: true, emergency_type: currentEmergencyType });
         }
 
         function onConfirmCancel() {
             closeConfirmDialog();
             document.getElementById('error').textContent = '已取消';
-        }
-
-        async function submitWithConfirm(desc) {
-            const btn = document.getElementById('submitBtn');
-            const loading = document.getElementById('loading');
-            const error = document.getElementById('error');
-            const result = document.getElementById('result');
-            const polling = document.getElementById('polling');
-
-            error.textContent = '';
-            btn.disabled = true;
-            loading.style.display = 'block';
-            result.classList.add('hidden');
-            polling.classList.add('hidden');
-            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-
-            try {
-                const res = await fetch(`${API_BASE}/api/events`, {
-                    method: 'POST',
-                    headers: getAuthHeaders(),
-                    body: JSON.stringify({ description: desc, confirmed: true, emergency_type: currentEmergencyType })
-                });
-                if (checkUnauthorized(res)) return;
-                const data = await res.json();
-                if (!data.success) {
-                    error.textContent = data.error || '处理失败';
-                    btn.disabled = false;
-                    loading.style.display = 'none';
-                    return;
-                }
-                const d = data.data;
-                // 终态判断：若后端已直接返回最终结果，立即展示，无需轮询
-                const terminalStatuses = ['已完成', '已派单', '待审核', '处理超时', '处理失败', '已拒绝'];
-                if (terminalStatuses.includes(d.status)) {
-                    document.getElementById('r-event_type').textContent = d.event_type || '-';
-                    document.getElementById('r-urgency').textContent = d.urgency || '-';
-                    document.getElementById('r-handler').textContent = d.handler || '-';
-                    document.getElementById('r-status').textContent = d.status || '-';
-                    document.getElementById('r-scene_tag').textContent = d.scene_tag || '-';
-                    document.getElementById('r-created_at').textContent = d.created_at || '-';
-                    document.getElementById('r-address').textContent = d.address || '-';
-                    document.getElementById('result').classList.remove('hidden');
-                    document.getElementById('description').value = '';
-                    loadList();
-                    btn.disabled = false;
-                    loading.style.display = 'none';
-                    return;
-                }
-                // 异步处理中：展示轮询状态并启动轮询
-                document.getElementById('polling-id').textContent = d.event_id;
-                polling.classList.remove('hidden');
-                document.getElementById('description').value = '';
-                loadList();
-                startPolling(d.event_id);
-            } catch (e) {
-                error.textContent = '网络请求失败，请检查服务是否启动';
-            } finally {
-                btn.disabled = false;
-                loading.style.display = 'none';
-            }
         }
 
         function startPolling(eventId) {

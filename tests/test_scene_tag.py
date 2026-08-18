@@ -278,7 +278,7 @@ def auth_header(token):
 
 def register_and_login(username, password, real_name, phone, role="resident"):
     """注册并登录，返回 token"""
-    # 注册
+    # 注册（居民需楼栋/单元/房间）
     res = client.post(
         "/api/auth/register",
         json={
@@ -287,6 +287,9 @@ def register_and_login(username, password, real_name, phone, role="resident"):
             "real_name": real_name,
             "phone": phone,
             "role": role,
+            "building": "1栋",
+            "unit": "1单元",
+            "room": "101",
         },
     )
     reg = res.json()
@@ -296,7 +299,7 @@ def register_and_login(username, password, real_name, phone, role="resident"):
     if login_data.get("success"):
         token = login_data["data"]["token"]
         user_id = login_data["data"]["user"]["id"]
-        return token, user_id
+        return token, user_id  # 注册即生效，无需审核
     return None, None
 
 

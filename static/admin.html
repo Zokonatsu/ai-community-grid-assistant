@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>管理后台 · 知·社区网格</title>
     <link rel="stylesheet" href="/common.css">
+    <link rel="stylesheet" href="/vendor/leaflet/leaflet.min.css">
     <style>
         /* ==========================================================================
            管理后台专属样式 · 复用 common.css 设计 token
@@ -167,7 +168,55 @@
             margin-bottom: 12px;
             line-height: 1.6;
         }
+        .review-beneficiary {
+            font-size: 12px;
+            color: var(--text-3);
+            background: var(--surface-2);
+            border-radius: var(--radius-md);
+            padding: 8px 10px;
+            margin: -4px 0 12px;
+            line-height: 1.5;
+        }
         .review-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+        .section-desc {
+            font-size: 13px;
+            color: var(--text-3);
+            margin: -8px 0 14px 0;
+        }
+
+        /* ---- 定位展示 ---- */
+        .loc-badge {
+            display: inline-block;
+            font-size: 12px;
+            padding: 2px 8px;
+            border-radius: var(--radius-pill);
+            margin-right: 6px;
+        }
+        .loc-ok { background: rgba(46, 160, 67, 0.15); color: #2ea043; }
+        .loc-warn { background: rgba(219, 143, 2, 0.15); color: #db8f02; }
+        .loc-coords { font-family: Consolas, monospace; font-size: 12px; color: var(--text-2); }
+        .loc-dist { font-size: 12px; color: var(--text-3); margin-left: 8px; }
+        .comm-actions { display: flex; align-items: center; gap: 18px; margin: 2px 0 4px; font-size: 14px; }
+        .comm-actions .btn { margin-top: 0; }  /* 抵消 .btn 默认 margin-top:14px */
+        .comm-map {
+            position: relative;
+            z-index: 0;
+            height: 300px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            margin-top: 12px;
+            overflow: hidden;
+        }
+        .comm-pin { background: none; border: none; }  /* 自定义 divIcon，去掉 leaflet 默认白框 */
+        .comm-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; }
+        .loc-link {
+            margin-left: 8px;
+            font-size: 12px;
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .loc-link:hover { text-decoration: underline; }
+        .loc-cell { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 
         /* ---- 小型按钮 ---- */
         .btn-sm {
@@ -308,6 +357,23 @@
             #tableContainer table td:first-child { padding-top: 0; }
             #tableContainer table td:last-child { padding-bottom: 0; }
             .table-footer { flex-direction: column; align-items: flex-start; gap: 4px; }
+
+            /* 分段标签 → 满宽等分，触控更大 */
+            .review-tabs { width: 100%; }
+            .review-tab { flex: 1; text-align: center; padding: 9px 4px; white-space: nowrap; }
+
+            /* 筛选栏：隐藏文字标签，选中控件两列排布，按钮满宽 */
+            .filter-bar label { display: none; }
+            .filter-bar select { flex: 1 1 calc(50% - 6px); min-width: 0; }
+            .filter-bar .btn-sm { flex: 1; justify-content: center; }
+
+            /* 审核操作区：按钮等宽满行 */
+            .review-actions { width: 100%; }
+            .review-actions .btn-sm { flex: 1; justify-content: center; }
+            .review-expand-btn { width: 100%; }
+
+            /* 统一触控高度 */
+            .btn-sm { min-height: 40px; }
         }
     </style>
 </head>
@@ -326,11 +392,11 @@
             <div class="user-actions">
                 <a href="/">
                     <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8H3.5M7 4.5 3.5 8 7 11.5"/></svg>
-                    返回事件提交页
+                    <span>返回事件提交页</span>
                 </a>
                 <a onclick="logout()">
                     <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3H3.8A1.3 1.3 0 0 0 2.5 4.3v7.4A1.3 1.3 0 0 0 3.8 13h2.7"/><path d="M13.5 8H7M11 5.5l3 2.5-3 2.5"/></svg>
-                    退出登录
+                    <span>退出登录</span>
                 </a>
             </div>
         </div>
@@ -390,6 +456,42 @@
             <div id="reviewAcceptedContainer" style="display:none;">
                 <div class="empty">加载中…</div>
             </div>
+        </div>
+
+        <!-- 住户列表专区 -->
+        <div class="card review-section">
+            <h2>住户列表</h2>
+            <p class="section-desc">本小区已注册住户（注册即生效，无需审核）。</p>
+            <div id="userReviewContainer">
+                <div class="empty">加载中…</div>
+            </div>
+        </div>
+
+        <!-- 社区设置专区 -->
+        <div class="card review-section">
+            <h2>社区设置</h2>
+            <p class="section-desc">设置小区中心位置：点「一键定位」跳到当前位置，再拖动/点击地图标记选社区中心，用于事件/住户距中心距离计算。</p>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="comm-name">社区名称</label>
+                    <input type="text" id="comm-name" placeholder="如：知·社区">
+                </div>
+                <div class="form-group">
+                    <label for="comm-radius">覆盖半径（米）</label>
+                    <input type="number" id="comm-radius" placeholder="如：500" min="1" step="1">
+                </div>
+            </div>
+            <div class="comm-actions">
+                <button class="btn btn-ghost" id="comm-locate-btn" onclick="locateCommunity()">一键定位</button>
+                <a class="loc-link" id="comm-map-btn" href="#" target="_blank" rel="noopener">打开高德地图查看位置</a>
+            </div>
+            <div id="comm-map" class="comm-map"></div>
+            <div class="locate-hint" id="comm-coords">中心坐标：未选择</div>
+            <div class="comm-footer">
+                <span id="comm-updated" class="locate-status"></span>
+                <button class="btn" id="comm-save-btn" onclick="saveCommunitySettings()">保存设置</button>
+            </div>
+            <div class="locate-hint" id="comm-msg"></div>
         </div>
 
         <!-- 图表区域 -->
@@ -464,6 +566,7 @@
         </div>
     </div>
 
+    <script src="/vendor/leaflet/leaflet.min.js"></script>
     <script>
         const API_BASE = '';
         let allEvents = [];
@@ -654,6 +757,15 @@
             renderReviewLists();
         }
 
+        // 被帮助人信息行（本人/代人办）
+        function beneficiaryLine(e) {
+            if (e.beneficiary_type === 'proxy') {
+                const room = (e.beneficiary_building || '') + (e.beneficiary_unit || '') + (e.beneficiary_room || '');
+                return `<div class="review-beneficiary">代人办：${escapeHtml(e.beneficiary_name || '-')} · ${escapeHtml(e.beneficiary_phone || '-')} · ${escapeHtml(room)}</div>`;
+            }
+            return `<div class="review-beneficiary">本人：${escapeHtml(e.user_name || '-')}</div>`;
+        }
+
         function renderReviewLists() {
             const pendingEvents = allEvents.filter(e => e.status === '待审核');
             const acceptedEvents = allEvents.filter(e => e.status === '已受理' || e.status === '已完成');
@@ -712,6 +824,7 @@
                                 <div><span class="tag ${statusClass(first.status)}">${first.status}</span></div>
                             </div>
                             <div class="review-desc">${first.description || '-'}</div>
+                            ${beneficiaryLine(first)}
                             <div class="review-actions">
                                 <button class="btn-sm btn-accept" onclick="acceptEvent('${first.created_at}')">受理</button>
                             </div>
@@ -737,6 +850,7 @@
                                         <div><span class="tag ${statusClass(e.status)}">${e.status}</span></div>
                                     </div>
                                     <div class="review-desc">${e.description || '-'}</div>
+                                    ${beneficiaryLine(e)}
                                     <div class="review-actions">
                                         <button class="btn-sm btn-accept" onclick="acceptEvent('${e.created_at}')">受理</button>
                                     </div>
@@ -768,6 +882,7 @@
                             <div><span class="tag ${statusClass(e.status)}">${e.status}</span></div>
                         </div>
                         <div class="review-desc">${e.description || '-'}</div>
+                        ${beneficiaryLine(e)}
                         ${(e.replies && e.replies.length > 0) ? `
                             <div class="reply-history">
                                 ${e.replies.map(r => `
@@ -804,6 +919,215 @@
                     newEl.focus();
                     newEl.setSelectionRange(selStart, selEnd);
                 }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // 住户列表专区（只读）
+        // ------------------------------------------------------------------
+        async function loadUsers() {
+            const container = document.getElementById('userReviewContainer');
+            try {
+                const res = await fetch(`${API_BASE}/api/admin/users`, {
+                    headers: getAuthHeaders(false)
+                });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) {
+                    container.innerHTML = '<div class="empty">加载失败</div>';
+                    return;
+                }
+                const users = await res.json();
+                renderUserCards(users);
+            } catch (e) {
+                container.innerHTML = '<div class="empty">加载失败</div>';
+            }
+        }
+
+        function renderUserCards(users) {
+            const container = document.getElementById('userReviewContainer');
+            if (!users || users.length === 0) {
+                container.innerHTML = '<div class="empty">暂无住户</div>';
+                return;
+            }
+            container.innerHTML = users.map(u => {
+                const locBadge = u.location_status === 'verified'
+                    ? '<span class="loc-badge loc-ok">定位已验证</span>'
+                    : '<span class="loc-badge loc-warn">定位未验证</span>';
+                let locInfo = '未定位';
+                if (u.register_lat != null && u.register_lng != null) {
+                    const dist = u.register_distance_m != null ? `（距中心 ${Math.round(u.register_distance_m)} 米）` : '';
+                    const url = `https://uri.amap.com/marker?position=${u.register_lng},${u.register_lat}&name=${encodeURIComponent(u.real_name || u.username)}&src=community-grid`;
+                    locInfo = `${u.register_lat.toFixed(5)}, ${u.register_lng.toFixed(5)}${dist} <a class="loc-link" href="${url}" target="_blank" rel="noopener">查看地图</a>`;
+                }
+                return `
+                    <div class="review-card">
+                        <div class="review-header">
+                            <div class="review-user">
+                                <strong>${escapeHtml(u.real_name || u.username)}</strong>
+                                <span class="user-meta">@${escapeHtml(u.username)}</span>
+                                <span class="user-meta">${ICON.phone}${escapeHtml(u.phone || '-')}</span>
+                                <span class="user-meta">${ICON.idcard}${escapeHtml(u.id_card || '-')}</span>
+                            </div>
+                            <div><span class="role-tag resident">居民</span></div>
+                        </div>
+                        <div class="review-desc">楼栋：${escapeHtml(u.building)} · 单元：${escapeHtml(u.unit)} · 房间：${escapeHtml(u.room)}</div>
+                        <div class="review-desc">定位：${locBadge} ${locInfo}</div>
+                        <div class="review-desc">注册时间：${u.register_time || u.created_at || '-'}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // ------------------------------------------------------------------
+        // 社区设置专区：一键定位 + 内嵌可拖动地图
+        // ------------------------------------------------------------------
+        let commMap = null;
+        let commMarker = null;
+        let commCenter = { lat: null, lng: null };
+
+        // 浏览器定位封装：成功返回 {lat,lng}，失败/拒绝返回 null
+        function getPosition() {
+            return new Promise(resolve => {
+                if (!navigator.geolocation) {
+                    resolve(null);
+                    return;
+                }
+                navigator.geolocation.getCurrentPosition(
+                    pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+                    () => resolve(null),
+                    { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+                );
+            });
+        }
+
+        async function loadCommunitySettings() {
+            try {
+                const res = await fetch(`${API_BASE}/api/admin/community`, {
+                    headers: getAuthHeaders(false)
+                });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) {
+                    document.getElementById('comm-msg').textContent = '加载社区设置失败';
+                    return;
+                }
+                const cfg = await res.json();
+                document.getElementById('comm-name').value = cfg.name || '';
+                document.getElementById('comm-radius').value = cfg.radius_m;
+                document.getElementById('comm-updated').textContent = cfg.updated_at ? `最后更新：${cfg.updated_at}` : '';
+                initCommMap(cfg.center_lat, cfg.center_lng, cfg.name || '');
+            } catch (e) {
+                document.getElementById('comm-msg').textContent = '加载社区设置失败';
+            }
+        }
+
+        function commPinIcon() {
+            return L.divIcon({
+                className: 'comm-pin',
+                html: '<svg viewBox="0 0 24 24" width="30" height="30" fill="#e02424"><path d="M12 2C8.1 2 5 5.1 5 9c0 5.2 7 13 7 13s7-7.8 7-13c0-3.9-3.1-7-7-7z"/><circle cx="12" cy="9" r="3" fill="#fff"/></svg>',
+                iconSize: [30, 30],
+                iconAnchor: [15, 30]
+            });
+        }
+
+        function initCommMap(lat, lng, name) {
+            // 坐标始终先由已保存配置兜底（Leaflet 加载失败也能按原中心保存）
+            if (lat != null && lng != null) {
+                commCenter = { lat, lng };
+                setCommCenter(lat, lng, name);
+            }
+            const el = document.getElementById('comm-map');
+            if (typeof L === 'undefined') {
+                el.innerHTML = '<div class="empty">地图组件未加载，请刷新或检查网络；仍可按当前中心保存</div>';
+                return;
+            }
+            if (!commMap) {
+                commMap = L.map('comm-map').setView([lat || 30.274, lng || 120.155], 16);
+                L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
+                    subdomains: ['1', '2', '3', '4'],
+                    maxZoom: 18,
+                    attribution: '© 高德地图'
+                }).addTo(commMap);
+                commMarker = L.marker([lat || 30.274, lng || 120.155], { draggable: true, icon: commPinIcon() }).addTo(commMap);
+                commMarker.on('dragend', () => {
+                    const p = commMarker.getLatLng();
+                    setCommCenter(p.lat, p.lng);
+                });
+                commMap.on('click', e => {
+                    commMarker.setLatLng(e.latlng);
+                    setCommCenter(e.latlng.lat, e.latlng.lng);
+                });
+            }
+            if (lat != null && lng != null) {
+                commMarker.setLatLng([lat, lng]);
+                commMap.setView([lat, lng], 16);
+            }
+        }
+
+        function setCommCenter(lat, lng, name) {
+            commCenter = { lat, lng };
+            document.getElementById('comm-coords').textContent = `中心坐标：${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+            updateCommMapBtn(lat, lng, name || document.getElementById('comm-name').value.trim());
+        }
+
+        async function locateCommunity() {
+            const btn = document.getElementById('comm-locate-btn');
+            const msg = document.getElementById('comm-msg');
+            if (!commMap) { msg.textContent = '地图未就绪，请稍后再试'; return; }
+            btn.disabled = true;
+            btn.textContent = '定位中…';
+            const pos = await getPosition();
+            btn.disabled = false;
+            btn.textContent = '一键定位';
+            if (pos) {
+                commMap.flyTo([pos.lat, pos.lng], 16);
+                commMarker.setLatLng([pos.lat, pos.lng]);
+                setCommCenter(pos.lat, pos.lng);
+                msg.textContent = '已定位到当前位置，拖动标记或点击地图调整社区中心';
+            } else {
+                msg.textContent = '定位不可用（需 HTTPS 或 localhost），可直接在地图上拖动标记选择';
+            }
+        }
+
+        function updateCommMapBtn(lat, lng, name) {
+            if (lat == null || lng == null) return;
+            const url = `https://uri.amap.com/marker?position=${lng},${lat}&name=${encodeURIComponent(name || '社区中心')}&src=community-grid`;
+            document.getElementById('comm-map-btn').href = url;
+        }
+
+        async function saveCommunitySettings() {
+            const name = document.getElementById('comm-name').value.trim();
+            const radius = parseFloat(document.getElementById('comm-radius').value);
+            const msg = document.getElementById('comm-msg');
+            msg.textContent = '';
+
+            if (commCenter.lat == null || commCenter.lng == null) { msg.textContent = '请先在地图上选择社区中心'; return; }
+            if (!(radius > 0)) { msg.textContent = '覆盖半径需大于 0'; return; }
+
+            const btn = document.getElementById('comm-save-btn');
+            btn.disabled = true;
+            btn.textContent = '保存中…';
+            try {
+                const res = await fetch(`${API_BASE}/api/admin/community`, {
+                    method: 'PUT',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ name, center_lat: commCenter.lat, center_lng: commCenter.lng, radius_m: radius })
+                });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) {
+                    let detail = '保存失败';
+                    try { detail = (await res.json()).detail || detail; } catch (e) {}
+                    msg.textContent = detail;
+                    return;
+                }
+                const cfg = await res.json();
+                document.getElementById('comm-updated').textContent = cfg.updated_at ? `最后更新：${cfg.updated_at}` : '';
+                updateCommMapBtn(cfg.center_lat, cfg.center_lng, cfg.name);
+                msg.textContent = '已保存，事件/住户距离将按新中心计算';
+            } catch (e) {
+                msg.textContent = '网络请求失败，请检查服务是否启动';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '保存设置';
             }
         }
 
@@ -913,11 +1237,12 @@
             const rows = sorted.map(e => `
                 <tr>
                     <td data-label="创建时间">${e.created_at || '-'}</td>
-                    <td data-label="描述">${e.description || '-'}</td>
+                    <td data-label="描述">${beneficiaryTag(e)}${e.description || '-'}</td>
                     <td data-label="类型">${e.event_type || '-'}</td>
                     <td data-label="紧急程度"><span class="tag ${urgencyClass(e.urgency)}">${e.urgency || '-'}</span></td>
                     <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${e.scene_tag || '-'}</span></td>
                     <td data-label="处理部门">${e.handler || '-'}</td>
+                    <td data-label="位置">${locationCell(e)}</td>
                     <td data-label="状态"><span class="tag ${statusClass(e.status)}">${e.status || '-'}</span></td>
                 </tr>
             `).join('');
@@ -932,6 +1257,7 @@
                             <th onclick="sortBy('urgency')">紧急程度<span class="sort-indicator">${sortIndicator('urgency')}</span></th>
                             <th onclick="sortBy('scene_tag')">场景标签<span class="sort-indicator">${sortIndicator('scene_tag')}</span></th>
                             <th onclick="sortBy('handler')">处理部门<span class="sort-indicator">${sortIndicator('handler')}</span></th>
+                            <th>位置</th>
                             <th onclick="sortBy('status')">状态<span class="sort-indicator">${sortIndicator('status')}</span></th>
                         </tr>
                     </thead>
@@ -939,6 +1265,29 @@
                 </table>
             `;
             document.getElementById('showingInfo').textContent = `共 ${sorted.length} 条记录`;
+        }
+
+        // 提交方式标签：本人 / 代办
+        function beneficiaryTag(e) {
+            if (e.beneficiary_type === 'proxy') {
+                return '<span class="tag tag-warning">代办</span> ';
+            }
+            return '<span class="tag tag-muted">本人</span> ';
+        }
+
+        // 事件位置单元格：坐标 + 距中心米数 + 高德地图链接 + 定位状态徽章（仅管理员可见该数据）
+        function locationCell(e) {
+            if (e.event_lat == null || e.event_lng == null) {
+                return '-';
+            }
+            const locBadge = e.event_location_status === 'verified'
+                ? '<span class="loc-badge loc-ok">已验证</span>'
+                : '<span class="loc-badge loc-warn">未验证</span>';
+            const dist = (e.event_distance_m != null && e.event_distance_m >= 0)
+                ? `<span class="loc-dist">距中心 ${Math.round(e.event_distance_m)} 米</span>`
+                : '';
+            const url = `https://uri.amap.com/marker?position=${e.event_lng},${e.event_lat}&name=${encodeURIComponent(e.description || '事件位置')}&src=community-grid`;
+            return `<div class="loc-cell">${locBadge}<span class="loc-coords">${e.event_lat.toFixed(5)}, ${e.event_lng.toFixed(5)}</span>${dist}<a class="loc-link" href="${url}" target="_blank" rel="noopener">查看地图</a></div>`;
         }
 
         function sortIndicator(key) {
@@ -1017,6 +1366,7 @@
                 updateTypeFilterOptions(allEvents);
                 applyFilters();
                 renderReviewLists();
+                loadUsers();
             } catch (e) {
                 document.getElementById('typeChart').innerHTML = '<div class="empty">数据加载失败</div>';
                 document.getElementById('urgencyChart').innerHTML = '<div class="empty">数据加载失败</div>';
@@ -1029,6 +1379,7 @@
         initAuth().then(ok => {
             if (ok) {
                 loadData();
+                loadCommunitySettings();
                 // 每 10 秒自动刷新一次
                 setInterval(loadData, 10000);
             }

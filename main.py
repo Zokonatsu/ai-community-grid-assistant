@@ -31,6 +31,8 @@ from receive_agent import _is_valid_input, receive_node, _check_hard_rules_first
 import receive_agent  # noqa: F811  用于调试：确认加载的模块路径
 import dispatch_agent
 import auth
+import geo
+import community_store
 
 logger = logging.getLogger("main")
 
@@ -121,6 +123,8 @@ async def _process_event(
     event_id: str,
     pre_checked_state: dict[str, str],
     user_id: str,
+    lat: float | None = None,
+    lng: float | None = None,
 ) -> None:
     """
     后台异步执行简化工作流（跳过语义校验，直接派单+记录）。
@@ -128,6 +132,7 @@ async def _process_event(
     语义校验已在 create_event 同步完成并复用其结果，
     后台仅执行 dispatch_node → record_node，避免二次调用 LLM API。
     超时保护：若 dispatch_record_workflow.invoke 超过 60 秒未完成，标记为处理超时。
+    定位坐标 lat/lng 仅透传给 record_node 落盘，不参与派单决策。
     """
 
     def _run() -> dict[str, str]:
@@ -145,6 +150,8 @@ async def _process_event(
             "confirmation_required": pre_checked_state.get("confirmation_required", False),
             "emergency_type": pre_checked_state.get("emergency_type", ""),
             "confirmed": pre_checked_state.get("confirmed", False),
+            "lat": lat,
+            "lng": lng,
         }
         return dispatch_record_workflow.invoke(initial_state)
 
@@ -187,6 +194,84 @@ async def _process_event(
         logger.error("事件处理失败，event_id=%s，异常=%s", event_id, exc)
 
 
+def _build_task(
+    *,
+    event_id: str,
+    description: str,
+    created_at: str,
+    status: str,
+    address: str,
+    event_type: str,
+    urgency: str,
+    scene_tag: str,
+    user: dict[str, Any],
+    error: str | None = None,
+    lat: float | None = None,
+    lng: float | None = None,
+    beneficiary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    统一构造事件任务字典。
+
+    集中注入提交者实名信息、事件实时定位（含范围内校验结果与距中心米数）、
+    被帮助人信息（本人/代人办），避免 create_event 内多处重复手写 dict 导致字段遗漏。
+    定位坐标仅随事件存储并供后台查看，不参与派单决策。
+    """
+    if lat is not None and lng is not None:
+        within, _dist = geo.is_within_community(lat, lng)
+        location_status = "verified" if within else "unverified"
+        event_distance_m = _dist
+    else:
+        location_status = "unverified"
+        event_distance_m = None
+    bf = beneficiary or {}
+    return {
+        "event_id": event_id,
+        "description": description,
+        "status": status,
+        "address": address,
+        "event_type": event_type,
+        "urgency": urgency,
+        "scene_tag": scene_tag,
+        "handler": "",
+        "created_at": created_at,
+        "completed_at": None,
+        "error": error,
+        "user_id": user["id"],
+        "user_name": user.get("real_name", ""),
+        "user_phone": user.get("phone", ""),
+        "user_id_card": user.get("id_card", ""),
+        "reply": "",
+        "event_lat": lat,
+        "event_lng": lng,
+        "event_location_status": location_status,
+        "event_distance_m": event_distance_m,
+        "beneficiary_type": bf.get("beneficiary_type", "self"),
+        "beneficiary_name": bf.get("beneficiary_name", user.get("real_name", "")),
+        "beneficiary_phone": bf.get("beneficiary_phone", user.get("phone", "")),
+        "beneficiary_building": bf.get("beneficiary_building", user.get("building", "")),
+        "beneficiary_unit": bf.get("beneficiary_unit", user.get("unit", "")),
+        "beneficiary_room": bf.get("beneficiary_room", user.get("room", "")),
+    }
+
+
+def _resolve_beneficiary(request: "EventRequest", user: dict[str, Any]) -> dict[str, Any]:
+    """
+    根据提交方式解析被帮助人信息。
+    self：被帮助人即提交者本人（复用账号住户信息）；proxy：使用请求中被帮助人字段。
+    """
+    if request.beneficiary_type == "proxy":
+        return {
+            "beneficiary_type": "proxy",
+            "beneficiary_name": (request.beneficiary_name or "").strip(),
+            "beneficiary_phone": (request.beneficiary_phone or "").strip(),
+            "beneficiary_building": (request.beneficiary_building or "").strip(),
+            "beneficiary_unit": (request.beneficiary_unit or "").strip(),
+            "beneficiary_room": (request.beneficiary_room or "").strip(),
+        }
+    return {"beneficiary_type": "self"}
+
+
 # ------------------------------------------------------------------
 # FastAPI 应用实例
 # ------------------------------------------------------------------
@@ -216,6 +301,25 @@ class EventRequest(BaseModel):
     description: str = Field(..., description="居民事件描述字符串", min_length=1)
     confirmed: bool = Field(default=False, description="用户是否已确认高风险描述（用于模糊急救二次提交）")
     emergency_type: str | None = Field(default=None, description="模糊急救类型：medical/police/fire（用于二次提交时传递）")
+    lat: float | None = Field(default=None, ge=-90, le=90, description="事件实时定位纬度")
+    lng: float | None = Field(default=None, ge=-180, le=180, description="事件实时定位经度")
+    # 提交方式：本人（self）/ 代人办（proxy）
+    beneficiary_type: str = Field(default="self", description="提交方式：self=本人，proxy=代人办")
+    beneficiary_name: str | None = Field(default=None, description="被帮助人姓名（代人办必填）")
+    beneficiary_phone: str | None = Field(default=None, description="被帮助人手机号（代人办必填）")
+    beneficiary_building: str | None = Field(default=None, description="被帮助人楼栋（代人办必填）")
+    beneficiary_unit: str | None = Field(default=None, description="被帮助人单元（代人办必填）")
+    beneficiary_room: str | None = Field(default=None, description="被帮助人房间号（代人办必填）")
+
+
+class CommunityUpdateRequest(BaseModel):
+    """
+    社区中心设置更新请求体（后台「社区设置」）。
+    """
+    name: str | None = Field(default=None, description="社区名称")
+    center_lat: float = Field(..., ge=-90, le=90, description="中心纬度")
+    center_lng: float = Field(..., ge=-180, le=180, description="中心经度")
+    radius_m: float = Field(..., gt=0, description="覆盖半径（米）")
 
 
 class EventResponseData(BaseModel):
@@ -270,7 +374,13 @@ class RegisterRequest(BaseModel):
     password: str = Field(..., min_length=6)
     real_name: str = Field(..., min_length=1, max_length=20)
     phone: str = Field(..., pattern=r"^1[3-9]\d{9}$")
+    id_card: str = Field(default="", max_length=18, description="居民身份证号（可选，非空时校验格式）")
     role: str = Field(default="resident", pattern=r"^(resident|admin)$")
+    building: str = Field(default="", max_length=20, description="楼栋（居民注册必填）")
+    unit: str = Field(default="", max_length=20, description="单元（居民注册必填）")
+    room: str = Field(default="", max_length=20, description="房间号（居民注册必填）")
+    register_lat: float | None = Field(default=None, ge=-90, le=90, description="注册时定位纬度")
+    register_lng: float | None = Field(default=None, ge=-180, le=180, description="注册时定位经度")
 
 
 class LoginRequest(BaseModel):
@@ -291,6 +401,11 @@ class UserInfo(BaseModel):
     phone: str
     role: str
     created_at: str
+    status: str = "active"
+    building: str = ""
+    unit: str = ""
+    room: str = ""
+    location_status: str = "unverified"
 
 
 # ------------------------------------------------------------------
@@ -356,7 +471,13 @@ async def register(request: RegisterRequest) -> AuthResponse:
         password=request.password,
         real_name=request.real_name,
         phone=request.phone,
+        id_card=request.id_card,
         role=request.role,
+        building=request.building,
+        unit=request.unit,
+        room=request.room,
+        register_lat=request.register_lat,
+        register_lng=request.register_lng,
     )
     if not success:
         return AuthResponse(success=False, error=message)
@@ -396,10 +517,58 @@ async def me(current_user: dict[str, Any] = Depends(get_current_user_dependency)
 
 
 # ------------------------------------------------------------------
+# API 端点：住户列表（管理员，只读）
+# ------------------------------------------------------------------
+@app.get("/api/admin/users")
+async def admin_list_users(
+    _admin: dict[str, Any] = Depends(get_admin_dependency),
+) -> list[dict[str, Any]]:
+    """
+    管理员获取全部住户信息（只读，注册即生效，无审核操作）。
+    """
+    return auth.list_users()
+
+
+# ------------------------------------------------------------------
+# API 端点：社区中心设置（管理员）
+# ------------------------------------------------------------------
+@app.get("/api/admin/community")
+async def admin_get_community(
+    _admin: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    """
+    获取当前社区中心配置（后台「社区设置」展示用）。
+    含 name/center_lat/center_lng/radius_m/updated_at。
+    """
+    return geo.get_community_config()
+
+
+@app.put("/api/admin/community")
+async def admin_update_community(
+    request: CommunityUpdateRequest,
+    _admin: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    """
+    保存社区中心位置（后台「社区设置」），立即生效、无需重启。
+    经纬度/半径非法由 Pydantic 校验拦截（422）。
+    """
+    try:
+        config = community_store.save(
+            name=request.name or "",
+            center_lat=request.center_lat,
+            center_lng=request.center_lng,
+            radius_m=request.radius_m,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return config
+
+
+# ------------------------------------------------------------------
 # API 端点：GET /api/events
 # ------------------------------------------------------------------
 @app.get("/api/events")
-async def list_events(current_user: dict[str, Any] = Depends(get_current_user_dependency)) -> list[dict[str, str]]:
+async def list_events(current_user: dict[str, Any] = Depends(get_current_user_dependency)) -> list[dict[str, Any]]:
     """
     查询所有事件记录（含处理中、已完成、处理超时、处理失败）。
     按 created_at 降序排列，最新的在前。
@@ -424,7 +593,7 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
                 user_read_at = task.get("user_read_at", "")
                 if not user_read_at or last_reply_at > user_read_at:
                     has_new_reply = True
-            events.append({
+            event_item: dict[str, Any] = {
                 "event_id": task["event_id"],
                 "description": task["description"],
                 "address": task.get("address", ""),
@@ -440,7 +609,20 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
                 "user_name": task.get("user_name", ""),
                 "user_phone": task.get("user_phone", ""),
                 "user_id_card": task.get("user_id_card", ""),
-            })
+                "beneficiary_type": task.get("beneficiary_type", "self"),
+                "beneficiary_name": task.get("beneficiary_name", ""),
+                "beneficiary_phone": task.get("beneficiary_phone", ""),
+                "beneficiary_building": task.get("beneficiary_building", ""),
+                "beneficiary_unit": task.get("beneficiary_unit", ""),
+                "beneficiary_room": task.get("beneficiary_room", ""),
+            }
+            # 定位坐标/距中心米数仅管理员可见，居民端不返回（避免暴露他人位置）
+            if current_user.get("role") == "admin":
+                event_item["event_lat"] = task.get("event_lat")
+                event_item["event_lng"] = task.get("event_lng")
+                event_item["event_location_status"] = task.get("event_location_status", "unverified")
+                event_item["event_distance_m"] = task.get("event_distance_m")
+            events.append(event_item)
 
     # 按 created_at 降序排列，最新的记录展示在最前面
     events.sort(key=lambda x: x.get("created_at", ""), reverse=True)
@@ -461,6 +643,31 @@ async def create_event(
     """
     try:
         print(f"[DEBUG] Loaded receive_agent from: {receive_agent.__file__}")
+        # ------------------------------------------------------------------
+        # 提交方式校验：本人（self）/ 代人办（proxy）
+        # ------------------------------------------------------------------
+        if request.beneficiary_type not in ("self", "proxy"):
+            return EventResponse(
+                success=False,
+                error="提交方式不合法，仅支持本人（self）或代人办（proxy）",
+            )
+        if request.beneficiary_type == "proxy":
+            missing = []
+            for label, val in (
+                ("被帮助人姓名", request.beneficiary_name),
+                ("手机号", request.beneficiary_phone),
+                ("楼栋", request.beneficiary_building),
+                ("单元", request.beneficiary_unit),
+                ("房间号", request.beneficiary_room),
+            ):
+                if not (val or "").strip():
+                    missing.append(label)
+            if missing:
+                return EventResponse(
+                    success=False,
+                    error="代人办需填写：" + "、".join(missing),
+                )
+        beneficiary = _resolve_beneficiary(request, current_user)
         # ------------------------------------------------------------------
         # 前置硬规则检查（生命安全优先）：命中则跳过所有LLM调用
         # ------------------------------------------------------------------
@@ -488,28 +695,24 @@ async def create_event(
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
-                _tasks[event_id] = {
-                    "event_id": event_id,
-                    "description": request.description,
-                    "status": "处理中",
-                    "address": "",
-                    "event_type": hard_rule_result["event_type"],
-                    "urgency": hard_rule_result["urgency"],
-                    "scene_tag": hard_rule_result["scene_tag"],
-                    "handler": "",
-                    "created_at": created_at,
-                    "completed_at": None,
-                    "error": None,
-                    "user_id": current_user["id"],
-                    "user_name": current_user.get("real_name", ""),
-                    "user_phone": current_user.get("phone", ""),
-                    "user_id_card": current_user.get("id_card", ""),
-                    "reply": "",
-                }
+                _tasks[event_id] = _build_task(
+                    event_id=event_id,
+                    description=request.description,
+                    created_at=created_at,
+                    status="处理中",
+                    address="",
+                    event_type=hard_rule_result["event_type"],
+                    urgency=hard_rule_result["urgency"],
+                    scene_tag=hard_rule_result["scene_tag"],
+                    user=current_user,
+                    lat=request.lat,
+                    lng=request.lng,
+                    beneficiary=beneficiary,
+                )
                 _save_tasks(_tasks)
             # 启动后台异步任务
             bg_task = asyncio.create_task(
-                _process_event(event_id, hard_rule_result, current_user["id"])
+                _process_event(event_id, hard_rule_result, current_user["id"], request.lat, request.lng)
             )
             _background_tasks.add(bg_task)
             bg_task.add_done_callback(_background_tasks.discard)
@@ -582,24 +785,21 @@ async def create_event(
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
-                _tasks[event_id] = {
-                    "event_id": event_id,
-                    "description": request.description,
-                    "status": "待审核",
-                    "address": "",
-                    "event_type": "待审核",
-                    "urgency": "中",
-                    "scene_tag": "常规",
-                    "handler": "",
-                    "created_at": created_at,
-                    "completed_at": None,
-                    "error": "语义校验超时，已转人工审核",
-                    "user_id": current_user["id"],
-                    "user_name": current_user.get("real_name", ""),
-                    "user_phone": current_user.get("phone", ""),
-                    "user_id_card": current_user.get("id_card", ""),
-                    "reply": "",
-                }
+                _tasks[event_id] = _build_task(
+                    event_id=event_id,
+                    description=request.description,
+                    created_at=created_at,
+                    status="待审核",
+                    address="",
+                    event_type="待审核",
+                    urgency="中",
+                    scene_tag="常规",
+                    user=current_user,
+                    error="语义校验超时，已转人工审核",
+                    lat=request.lat,
+                    lng=request.lng,
+                    beneficiary=beneficiary,
+                )
                 _save_tasks(_tasks)
             # 启动后台让 dispatch_agent 设置 handler="人工部"
             timeout_state = {
@@ -616,7 +816,7 @@ async def create_event(
                 "status": "待审核",
             }
             bg_task = asyncio.create_task(
-                _process_event(event_id, timeout_state, current_user["id"])
+                _process_event(event_id, timeout_state, current_user["id"], request.lat, request.lng)
             )
             _background_tasks.add(bg_task)
             bg_task.add_done_callback(_background_tasks.discard)
@@ -639,24 +839,21 @@ async def create_event(
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
-                _tasks[event_id] = {
-                    "event_id": event_id,
-                    "description": request.description,
-                    "status": "待审核",
-                    "address": "",
-                    "event_type": "待审核",
-                    "urgency": "中",
-                    "scene_tag": "常规",
-                    "handler": "",
-                    "created_at": created_at,
-                    "completed_at": None,
-                    "error": f"语义校验异常，已转人工审核：{type(exc).__name__}",
-                    "user_id": current_user["id"],
-                    "user_name": current_user.get("real_name", ""),
-                    "user_phone": current_user.get("phone", ""),
-                    "user_id_card": current_user.get("id_card", ""),
-                    "reply": "",
-                }
+                _tasks[event_id] = _build_task(
+                    event_id=event_id,
+                    description=request.description,
+                    created_at=created_at,
+                    status="待审核",
+                    address="",
+                    event_type="待审核",
+                    urgency="中",
+                    scene_tag="常规",
+                    user=current_user,
+                    error=f"语义校验异常，已转人工审核：{type(exc).__name__}",
+                    lat=request.lat,
+                    lng=request.lng,
+                    beneficiary=beneficiary,
+                )
                 _save_tasks(_tasks)
             # 启动后台让 dispatch_agent 设置 handler="人工部"
             exc_state = {
@@ -673,7 +870,7 @@ async def create_event(
                 "status": "待审核",
             }
             bg_task = asyncio.create_task(
-                _process_event(event_id, exc_state, current_user["id"])
+                _process_event(event_id, exc_state, current_user["id"], request.lat, request.lng)
             )
             _background_tasks.add(bg_task)
             bg_task.add_done_callback(_background_tasks.discard)
@@ -760,24 +957,21 @@ async def create_event(
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
-                _tasks[event_id] = {
-                    "event_id": event_id,
-                    "description": request.description,
-                    "status": "待审核",
-                    "address": "",
-                    "event_type": "待审核",
-                    "urgency": "中",
-                    "scene_tag": "常规",
-                    "handler": "",
-                    "created_at": created_at,
-                    "completed_at": None,
-                    "error": "语义校验服务异常，已转人工审核",
-                    "user_id": current_user["id"],
-                    "user_name": current_user.get("real_name", ""),
-                    "user_phone": current_user.get("phone", ""),
-                    "user_id_card": current_user.get("id_card", ""),
-                    "reply": "",
-                }
+                _tasks[event_id] = _build_task(
+                    event_id=event_id,
+                    description=request.description,
+                    created_at=created_at,
+                    status="待审核",
+                    address="",
+                    event_type="待审核",
+                    urgency="中",
+                    scene_tag="常规",
+                    user=current_user,
+                    error="语义校验服务异常，已转人工审核",
+                    lat=request.lat,
+                    lng=request.lng,
+                    beneficiary=beneficiary,
+                )
                 _save_tasks(_tasks)
             # 启动后台让 dispatch_agent 设置 handler="人工部"
             api_err_state = {
@@ -794,7 +988,7 @@ async def create_event(
                 "status": "待审核",
             }
             bg_task = asyncio.create_task(
-                _process_event(event_id, api_err_state, current_user["id"])
+                _process_event(event_id, api_err_state, current_user["id"], request.lat, request.lng)
             )
             _background_tasks.add(bg_task)
             bg_task.add_done_callback(_background_tasks.discard)
@@ -817,29 +1011,25 @@ async def create_event(
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
-                _tasks[event_id] = {
-                    "event_id": event_id,
-                    "description": request.description,
-                    "status": "待审核",
-                    "address": semantic_result.get("address", ""),
-                    "event_type": "待审核",
-                    "urgency": semantic_result.get("urgency", "中"),
-                    "scene_tag": semantic_result.get("scene_tag", "常规"),
-                    "handler": "",
-                    "created_at": created_at,
-                    "completed_at": None,
-                    "error": None,
-                    "user_id": current_user["id"],
-                    "user_name": current_user.get("real_name", ""),
-                    "user_phone": current_user.get("phone", ""),
-                    "user_id_card": current_user.get("id_card", ""),
-                    "reply": "",
-                }
+                _tasks[event_id] = _build_task(
+                    event_id=event_id,
+                    description=request.description,
+                    created_at=created_at,
+                    status="待审核",
+                    address=semantic_result.get("address", ""),
+                    event_type="待审核",
+                    urgency=semantic_result.get("urgency", "中"),
+                    scene_tag=semantic_result.get("scene_tag", "常规"),
+                    user=current_user,
+                    lat=request.lat,
+                    lng=request.lng,
+                    beneficiary=beneficiary,
+                )
                 _save_tasks(_tasks)
             # 启动后台异步任务，让 dispatch_agent 分配 handler="人工部" 并记录
             semantic_result["status"] = "待审核"
             bg_task = asyncio.create_task(
-                _process_event(event_id, semantic_result, current_user["id"])
+                _process_event(event_id, semantic_result, current_user["id"], request.lat, request.lng)
             )
             _background_tasks.add(bg_task)
             bg_task.add_done_callback(_background_tasks.discard)
@@ -864,29 +1054,25 @@ async def create_event(
         created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         async with _task_lock:
-            _tasks[event_id] = {
-                "event_id": event_id,
-                "description": request.description,
-                "status": "处理中",
-                "address": semantic_result.get("address", ""),
-                "event_type": semantic_result.get("event_type", ""),
-                "urgency": semantic_result.get("urgency", ""),
-                "scene_tag": semantic_result.get("scene_tag", ""),
-                "handler": "",
-                "created_at": created_at,
-                "completed_at": None,
-                "error": None,
-                "user_id": current_user["id"],
-                "user_name": current_user.get("real_name", ""),
-                "user_phone": current_user.get("phone", ""),
-                "user_id_card": current_user.get("id_card", ""),
-                "reply": "",
-            }
+            _tasks[event_id] = _build_task(
+                event_id=event_id,
+                description=request.description,
+                created_at=created_at,
+                status="处理中",
+                address=semantic_result.get("address", ""),
+                event_type=semantic_result.get("event_type", ""),
+                urgency=semantic_result.get("urgency", ""),
+                scene_tag=semantic_result.get("scene_tag", ""),
+                user=current_user,
+                lat=request.lat,
+                lng=request.lng,
+                beneficiary=beneficiary,
+            )
             _save_tasks(_tasks)
 
         # 启动后台异步任务，传入已校验结果，避免二次调用 LLM API
         bg_task = asyncio.create_task(
-            _process_event(event_id, semantic_result, current_user["id"])
+            _process_event(event_id, semantic_result, current_user["id"], request.lat, request.lng)
         )
         _background_tasks.add(bg_task)
         bg_task.add_done_callback(_background_tasks.discard)
@@ -913,24 +1099,21 @@ async def create_event(
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
-                _tasks[event_id] = {
-                    "event_id": event_id,
-                    "description": request.description,
-                    "status": "待审核",
-                    "address": "",
-                    "event_type": "待审核",
-                    "urgency": "高",
-                    "scene_tag": hard["scene_tag"],
-                    "handler": "",
-                    "created_at": created_at,
-                    "completed_at": None,
-                    "error": f"处理异常已转人工：{type(exc).__name__}",
-                    "user_id": current_user["id"],
-                    "user_name": current_user.get("real_name", ""),
-                    "user_phone": current_user.get("phone", ""),
-                    "user_id_card": current_user.get("id_card", ""),
-                    "reply": "",
-                }
+                _tasks[event_id] = _build_task(
+                    event_id=event_id,
+                    description=request.description,
+                    created_at=created_at,
+                    status="待审核",
+                    address="",
+                    event_type="待审核",
+                    urgency="高",
+                    scene_tag=hard["scene_tag"],
+                    user=current_user,
+                    error=f"处理异常已转人工：{type(exc).__name__}",
+                    lat=request.lat,
+                    lng=request.lng,
+                    beneficiary=beneficiary,
+                )
                 _save_tasks(_tasks)
             # 启动后台让 dispatch_agent 设置 handler="人工部"
             hard_state = {
@@ -947,7 +1130,7 @@ async def create_event(
                 "status": "待审核",
             }
             bg_task = asyncio.create_task(
-                _process_event(event_id, hard_state, current_user["id"])
+                _process_event(event_id, hard_state, current_user["id"], request.lat, request.lng)
             )
             _background_tasks.add(bg_task)
             bg_task.add_done_callback(_background_tasks.discard)

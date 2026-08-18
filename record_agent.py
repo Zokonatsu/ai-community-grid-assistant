@@ -20,7 +20,7 @@ import logging
 import os
 import threading
 from datetime import datetime
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from langgraph.graph import StateGraph, START, END
 
@@ -68,6 +68,8 @@ class RecordState(TypedDict):
     user_id: str
     confidence: str
     reply: str
+    lat: float | None  # 事件实时定位纬度（可选，仅存储不参与派单）
+    lng: float | None  # 事件实时定位经度（可选，仅存储不参与派单）
 
 
 # ------------------------------------------------------------------
@@ -119,6 +121,8 @@ def record_node(state: RecordState) -> RecordState:
     user_id = state.get("user_id", "")
     confidence = state.get("confidence", "")
     reply = state.get("reply", "")
+    lat = state.get("lat")
+    lng = state.get("lng")
 
     # 补充状态字段：若上游已传入有效状态（如"待审核"），保留原值；否则默认为"已派单"
     upstream_status = state.get("status", "")
@@ -127,7 +131,7 @@ def record_node(state: RecordState) -> RecordState:
     # 补充创建时间字段：当前系统时间，格式"YYYY-MM-DD HH:MM:SS"
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # 构建完整记录字典
+    # 构建完整记录字典（定位坐标可选，仅存储不参与派单）
     record = {
         "description": description,
         "address": address,
@@ -141,6 +145,9 @@ def record_node(state: RecordState) -> RecordState:
         "confidence": confidence,
         "reply": reply,
     }
+    if lat is not None and lng is not None:
+        record["lat"] = lat
+        record["lng"] = lng
 
     # 持久化到 JSONL 文件：锁保护 + 异常降级
     # 无论文件写入成功或失败，均返回完整状态，确保上游链路不中断
@@ -167,7 +174,7 @@ def record_node(state: RecordState) -> RecordState:
         )
 
     # 返回包含所有字段的完整状态
-    return {
+    result: dict[str, Any] = {
         "description": description,
         "address": address,
         "event_type": event_type,
@@ -180,6 +187,10 @@ def record_node(state: RecordState) -> RecordState:
         "confidence": confidence,
         "reply": reply,
     }
+    if lat is not None and lng is not None:
+        result["lat"] = lat
+        result["lng"] = lng
+    return result
 
 
 # ------------------------------------------------------------------

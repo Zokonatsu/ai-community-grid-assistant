@@ -17,7 +17,7 @@ workflow.py
 
 import json
 import os
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from langgraph.graph import StateGraph, START, END
 
@@ -84,6 +84,8 @@ class WorkflowState(TypedDict):
     confirmation_required: bool
     emergency_type: str
     confirmed: bool
+    lat: NotRequired[float | None]  # 事件实时定位纬度（可选，仅存储不参与派单）
+    lng: NotRequired[float | None]  # 事件实时定位经度（可选，仅存储不参与派单）
 
 
 # ------------------------------------------------------------------

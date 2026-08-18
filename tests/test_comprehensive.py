@@ -530,14 +530,16 @@ clean_data()
 importlib.reload(auth_module)
 
 # 4a: First registration
-ok1, msg1, u1 = auth_module.register_user("uniqueuser", "pass123456", "Unique", "13900000002")
+ok1, msg1, u1 = auth_module.register_user("uniqueuser", "pass123456", "Unique", "13900000002",
+                                          building="1栋", unit="1单元", room="101")
 if ok1:
     report.ok("First registration OK", "username=uniqueuser")
 else:
     report.fail("First registration failed", str(msg1))
 
 # 4b: Duplicate username
-ok2, msg2, u2 = auth_module.register_user("uniqueuser", "different", "Dup", "13900000003")
+ok2, msg2, u2 = auth_module.register_user("uniqueuser", "different", "Dup", "13900000003",
+                                          building="1栋", unit="1单元", room="101")
 if not ok2 and "已被注册" in str(msg2):
     report.ok("Duplicate username REJECTED", "message='%s'" % msg2)
 elif not ok2:
@@ -546,7 +548,8 @@ else:
     report.fail("DUPLICATE USERNAME NOT REJECTED!", "Uniqueness check MISSING or BROKEN.")
 
 # 4c: Duplicate phone
-ok3, msg3, u3 = auth_module.register_user("diffuser", "pass123456", "Diff", "13900000002")
+ok3, msg3, u3 = auth_module.register_user("diffuser", "pass123456", "Diff", "13900000002",
+                                          building="1栋", unit="1单元", room="101")
 if not ok3 and "已被注册" in str(msg3):
     report.ok("Duplicate phone REJECTED", "message='%s'" % msg3)
 elif not ok3:
@@ -579,8 +582,10 @@ if all_boundary_ok:
 # 4e: Case sensitivity
 report.section("  4e: Username case sensitivity")
 importlib.reload(auth_module)
-ok_a, _, _ = auth_module.register_user("CaseUser", "pass123456", "C", "13900000201")
-ok_b, msg_b, _ = auth_module.register_user("caseuser", "pass123456", "c", "13900000202")
+ok_a, _, _ = auth_module.register_user("CaseUser", "pass123456", "C", "13900000201",
+                                       building="1栋", unit="1单元", room="101")
+ok_b, msg_b, _ = auth_module.register_user("caseuser", "pass123456", "c", "13900000202",
+                                           building="1栋", unit="1单元", room="101")
 if ok_a and ok_b:
     report.warn("Username case-SENSITIVE",
                 "'CaseUser' and 'caseuser' BOTH registered. This may confuse users.")
@@ -596,7 +601,8 @@ clean_data()
 importlib.reload(auth_module)
 
 # 5a: Register + Login
-ok, _, user = auth_module.register_user("persist_test", "secure123", "Persist", "13900000301")
+ok, _, user = auth_module.register_user("persist_test", "secure123", "Persist", "13900000301",
+                                        building="1栋", unit="1单元", room="101")
 ok_l, _, res = auth_module.login_user("persist_test", "secure123")
 if ok and ok_l:
     report.ok("Register + Login OK", "username=persist_test")
@@ -739,7 +745,8 @@ report.section("  B2: Auth lifecycle (register -> login -> verify -> logout)")
 clean_data()
 importlib.reload(auth_module)
 
-auth_module.register_user("seclife", "secure123", "SecTest", "13900000901")
+auth_module.register_user("seclife", "secure123", "SecTest", "13900000901",
+                          building="1栋", unit="1单元", room="101")
 _, _, lr = auth_module.login_user("seclife", "secure123")
 sec_token = lr["token"]
 
