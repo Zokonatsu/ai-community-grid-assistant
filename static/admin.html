@@ -408,6 +408,29 @@
         .reply-box .btn-sm {
             margin-top: 8px;
         }
+        .reply-history {
+            margin: 8px 0;
+            padding: 8px 12px;
+            background: #f8fafc;
+            border-radius: 6px;
+            border-left: 3px solid #1a56db;
+        }
+        .reply-history-item + .reply-history-item {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px dashed #e2e8f0;
+        }
+        .reply-history-meta {
+            font-size: 12px;
+            color: #64748b;
+            margin-bottom: 4px;
+        }
+        .reply-history-content {
+            font-size: 14px;
+            color: #1e293b;
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
     </style>
 </head>
 <body>
@@ -725,7 +748,7 @@
 
         function renderReviewLists() {
             const pendingEvents = allEvents.filter(e => e.emergency_type === '人工部' && e.status === '待审核');
-            const acceptedEvents = allEvents.filter(e => e.emergency_type === '人工部' && e.status === '已受理');
+            const acceptedEvents = allEvents.filter(e => e.emergency_type === '人工部' && (e.status === '已受理' || e.status === '已完成'));
 
             // 保存已受理输入框中用户正在输入的内容，避免定时刷新时丢失
             const savedReplies = {};
@@ -747,6 +770,12 @@
                 selStart = activeEl.selectionStart;
                 selEnd = activeEl.selectionEnd;
             }
+
+            // 保存当前各分组的展开状态
+            const savedCollapsed = {};
+            document.querySelectorAll('[id^="collapsed-"]').forEach(el => {
+                savedCollapsed[el.id] = el.classList.contains('visible');
+            });
 
             const pendingContainer = document.getElementById('reviewPendingContainer');
             if (pendingEvents.length === 0) {
@@ -825,6 +854,16 @@
                             <div><span class="tag ${statusClass(e.status)}">${e.status}</span></div>
                         </div>
                         <div class="review-desc">${e.description || '-'}</div>
+                        ${(e.replies && e.replies.length > 0) ? `
+                            <div class="reply-history">
+                                ${e.replies.map(r => `
+                                    <div class="reply-history-item">
+                                        <div class="reply-history-meta">${r.reviewer_name || '管理员'} · ${r.created_at}</div>
+                                        <div class="reply-history-content">${escapeHtml(r.content)}</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
                         <div class="reply-box visible" id="reply-box-${e.created_at}">
                             <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容">${savedReplies[e.created_at] || ''}</textarea>
                             <button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>
@@ -841,6 +880,17 @@
                     newEl.setSelectionRange(selStart, selEnd);
                 }
             }
+
+            // 恢复展开状态
+            Object.entries(savedCollapsed).forEach(([id, wasVisible]) => {
+                const el = document.getElementById(id);
+                if (el && wasVisible) {
+                    el.classList.add('visible');
+                    const btnId = id.replace('collapsed-', 'expand-btn-');
+                    const btn = document.getElementById(btnId);
+                    if (btn) btn.textContent = '收起';
+                }
+            });
         }
 
         function toggleCollapsed(safeId) {

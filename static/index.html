@@ -326,6 +326,21 @@
             cursor: pointer;
             text-decoration: underline;
         }
+        .unread-badge {
+            color: #e02424;
+            margin-left: 4px;
+            font-size: 12px;
+        }
+        .reply-item + .reply-item {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #e2e8f0;
+        }
+        .reply-meta {
+            font-size: 12px;
+            color: #64748b;
+            margin-bottom: 4px;
+        }
     </style>
 </head>
 <body>
@@ -517,13 +532,49 @@
             return div.innerHTML;
         }
 
-        function showReplyDialog(replyText) {
-            document.getElementById('replyText').textContent = replyText;
+        let currentReplyEventId = null;
+
+        function handleReplyClick(eventId) {
+            const event = window.userEvents && window.userEvents.find(e => e.event_id === eventId);
+            if (!event) return;
+            currentReplyEventId = eventId;
+
+            const replies = event.replies || [];
+            let html = '';
+            if (replies.length === 0 && event.reply) {
+                html = `<div class="reply-item">${escapeHtml(event.reply)}</div>`;
+            } else {
+                html = replies.map(r => `
+                    <div class="reply-item">
+                        <div class="reply-meta">${r.reviewer_name || '管理员'} · ${r.created_at}</div>
+                        <div class="reply-content">${escapeHtml(r.content)}</div>
+                    </div>
+                `).join('');
+            }
+            document.getElementById('replyText').innerHTML = html;
             document.getElementById('replyOverlay').classList.remove('hidden');
         }
 
         function closeReplyDialog() {
             document.getElementById('replyOverlay').classList.add('hidden');
+            if (currentReplyEventId) {
+                markRead(currentReplyEventId);
+                currentReplyEventId = null;
+            }
+        }
+
+        async function markRead(eventId) {
+            try {
+                const res = await fetch(`${API_BASE}/api/events/${eventId}/mark_read`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(false)
+                });
+                if (res.ok) {
+                    await loadList();
+                }
+            } catch (e) {
+                console.error('标记已读失败', e);
+            }
         }
 
         // ------------------------------------------------------------------
@@ -818,6 +869,7 @@
                 });
                 if (checkUnauthorized(res)) return;
                 const events = await res.json();
+                window.userEvents = events;
                 if (!Array.isArray(events) || events.length === 0) {
                     container.innerHTML = '<div class="empty">暂无事件记录</div>';
                     return;
@@ -843,7 +895,8 @@
                 };
                 const statusCell = e => {
                     if (e.status === '已完成' && e.reply) {
-                        return `<span class="reply-link" onclick="showReplyDialog('${escapeHtml(e.reply)}')">请点击查看人工的回复</span>`;
+                        const unreadBadge = e.has_new_reply ? '<span class="unread-badge">●</span>' : '';
+                        return `<span class="reply-link" onclick="handleReplyClick('${e.event_id}')">请点击查看人工的回复${unreadBadge}</span>`;
                     }
                     return `<span class="tag ${statusClass(e.status)}">${e.status || '-'}</span>`;
                 };
