@@ -124,7 +124,7 @@ async def _process_event(
             "urgency": pre_checked_state.get("urgency", ""),
             "scene_tag": pre_checked_state.get("scene_tag", ""),
             "handler": "",
-            "status": "",
+            "status": pre_checked_state.get("status", ""),
             "created_at": "",
             "user_id": user_id,
             "confidence": pre_checked_state.get("confidence", ""),
@@ -141,10 +141,12 @@ async def _process_event(
         )
         async with _task_lock:
             task = _tasks.get(event_id)
-            if task is None or task["status"] != "处理中":
+            if task is None:
                 return
+            # 处理中事件完成后标记为"已完成"；待审核事件保留原状态
+            if task["status"] == "处理中":
+                task["status"] = "已完成"
             task.update({
-                "status": "已完成",
                 "address": result["address"],
                 "event_type": result["event_type"],
                 "urgency": result["urgency"],
@@ -243,6 +245,7 @@ class EventStatusResponse(BaseModel):
     created_at: str
     completed_at: str | None = None
     error: str | None = None
+    reply: str | None = None
 
 
 # ------------------------------------------------------------------
@@ -394,6 +397,7 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
             if current_user.get("role") != "admin" and task.get("user_id") != current_user.get("id"):
                 continue
             events.append({
+                "event_id": task["event_id"],
                 "description": task["description"],
                 "address": task.get("address", ""),
                 "event_type": task.get("event_type", ""),
@@ -402,6 +406,11 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
                 "handler": task.get("handler", ""),
                 "status": task["status"],
                 "created_at": task["created_at"],
+                "reply": task.get("reply", ""),
+                "user_name": task.get("user_name", ""),
+                "user_phone": task.get("user_phone", ""),
+                "user_id_card": task.get("user_id_card", ""),
+                "emergency_type": task.get("emergency_type", ""),
             })
 
     # 按 created_at 降序排列，最新的记录展示在最前面
@@ -463,6 +472,11 @@ async def create_event(
                     "completed_at": None,
                     "error": None,
                     "user_id": current_user["id"],
+                    "user_name": current_user.get("real_name", ""),
+                    "user_phone": current_user.get("phone", ""),
+                    "user_id_card": current_user.get("id_card", ""),
+                    "emergency_type": hard_rule_result.get("emergency_type", ""),
+                    "reply": "",
                 }
                 _save_tasks(_tasks)
             # 启动后台异步任务
@@ -536,7 +550,7 @@ async def create_event(
             )
         except asyncio.TimeoutError:
             logger.warning("语义校验超时，创建待审核事件：description='%s'", request.description)
-            # 超时无法判断语义，创建待审核事件转人工处理
+            # 超时无法判断语义，创建待审核事件转人工部处理
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
@@ -553,8 +567,32 @@ async def create_event(
                     "completed_at": None,
                     "error": "语义校验超时，已转人工审核",
                     "user_id": current_user["id"],
+                    "user_name": current_user.get("real_name", ""),
+                    "user_phone": current_user.get("phone", ""),
+                    "user_id_card": current_user.get("id_card", ""),
+                    "emergency_type": "人工部",
+                    "reply": "",
                 }
                 _save_tasks(_tasks)
+            # 启动后台让 dispatch_agent 设置 handler="人工部"
+            timeout_state = {
+                "description": request.description,
+                "address": "",
+                "event_type": "待审核",
+                "urgency": "中",
+                "scene_tag": "常规",
+                "handler": "",
+                "confidence": "none",
+                "confirmation_required": False,
+                "emergency_type": "人工部",
+                "confirmed": False,
+                "status": "待审核",
+            }
+            bg_task = asyncio.create_task(
+                _process_event(event_id, timeout_state, current_user["id"])
+            )
+            _background_tasks.add(bg_task)
+            bg_task.add_done_callback(_background_tasks.discard)
             return EventResponse(
                 success=True,
                 data=EventResponseData(
@@ -587,8 +625,32 @@ async def create_event(
                     "completed_at": None,
                     "error": f"语义校验异常，已转人工审核：{type(exc).__name__}",
                     "user_id": current_user["id"],
+                    "user_name": current_user.get("real_name", ""),
+                    "user_phone": current_user.get("phone", ""),
+                    "user_id_card": current_user.get("id_card", ""),
+                    "emergency_type": "人工部",
+                    "reply": "",
                 }
                 _save_tasks(_tasks)
+            # 启动后台让 dispatch_agent 设置 handler="人工部"
+            exc_state = {
+                "description": request.description,
+                "address": "",
+                "event_type": "待审核",
+                "urgency": "中",
+                "scene_tag": "常规",
+                "handler": "",
+                "confidence": "none",
+                "confirmation_required": False,
+                "emergency_type": "人工部",
+                "confirmed": False,
+                "status": "待审核",
+            }
+            bg_task = asyncio.create_task(
+                _process_event(event_id, exc_state, current_user["id"])
+            )
+            _background_tasks.add(bg_task)
+            bg_task.add_done_callback(_background_tasks.discard)
             return EventResponse(
                 success=True,
                 data=EventResponseData(
@@ -685,8 +747,32 @@ async def create_event(
                     "completed_at": None,
                     "error": "语义校验服务异常，已转人工审核",
                     "user_id": current_user["id"],
+                    "user_name": current_user.get("real_name", ""),
+                    "user_phone": current_user.get("phone", ""),
+                    "user_id_card": current_user.get("id_card", ""),
+                    "emergency_type": "人工部",
+                    "reply": "",
                 }
                 _save_tasks(_tasks)
+            # 启动后台让 dispatch_agent 设置 handler="人工部"
+            api_err_state = {
+                "description": request.description,
+                "address": "",
+                "event_type": "待审核",
+                "urgency": "中",
+                "scene_tag": "常规",
+                "handler": "",
+                "confidence": "none",
+                "confirmation_required": False,
+                "emergency_type": "人工部",
+                "confirmed": False,
+                "status": "待审核",
+            }
+            bg_task = asyncio.create_task(
+                _process_event(event_id, api_err_state, current_user["id"])
+            )
+            _background_tasks.add(bg_task)
+            bg_task.add_done_callback(_background_tasks.discard)
             return EventResponse(
                 success=True,
                 data=EventResponseData(
@@ -702,7 +788,7 @@ async def create_event(
             )
 
         if event_type == "待审核":
-            # 置信度低或地址缺失，创建待审核事件，不走后台工作流
+            # 置信度低或地址缺失，创建待审核事件，派给人工部处理
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
@@ -719,8 +805,20 @@ async def create_event(
                     "completed_at": None,
                     "error": None,
                     "user_id": current_user["id"],
+                    "user_name": current_user.get("real_name", ""),
+                    "user_phone": current_user.get("phone", ""),
+                    "user_id_card": current_user.get("id_card", ""),
+                    "emergency_type": semantic_result.get("emergency_type", ""),
+                    "reply": "",
                 }
                 _save_tasks(_tasks)
+            # 启动后台异步任务，让 dispatch_agent 分配 handler="人工部" 并记录
+            semantic_result["status"] = "待审核"
+            bg_task = asyncio.create_task(
+                _process_event(event_id, semantic_result, current_user["id"])
+            )
+            _background_tasks.add(bg_task)
+            bg_task.add_done_callback(_background_tasks.discard)
             return EventResponse(
                 success=True,
                 data=EventResponseData(
@@ -755,6 +853,11 @@ async def create_event(
                 "completed_at": None,
                 "error": None,
                 "user_id": current_user["id"],
+                "user_name": current_user.get("real_name", ""),
+                "user_phone": current_user.get("phone", ""),
+                "user_id_card": current_user.get("id_card", ""),
+                "emergency_type": semantic_result.get("emergency_type", ""),
+                "reply": "",
             }
             _save_tasks(_tasks)
 
@@ -800,8 +903,32 @@ async def create_event(
                     "completed_at": None,
                     "error": f"处理异常已转人工：{type(exc).__name__}",
                     "user_id": current_user["id"],
+                    "user_name": current_user.get("real_name", ""),
+                    "user_phone": current_user.get("phone", ""),
+                    "user_id_card": current_user.get("id_card", ""),
+                    "emergency_type": "人工部",
+                    "reply": "",
                 }
                 _save_tasks(_tasks)
+            # 启动后台让 dispatch_agent 设置 handler="人工部"
+            hard_state = {
+                "description": request.description,
+                "address": "",
+                "event_type": "待审核",
+                "urgency": "高",
+                "scene_tag": hard["scene_tag"],
+                "handler": "",
+                "confidence": "none",
+                "confirmation_required": False,
+                "emergency_type": "人工部",
+                "confirmed": False,
+                "status": "待审核",
+            }
+            bg_task = asyncio.create_task(
+                _process_event(event_id, hard_state, current_user["id"])
+            )
+            _background_tasks.add(bg_task)
+            bg_task.add_done_callback(_background_tasks.discard)
             return EventResponse(
                 success=True,
                 data=EventResponseData(
@@ -853,7 +980,113 @@ async def get_event(
         created_at=task["created_at"],
         completed_at=task.get("completed_at"),
         error=task.get("error"),
+        reply=task.get("reply") or None,
     )
+
+
+# ------------------------------------------------------------------
+# API 端点：POST /api/events/{event_id}/accept
+# ------------------------------------------------------------------
+@app.post("/api/events/{event_id}/accept")
+async def accept_event(
+    event_id: str,
+    current_user: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    """
+    后台人员受理待审核事件，将状态更新为"已受理"。
+    """
+    async with _task_lock:
+        task = _tasks.get(event_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="事件不存在")
+        if task.get("status") != "待审核":
+            raise HTTPException(status_code=400, detail="仅待审核事件可受理")
+        task["status"] = "已受理"
+        task["reviewer_id"] = current_user.get("id", "")
+        _save_tasks(_tasks)
+
+    # 追加记录到 events.jsonl
+    try:
+        record_agent.record_node({
+            "description": task["description"],
+            "address": task.get("address", ""),
+            "event_type": task.get("event_type", ""),
+            "urgency": task.get("urgency", ""),
+            "scene_tag": task.get("scene_tag", ""),
+            "handler": task.get("handler", ""),
+            "status": "已受理",
+            "created_at": "",
+            "user_id": task.get("user_id", ""),
+            "confidence": task.get("confidence", ""),
+            "reply": "",
+        })
+    except Exception as exc:
+        logger.warning("受理记录写入失败：event_id=%s，异常=%s", event_id, exc)
+
+    return {
+        "success": True,
+        "data": {
+            "event_id": task["event_id"],
+            "status": task["status"],
+            "handler": task.get("handler", ""),
+        },
+    }
+
+
+# ------------------------------------------------------------------
+# API 端点：POST /api/events/{event_id}/reply
+# ------------------------------------------------------------------
+class ReplyRequest(BaseModel):
+    reply: str = Field(..., min_length=1, description="后台回复内容")
+
+
+@app.post("/api/events/{event_id}/reply")
+async def reply_event(
+    event_id: str,
+    request: ReplyRequest,
+    current_user: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    """
+    后台人员提交回复，将状态更新为"已完成"。
+    """
+    async with _task_lock:
+        task = _tasks.get(event_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="事件不存在")
+        if task.get("status") not in ("已受理", "待审核"):
+            raise HTTPException(status_code=400, detail="仅已受理或待审核事件可提交回复")
+        task["status"] = "已完成"
+        task["reply"] = request.reply
+        task["reviewer_id"] = current_user.get("id", "")
+        task["completed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _save_tasks(_tasks)
+
+    # 追加记录到 events.jsonl
+    try:
+        record_agent.record_node({
+            "description": task["description"],
+            "address": task.get("address", ""),
+            "event_type": task.get("event_type", ""),
+            "urgency": task.get("urgency", ""),
+            "scene_tag": task.get("scene_tag", ""),
+            "handler": task.get("handler", ""),
+            "status": "已完成",
+            "created_at": "",
+            "user_id": task.get("user_id", ""),
+            "confidence": task.get("confidence", ""),
+            "reply": request.reply,
+        })
+    except Exception as exc:
+        logger.warning("回复记录写入失败：event_id=%s，异常=%s", event_id, exc)
+
+    return {
+        "success": True,
+        "data": {
+            "event_id": task["event_id"],
+            "status": task["status"],
+            "reply": task["reply"],
+        },
+    }
 
 
 # ------------------------------------------------------------------

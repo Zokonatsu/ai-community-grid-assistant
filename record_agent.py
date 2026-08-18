@@ -55,6 +55,7 @@ class RecordState(TypedDict):
         created_at:  记录创建时间，由本模块填充为当前时间，格式"YYYY-MM-DD HH:MM:SS"。
         user_id:     提交事件的用户标识，用于数据隔离与审计追溯。
         confidence:  语义校验置信度（high/medium/low/none），由接收Agent传入。
+        reply:       后台人工回复内容，供用户前端查看。
     """
     description: str
     address: str
@@ -66,6 +67,7 @@ class RecordState(TypedDict):
     created_at: str
     user_id: str
     confidence: str
+    reply: str
 
 
 # ------------------------------------------------------------------
@@ -116,6 +118,7 @@ def record_node(state: RecordState) -> RecordState:
     handler = state.get("handler", "")
     user_id = state.get("user_id", "")
     confidence = state.get("confidence", "")
+    reply = state.get("reply", "")
 
     # 补充状态字段：若上游已传入有效状态（如"待审核"），保留原值；否则默认为"已派单"
     upstream_status = state.get("status", "")
@@ -136,6 +139,7 @@ def record_node(state: RecordState) -> RecordState:
         "created_at": created_at,
         "user_id": user_id,
         "confidence": confidence,
+        "reply": reply,
     }
 
     # 持久化到 JSONL 文件：锁保护 + 异常降级
@@ -174,6 +178,7 @@ def record_node(state: RecordState) -> RecordState:
         "created_at": created_at,
         "user_id": user_id,
         "confidence": confidence,
+        "reply": reply,
     }
 
 
@@ -222,6 +227,7 @@ if __name__ == "__main__":
         "created_at": "",
         "user_id": "user_001",
         "confidence": "high",
+        "reply": "",
     }
     print("=" * 50)
     print("【测试用例1】物业维修 / 中紧急 / 常规")
@@ -243,6 +249,7 @@ if __name__ == "__main__":
         "created_at": "",
         "user_id": "user_002",
         "confidence": "high",
+        "reply": "",
     }
     print("=" * 50)
     print("【测试用例2】安全隐患 / 高紧急 / 紧急救援")
@@ -265,7 +272,7 @@ if __name__ == "__main__":
     # 逐行解析并验证字段完整性
     for idx, line in enumerate(lines, start=1):
         record = json.loads(line.strip())
-        required_fields = ["description", "address", "event_type", "urgency", "scene_tag", "handler", "status", "created_at", "user_id", "confidence"]
+        required_fields = ["description", "address", "event_type", "urgency", "scene_tag", "handler", "status", "created_at", "user_id", "confidence", "reply"]
         for field in required_fields:
             assert field in record, f"第{idx}条记录缺少字段'{field}'"
         assert record["status"] == "已派单", f"第{idx}条记录 status 不正确"

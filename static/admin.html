@@ -254,6 +254,8 @@
         .tag-processing { background: #e5e7eb; color: #6b7280; }
         .tag-failed { background: #ffe0e0; color: #c0392b; }
         .tag-success { background: #e0f2e9; color: #27ae60; }
+        .tag-pending { background: #fff3cd; color: #d97706; }
+        .tag-accepted { background: #dbeafe; color: #2563eb; }
         .tag-scene-life { background: #fde8e8; color: #c0392b; }
         .tag-scene-rescue { background: #fff3cd; color: #d97706; }
         .tag-scene-normal { background: #eaf0ff; color: #1a56db; }
@@ -267,6 +269,144 @@
             margin-top: 12px;
             font-size: 13px;
             color: #888;
+        }
+
+        /* 人工审核专区 */
+        .review-section {
+            margin-bottom: 24px;
+        }
+        .review-section h2 {
+            font-size: 18px;
+            margin-bottom: 16px;
+            color: #111;
+            border-left: 4px solid #d97706;
+            padding-left: 10px;
+        }
+        .review-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        .review-tab {
+            padding: 6px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            background: #f1f5f9;
+            color: #555;
+            border: none;
+        }
+        .review-tab.active {
+            background: #1a56db;
+            color: #fff;
+        }
+        .review-card {
+            background: #fff;
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            border-left: 4px solid #d97706;
+        }
+        .review-card.accepted {
+            border-left-color: #2563eb;
+        }
+        .review-collapsed {
+            display: none;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px dashed #e5e7eb;
+        }
+        .review-collapsed.visible {
+            display: block;
+        }
+        .review-expand-btn {
+            background: #f3f4f6;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 14px;
+            font-size: 13px;
+            color: #666;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        .review-expand-btn:hover {
+            background: #e5e7eb;
+        }
+        .collapsed-card {
+            background: #fafafa;
+            border-radius: 8px;
+            padding: 12px;
+            margin-top: 8px;
+            border-left: 3px solid #d97706;
+        }
+        .review-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .review-user {
+            font-size: 14px;
+            color: #555;
+        }
+        .review-user strong {
+            color: #111;
+        }
+        .review-desc {
+            font-size: 15px;
+            color: #333;
+            margin-bottom: 12px;
+            line-height: 1.5;
+        }
+        .review-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .review-actions .btn-sm {
+            padding: 6px 14px;
+            background: #1a56db;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .review-actions .btn-sm:hover { background: #164bc7; }
+        .review-actions .btn-accept {
+            background: #d97706;
+        }
+        .review-actions .btn-accept:hover { background: #b45309; }
+        .review-actions .btn-done {
+            background: #27ae60;
+        }
+        .review-actions .btn-done:hover { background: #219150; }
+        .reply-box {
+            margin-top: 12px;
+            display: none;
+        }
+        .reply-box.visible {
+            display: block;
+        }
+        .reply-box textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            min-height: 60px;
+            resize: vertical;
+            font-family: inherit;
+        }
+        .reply-box textarea:focus {
+            outline: none;
+            border-color: #1a56db;
+        }
+        .reply-box .btn-sm {
+            margin-top: 8px;
         }
     </style>
 </head>
@@ -315,6 +455,21 @@
             </div>
         </div>
 
+        <!-- 人工审核专区 -->
+        <div class="card review-section">
+            <h2>📝 人工审核</h2>
+            <div class="review-tabs">
+                <button class="review-tab active" id="tab-pending" onclick="switchReviewTab('pending')">待审核</button>
+                <button class="review-tab" id="tab-accepted" onclick="switchReviewTab('accepted')">已受理</button>
+            </div>
+            <div id="reviewPendingContainer">
+                <div class="empty">加载中…</div>
+            </div>
+            <div id="reviewAcceptedContainer" style="display:none;">
+                <div class="empty">加载中…</div>
+            </div>
+        </div>
+
         <!-- 图表区域 -->
         <div class="charts-row">
             <div class="card chart-container">
@@ -344,6 +499,8 @@
                 <label>状态：</label>
                 <select id="filterStatus">
                     <option value="">全部</option>
+                    <option value="待审核">待审核</option>
+                    <option value="已受理">已受理</option>
                     <option value="处理中">处理中</option>
                     <option value="已完成">已完成</option>
                     <option value="已派单">已派单</option>
@@ -480,7 +637,7 @@
             const total = events.length;
             const today = todayStr();
             const todayCount = events.filter(e => (e.created_at || '').startsWith(today)).length;
-            const pending = events.filter(e => e.status === '处理中').length;
+            const pending = events.filter(e => e.emergency_type === '人工部' && (e.status === '待审核' || e.status === '已受理')).length;
             const done = events.filter(e => e.status === '已完成' || e.status === '已派单').length;
 
             document.getElementById('stat-total').textContent = total;
@@ -541,6 +698,8 @@
             if (s === '处理中') return 'tag-processing';
             if (s === '处理超时' || s === '处理失败' || s === '已拒绝') return 'tag-failed';
             if (s === '已完成' || s === '已派单') return 'tag-success';
+            if (s === '待审核') return 'tag-pending';
+            if (s === '已受理') return 'tag-accepted';
             return '';
         }
         function sceneClass(s) {
@@ -548,6 +707,219 @@
             if (s === '紧急救援') return 'tag-scene-rescue';
             if (s === '常规') return 'tag-scene-normal';
             return '';
+        }
+
+        // ------------------------------------------------------------------
+        // 人工审核专区
+        // ------------------------------------------------------------------
+        let currentReviewTab = 'pending';
+
+        function switchReviewTab(tab) {
+            currentReviewTab = tab;
+            document.getElementById('tab-pending').classList.toggle('active', tab === 'pending');
+            document.getElementById('tab-accepted').classList.toggle('active', tab === 'accepted');
+            document.getElementById('reviewPendingContainer').style.display = tab === 'pending' ? 'block' : 'none';
+            document.getElementById('reviewAcceptedContainer').style.display = tab === 'accepted' ? 'block' : 'none';
+            renderReviewLists();
+        }
+
+        function renderReviewLists() {
+            const pendingEvents = allEvents.filter(e => e.emergency_type === '人工部' && e.status === '待审核');
+            const acceptedEvents = allEvents.filter(e => e.emergency_type === '人工部' && e.status === '已受理');
+
+            // 保存已受理输入框中用户正在输入的内容，避免定时刷新时丢失
+            const savedReplies = {};
+            const acceptedContainer = document.getElementById('reviewAcceptedContainer');
+            acceptedContainer.querySelectorAll('textarea[id^="reply-text-"]').forEach(textarea => {
+                const key = textarea.id.replace('reply-text-', '');
+                if (textarea.value.trim()) {
+                    savedReplies[key] = textarea.value;
+                }
+            });
+
+            // 保存当前焦点位置和光标，避免重建DOM后光标消失
+            let focusId = null;
+            let selStart = 0;
+            let selEnd = 0;
+            const activeEl = document.activeElement;
+            if (activeEl && acceptedContainer.contains(activeEl) && activeEl.tagName === 'TEXTAREA') {
+                focusId = activeEl.id;
+                selStart = activeEl.selectionStart;
+                selEnd = activeEl.selectionEnd;
+            }
+
+            const pendingContainer = document.getElementById('reviewPendingContainer');
+            if (pendingEvents.length === 0) {
+                pendingContainer.innerHTML = '<div class="empty">暂无待审核事件</div>';
+            } else {
+                // 按身份证号分组
+                const grouped = {};
+                for (const e of pendingEvents) {
+                    const key = e.user_id_card || 'unknown';
+                    if (!grouped[key]) grouped[key] = [];
+                    grouped[key].push(e);
+                }
+                let html = '';
+                for (const [idCard, events] of Object.entries(grouped)) {
+                    const first = events[0];
+                    const rest = events.slice(1);
+                    const safeId = idCard.replace(/[^a-zA-Z0-9]/g, '_');
+                    html += `
+                        <div class="review-card" id="card-${first.created_at}">
+                            <div class="review-header">
+                                <div class="review-user">
+                                    <strong>${first.user_name || '-'}</strong> &nbsp;| &nbsp;📱 ${first.user_phone || '-'} &nbsp;| &nbsp;🆔 ${first.user_id_card || '-'}
+                                </div>
+                                <div><span class="tag ${statusClass(first.status)}">${first.status}</span></div>
+                            </div>
+                            <div class="review-desc">${first.description || '-'}</div>
+                            <div class="review-actions">
+                                <button class="btn-sm btn-accept" onclick="acceptEvent('${first.created_at}')">受理</button>
+                            </div>
+                            <div class="reply-box" id="reply-box-${first.created_at}">
+                                <textarea id="reply-text-${first.created_at}" placeholder="请输入回复内容"></textarea>
+                                <button class="btn-sm btn-done" onclick="submitReply('${first.created_at}')">提交回复</button>
+                            </div>
+                    `;
+                    if (rest.length > 0) {
+                        html += `
+                            <button class="review-expand-btn" id="expand-btn-${safeId}" onclick="toggleCollapsed('${safeId}')">展开该用户其余 ${rest.length} 条待审核事件</button>
+                            <div class="review-collapsed" id="collapsed-${safeId}">
+                        `;
+                        for (const e of rest) {
+                            html += `
+                                <div class="collapsed-card" id="card-${e.created_at}">
+                                    <div class="review-header">
+                                        <div class="review-user">
+                                            <strong>${e.user_name || '-'}</strong> &nbsp;| &nbsp;📱 ${e.user_phone || '-'} &nbsp;| &nbsp;🆔 ${e.user_id_card || '-'}
+                                        </div>
+                                        <div><span class="tag ${statusClass(e.status)}">${e.status}</span></div>
+                                    </div>
+                                    <div class="review-desc">${e.description || '-'}</div>
+                                    <div class="review-actions">
+                                        <button class="btn-sm btn-accept" onclick="acceptEvent('${e.created_at}')">受理</button>
+                                    </div>
+                                    <div class="reply-box" id="reply-box-${e.created_at}">
+                                        <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容"></textarea>
+                                        <button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>
+                                    </div>
+                                </div>
+                            `;
+                        }
+                        html += `</div>`;
+                    }
+                    html += `</div>`;
+                }
+                pendingContainer.innerHTML = html;
+            }
+
+            if (acceptedEvents.length === 0) {
+                acceptedContainer.innerHTML = '<div class="empty">暂无已受理事件</div>';
+            } else {
+                acceptedContainer.innerHTML = acceptedEvents.map(e => `
+                    <div class="review-card accepted" id="card-${e.created_at}">
+                        <div class="review-header">
+                            <div class="review-user">
+                                <strong>${e.user_name || '-'}</strong> &nbsp;| &nbsp;📱 ${e.user_phone || '-'} &nbsp;| &nbsp;🆔 ${e.user_id_card || '-'}
+                            </div>
+                            <div><span class="tag ${statusClass(e.status)}">${e.status}</span></div>
+                        </div>
+                        <div class="review-desc">${e.description || '-'}</div>
+                        <div class="reply-box visible" id="reply-box-${e.created_at}">
+                            <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容">${savedReplies[e.created_at] || ''}</textarea>
+                            <button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            // 重新渲染后恢复焦点和光标位置
+            if (focusId) {
+                const newEl = document.getElementById(focusId);
+                if (newEl) {
+                    newEl.focus();
+                    newEl.setSelectionRange(selStart, selEnd);
+                }
+            }
+        }
+
+        function toggleCollapsed(safeId) {
+            const collapsed = document.getElementById('collapsed-' + safeId);
+            const btn = document.getElementById('expand-btn-' + safeId);
+            if (!collapsed || !btn) return;
+            const isVisible = collapsed.classList.toggle('visible');
+            btn.textContent = isVisible ? '收起' : '展开该用户其余 ' + (collapsed.children.length) + ' 条待审核事件';
+        }
+
+        async function acceptEvent(createdAt) {
+            const event = allEvents.find(e => e.created_at === createdAt);
+            if (!event) return;
+            // 用 created_at 作为临时标识查找 event_id（实际应该用 event_id）
+            // 注意：当前 API 中没有返回 event_id，需要修改 list_events 返回 event_id
+            // 先找到对应的 task
+            const ev = allEvents.find(e => e.created_at === createdAt);
+            if (!ev || !ev.event_id) {
+                alert('找不到事件ID，请刷新页面');
+                return;
+            }
+            try {
+                const res = await fetch(`${API_BASE}/api/events/${ev.event_id}/accept`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) {
+                    const err = await res.json();
+                    alert(err.detail || '受理失败');
+                    return;
+                }
+                const data = await res.json();
+                if (data.success) {
+                    // 成功受理后刷新数据
+                    await loadData();
+                }
+            } catch (e) {
+                alert('网络请求失败');
+            }
+        }
+
+        function toggleReplyBox(createdAt) {
+            const box = document.getElementById(`reply-box-${createdAt}`);
+            if (box) box.classList.toggle('visible');
+        }
+
+        async function submitReply(createdAt) {
+            const event = allEvents.find(e => e.created_at === createdAt);
+            if (!event || !event.event_id) {
+                alert('找不到事件ID，请刷新页面');
+                return;
+            }
+            const textEl = document.getElementById(`reply-text-${createdAt}`);
+            const reply = textEl ? textEl.value.trim() : '';
+            if (!reply) {
+                alert('请输入回复内容');
+                return;
+            }
+            try {
+                const res = await fetch(`${API_BASE}/api/events/${event.event_id}/reply`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ reply })
+                });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) {
+                    const err = await res.json();
+                    alert(err.detail || '提交失败');
+                    return;
+                }
+                const data = await res.json();
+                if (data.success) {
+                    alert('回复提交成功');
+                    await loadData();
+                }
+            } catch (e) {
+                alert('网络请求失败');
+            }
         }
 
         // 渲染表格
@@ -669,6 +1041,7 @@
 
                 updateTypeFilterOptions(allEvents);
                 applyFilters();
+                renderReviewLists();
             } catch (e) {
                 document.getElementById('typeChart').innerHTML = '<div class="empty">数据加载失败</div>';
                 document.getElementById('urgencyChart').innerHTML = '<div class="empty">数据加载失败</div>';

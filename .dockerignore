@@ -15,6 +15,7 @@ venv/
 
 # 运行时数据目录（运行时生成，不打包进镜像）
 data/
+secure/
 
 # Docker 构建文件（构建无关）
 Dockerfile

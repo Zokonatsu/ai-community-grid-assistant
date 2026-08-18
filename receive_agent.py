@@ -586,7 +586,7 @@ def receive_node(state: ReceiveState) -> ReceiveState:
                 "handler": "",
                 "confidence": "medium",
                 "confirmation_required": False,
-                "emergency_type": _resolve_emergency_type(description, scene_tag_val),
+                "emergency_type": "人工部",
             }
 
         # 安全兜底：短词（长度≤4字符）即使模型判断无效，也不直接拒绝，降级为待审核
@@ -605,7 +605,7 @@ def receive_node(state: ReceiveState) -> ReceiveState:
                 "handler": "",
                 "confidence": "medium",
                 "confirmation_required": False,
-                "emergency_type": state.get("emergency_type", ""),
+                "emergency_type": "人工部",
             }
 
         reject_reason = merged.get("reject_reason", "语义判断为无效输入")
@@ -649,9 +649,6 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             address,
             confidence,
         )
-        emergency_type_val = state.get("emergency_type", "")
-        if not emergency_type_val and scene_tag in ("生命急救", "紧急救援"):
-            emergency_type_val = _resolve_emergency_type(description, scene_tag)
         return {
             "description": description,
             "address": address,
@@ -661,7 +658,7 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             "handler": "",
             "confidence": confidence,
             "confirmation_required": False,
-            "emergency_type": emergency_type_val,
+            "emergency_type": "人工部",
         }
 
     # 若 scene_tag 为外部资源场景但未设置 emergency_type，根据描述推断并传递

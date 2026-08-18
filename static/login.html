@@ -170,6 +170,10 @@
                     <input type="tel" id="reg-phone" placeholder="请输入11位手机号" required>
                 </div>
                 <div class="form-group">
+                    <label for="reg-idcard">身份证号</label>
+                    <input type="text" id="reg-idcard" placeholder="请输入18位身份证号" maxlength="18" required>
+                </div>
+                <div class="form-group">
                     <label for="reg-role">角色</label>
                     <select id="reg-role" disabled>
                         <option value="resident">居民</option>
@@ -263,6 +267,7 @@
             const confirm = document.getElementById('reg-confirm').value;
             const real_name = document.getElementById('reg-realname').value.trim();
             const phone = document.getElementById('reg-phone').value.trim();
+            const id_card = document.getElementById('reg-idcard').value.trim().toUpperCase();
             const role = document.getElementById('reg-role-value').value;
             const btn = document.getElementById('register-btn');
             const errorEl = document.getElementById('register-error');
@@ -276,6 +281,11 @@
                 errorEl.classList.remove('hidden');
                 return;
             }
+            if (!/^[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dX]$/.test(id_card)) {
+                errorEl.textContent = '身份证号格式不正确，请输入18位有效身份证号';
+                errorEl.classList.remove('hidden');
+                return;
+            }
 
             btn.disabled = true;
             btn.textContent = '注册中…';
@@ -284,7 +294,7 @@
                 const res = await fetch(`${API_BASE}/api/auth/register`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password, real_name, phone, role })
+                    body: JSON.stringify({ username, password, real_name, phone, id_card, role })
                 });
                 const data = await res.json();
                 if (!data.success) {
