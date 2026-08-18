@@ -408,6 +408,29 @@
         .reply-box .btn-sm {
             margin-top: 8px;
         }
+        .reply-history {
+            margin: 8px 0;
+            padding: 8px 12px;
+            background: #f8fafc;
+            border-radius: 6px;
+            border-left: 3px solid #1a56db;
+        }
+        .reply-history-item + .reply-history-item {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px dashed #e2e8f0;
+        }
+        .reply-history-meta {
+            font-size: 12px;
+            color: #64748b;
+            margin-bottom: 4px;
+        }
+        .reply-history-content {
+            font-size: 14px;
+            color: #1e293b;
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
     </style>
 </head>
 <body>
@@ -714,6 +737,101 @@
         // ------------------------------------------------------------------
         let currentReviewTab = 'pending';
 
+        // ------------------------------------------------------------------
+        // UI 状态管理器
+        // ------------------------------------------------------------------
+        const UIStateManager = {
+            capture() {
+                const state = {
+                    collapsed: {},
+                    replyBoxes: {},
+                    textValues: {},
+                    focus: null,
+                    scroll: { pending: 0, accepted: 0 }
+                };
+
+                // 1. 分组折叠展开状态
+                document.querySelectorAll('[id^="collapsed-"]').forEach(el => {
+                    state.collapsed[el.id] = el.classList.contains('visible');
+                });
+
+                // 2. 回复框显示状态（待审核区域）
+                document.querySelectorAll('#reviewPendingContainer .reply-box[id^="reply-box-"]').forEach(el => {
+                    state.replyBoxes[el.id] = el.classList.contains('visible');
+                });
+
+                // 3. 文本框输入内容
+                document.querySelectorAll('textarea[id^="reply-text-"]').forEach(el => {
+                    if (el.value.trim()) {
+                        state.textValues[el.id] = el.value;
+                    }
+                });
+
+                // 4. 焦点和光标
+                const activeEl = document.activeElement;
+                const reviewSection = document.querySelector('.review-section');
+                if (activeEl && reviewSection && reviewSection.contains(activeEl) && activeEl.tagName === 'TEXTAREA') {
+                    state.focus = {
+                        id: activeEl.id,
+                        selectionStart: activeEl.selectionStart,
+                        selectionEnd: activeEl.selectionEnd
+                    };
+                }
+
+                // 5. 滚动位置
+                const pendingContainer = document.getElementById('reviewPendingContainer');
+                const acceptedContainer = document.getElementById('reviewAcceptedContainer');
+                if (pendingContainer) state.scroll.pending = pendingContainer.scrollTop;
+                if (acceptedContainer) state.scroll.accepted = acceptedContainer.scrollTop;
+
+                return state;
+            },
+
+            restore(state) {
+                if (!state) return;
+
+                // 恢复 collapsed 状态
+                Object.entries(state.collapsed || {}).forEach(([id, wasVisible]) => {
+                    const el = document.getElementById(id);
+                    if (el && wasVisible) {
+                        el.classList.add('visible');
+                        const btnId = id.replace('collapsed-', 'expand-btn-');
+                        const btn = document.getElementById(btnId);
+                        if (btn) btn.textContent = '收起';
+                    }
+                });
+
+                // 恢复 reply-box 可见状态
+                Object.entries(state.replyBoxes || {}).forEach(([id, wasVisible]) => {
+                    const el = document.getElementById(id);
+                    if (el && wasVisible) {
+                        el.classList.add('visible');
+                    }
+                });
+
+                // 恢复 textarea 内容
+                Object.entries(state.textValues || {}).forEach(([id, value]) => {
+                    const el = document.getElementById(id);
+                    if (el) el.value = value;
+                });
+
+                // 恢复焦点和光标
+                if (state.focus) {
+                    const el = document.getElementById(state.focus.id);
+                    if (el) {
+                        el.focus();
+                        el.setSelectionRange(state.focus.selectionStart, state.focus.selectionEnd);
+                    }
+                }
+
+                // 恢复滚动位置
+                const pendingContainer = document.getElementById('reviewPendingContainer');
+                const acceptedContainer = document.getElementById('reviewAcceptedContainer');
+                if (pendingContainer && state.scroll) pendingContainer.scrollTop = state.scroll.pending || 0;
+                if (acceptedContainer && state.scroll) acceptedContainer.scrollTop = state.scroll.accepted || 0;
+            }
+        };
+
         function switchReviewTab(tab) {
             currentReviewTab = tab;
             document.getElementById('tab-pending').classList.toggle('active', tab === 'pending');
@@ -724,31 +842,13 @@
         }
 
         function renderReviewLists() {
+            const uiState = UIStateManager.capture();
+
             const pendingEvents = allEvents.filter(e => e.emergency_type === '人工部' && e.status === '待审核');
-            const acceptedEvents = allEvents.filter(e => e.emergency_type === '人工部' && e.status === '已受理');
-
-            // 保存已受理输入框中用户正在输入的内容，避免定时刷新时丢失
-            const savedReplies = {};
-            const acceptedContainer = document.getElementById('reviewAcceptedContainer');
-            acceptedContainer.querySelectorAll('textarea[id^="reply-text-"]').forEach(textarea => {
-                const key = textarea.id.replace('reply-text-', '');
-                if (textarea.value.trim()) {
-                    savedReplies[key] = textarea.value;
-                }
-            });
-
-            // 保存当前焦点位置和光标，避免重建DOM后光标消失
-            let focusId = null;
-            let selStart = 0;
-            let selEnd = 0;
-            const activeEl = document.activeElement;
-            if (activeEl && acceptedContainer.contains(activeEl) && activeEl.tagName === 'TEXTAREA') {
-                focusId = activeEl.id;
-                selStart = activeEl.selectionStart;
-                selEnd = activeEl.selectionEnd;
-            }
+            const acceptedEvents = allEvents.filter(e => e.emergency_type === '人工部' && (e.status === '已受理' || e.status === '已完成'));
 
             const pendingContainer = document.getElementById('reviewPendingContainer');
+            const acceptedContainer = document.getElementById('reviewAcceptedContainer');
             if (pendingEvents.length === 0) {
                 pendingContainer.innerHTML = '<div class="empty">暂无待审核事件</div>';
             } else {
@@ -825,22 +925,25 @@
                             <div><span class="tag ${statusClass(e.status)}">${e.status}</span></div>
                         </div>
                         <div class="review-desc">${e.description || '-'}</div>
+                        ${(e.replies && e.replies.length > 0) ? `
+                            <div class="reply-history">
+                                ${e.replies.map(r => `
+                                    <div class="reply-history-item">
+                                        <div class="reply-history-meta">${r.reviewer_name || '管理员'} · ${r.created_at}</div>
+                                        <div class="reply-history-content">${escapeHtml(r.content)}</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
                         <div class="reply-box visible" id="reply-box-${e.created_at}">
-                            <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容">${savedReplies[e.created_at] || ''}</textarea>
+                            <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容"></textarea>
                             <button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>
                         </div>
                     </div>
                 `).join('');
             }
 
-            // 重新渲染后恢复焦点和光标位置
-            if (focusId) {
-                const newEl = document.getElementById(focusId);
-                if (newEl) {
-                    newEl.focus();
-                    newEl.setSelectionRange(selStart, selEnd);
-                }
-            }
+            UIStateManager.restore(uiState);
         }
 
         function toggleCollapsed(safeId) {
