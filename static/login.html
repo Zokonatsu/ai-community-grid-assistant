@@ -9,7 +9,7 @@
 <body class="auth-body">
     <div class="auth-container">
         <div class="auth-header">
-            <h1>知·社区网格</h1>
+            <h1 id="comm-title">知·社区网格</h1>
             <p>用户登录与实名认证</p>
         </div>
         <div class="card">
@@ -76,7 +76,7 @@
                     <label for="reg-locate-btn">当前位置定位</label>
                     <div class="locate-row">
                         <button type="button" class="btn" id="reg-locate-btn" onclick="locateRegister()">获取定位</button>
-                        <span id="reg-locate-status" class="locate-status">未定位（建议定位以便核验住户）</span>
+                        <span id="reg-locate-status" class="locate-status">未定位（必须定位且需在小区范围内才能注册）</span>
                     </div>
                     <input type="hidden" id="reg-lat">
                     <input type="hidden" id="reg-lng">
@@ -102,7 +102,22 @@
     <script>
         const API_BASE = '';
 
-        // 若已登录，直接跳转到首页
+        // 社区名称动态化：标题/页头随后台设置更新
+        (function () {
+            fetch(API_BASE + '/api/community')
+                .then(r => (r.ok ? r.json() : null))
+                .then(cfg => {
+                    if (cfg && cfg.name) {
+                        var t = cfg.name + '网格';
+                        document.title = '登录 · ' + t;
+                        var el = document.getElementById('comm-title');
+                        if (el) el.textContent = t;
+                    }
+                })
+                .catch(function () {});
+        })();
+
+                // 若已登录，直接跳转（管理员→后台，其它→首页）
         (function() {
             const token = localStorage.getItem('token');
             if (token) {
@@ -111,11 +126,12 @@
                     headers: { 'Authorization': `Bearer ${token}` }
                 }).then(r => {
                     if (r.ok) {
-                        window.location.href = '/';
-                    } else {
-                        localStorage.removeItem('token');
-                        localStorage.removeItem('user');
+                        return r.json().then(user => {
+                            window.location.href = (user && user.role === 'admin') ? '/admin.html' : '/';
+                        });
                     }
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('user');
                 }).catch(() => {
                     // 网络异常不做处理，留在登录页
                 });
@@ -133,7 +149,7 @@
             document.getElementById('register-success').classList.add('hidden');
         }
 
-        // 浏览器定位封装：成功返回 {lat,lng}，失败/拒绝返回 null（不阻塞注册）
+        // 浏览器定位封装：成功返回 {lat,lng}，失败/拒绝返回 null（未定位则注册被阻止）
         function getPosition() {
             return new Promise(resolve => {
                 if (!navigator.geolocation) {
@@ -160,7 +176,7 @@
                 document.getElementById('reg-lng').value = pos.lng;
                 statusEl.textContent = `已定位（${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}）`;
             } else {
-                statusEl.textContent = '定位不可用（需 HTTPS 或 localhost），可稍后由管理员核验';
+                statusEl.textContent = '定位不可用（需 HTTPS 或 localhost），未定位无法注册，请允许定位权限后重试';
             }
         }
 
@@ -189,7 +205,11 @@
                 }
                 localStorage.setItem('token', data.data.token);
                 localStorage.setItem('user', JSON.stringify(data.data.user));
-                window.location.href = '/';
+                if (data.data.user.role === 'admin') {
+                    window.location.href = '/admin.html';
+                } else {
+                    window.location.href = '/';
+                }
             } catch (err) {
                 errorEl.textContent = '网络请求失败，请检查服务是否启动';
                 errorEl.classList.remove('hidden');
@@ -232,6 +252,11 @@
             }
             if (!building || !unit || !room) {
                 errorEl.textContent = '请填写楼栋、单元和房间号';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+            if (register_lat === null || register_lng === null) {
+                errorEl.textContent = '注册需先获取定位，请允许浏览器定位权限后重试';
                 errorEl.classList.remove('hidden');
                 return;
             }

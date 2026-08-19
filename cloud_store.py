@@ -40,6 +40,7 @@ ENV_SECRET_KEY = "COS_SECRET_KEY"
 
 # 云存储对象名（与本地加密文件名一致，便于控制台辨认）
 USERS_OBJECT_KEY = "users.json.enc"
+SESSIONS_OBJECT_KEY = "sessions.json.enc"
 
 
 class CloudStoreError(RuntimeError):
@@ -134,3 +135,57 @@ def upload(key: str, data: bytes) -> None:
     except Exception as exc:
         raise CloudStoreError(f"云存储上传失败（key={key}）：{exc}") from exc
     logger.info("云存储上传成功：%s（%d 字节）", key, len(data))
+
+
+# ------------------------------------------------------------------
+# 存储桶管理
+# ------------------------------------------------------------------
+def ensure_bucket() -> bool:
+    """确保 COS 存储桶存在；不存在则创建（私有权限），已存在则跳过。
+
+    返回 True 表示本次新建了存储桶，False 表示已存在。
+    鉴权/网络异常一律 raise（fail-fast），绝不静默。
+    注意：全程不打印任何密钥信息，仅记录桶名。
+    """
+    client, bucket = _get_client()
+    try:
+        client.head_bucket(Bucket=bucket)
+        logger.info("云存储桶已存在（跳过创建）：%s", bucket)
+        return False
+    except Exception as exc:
+        if not _is_not_found(exc):
+            raise CloudStoreError(f"云存储桶检查失败（bucket={bucket}）：{exc}") from exc
+    try:
+        # 私有权限（默认 ACL），不开放公共读/写
+        client.create_bucket(Bucket=bucket, ACL="private")
+    except Exception as exc:
+        raise CloudStoreError(f"云存储桶创建失败（bucket={bucket}）：{exc}") from exc
+    logger.info("云存储桶已创建（私有权限）：%s", bucket)
+    return True
+
+
+def object_exists(key: str) -> bool:
+    """判断对象是否存在（供初始化脚本使用）；异常一律 raise。"""
+    client, bucket = _get_client()
+    try:
+        client.head_object(Bucket=bucket, Key=key)
+        return True
+    except Exception as exc:
+        if _is_not_found(exc):
+            return False
+        raise CloudStoreError(f"云存储对象检查失败（key={key}）：{exc}") from exc
+
+
+def delete_object(key: str) -> bool:
+    """删除对象；对象不存在返回 False，其它异常 raise。返回是否实际删除。"""
+    client, bucket = _get_client()
+    try:
+        client.delete_object(Bucket=bucket, Key=key)
+        logger.info("云存储对象已删除：%s", key)
+        return True
+    except Exception as exc:
+        if _is_not_found(exc):
+            logger.info("云存储对象不存在（跳过删除）：%s", key)
+            return False
+        raise CloudStoreError(f"云存储删除失败（key={key}）：{exc}") from exc
+

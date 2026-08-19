@@ -194,3 +194,8 @@ __pycache__/
 data.bak.test_*/
 secure.bak.test_*/
 test_results.json
+
+# 回归日志 / 未知工具目录
+_regress_logs*/
+.dsh/
+

@@ -7,3 +7,5 @@ uvicorn==0.51.0
 python-multipart==0.0.32
 cryptography==46.0.2
 cos-python-sdk-v5==1.9.44
+pytest==8.3.4
+pytest-cov==6.0.0

@@ -21,8 +21,6 @@ import threading
 from unittest.mock import patch, MagicMock
 
 # 强制 UTF-8 输出
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 # ------------------------------------------------------------------
 # 测试环境准备
@@ -63,18 +61,19 @@ def teardown():
     if os.path.exists(BAK_SECURE_DIR):
         os.rename(BAK_SECURE_DIR, ORIGINAL_SECURE_DIR)
 
-setup()
 
 # 设置环境变量，避免 config.py 报错
 os.environ["LLM_API_KEY"] = "test-key-for-life-rescue-test"
 os.environ["LLM_BASE_URL"] = "http://test"
 # 账号数据加密密钥（64 位 hex，仅测试用固定值，确保与本测试生成的 secure/ 数据一致）
 os.environ["DATA_ENCRYPTION_KEY"] = "1" * 64
+os.environ["AUTH_STORE"] = "file"
 
 # ------------------------------------------------------------------
 # 测试结果收集
 # ------------------------------------------------------------------
 class TestResults:
+    __test__ = False  # 防止 pytest 误收集为测试类
     def __init__(self):
         self.passed = []
         self.failed = []
@@ -108,15 +107,6 @@ class TestResults:
 results = TestResults()
 
 # ==================================================================
-# 模块 A: 纯函数单元测试 —— _check_hard_rules_first
-# ==================================================================
-print("=" * 70)
-print("  模块 A: _check_hard_rules_first 关键词匹配（纯函数，无需服务器）")
-print("=" * 70)
-
-# 直接导入被测试函数（纯函数，无副作用）
-from receive_agent import _check_hard_rules_first, _LIFE_RESCUE_RE, _EMERGENCY_RESCUE_RE
-
 LIFE_CRITICAL_INPUTS = [
     ("我割腕了", "割腕"),
     ("有人跳楼", "跳楼"),
@@ -125,76 +115,86 @@ LIFE_CRITICAL_INPUTS = [
     ("溺水了", "溺水"),
     ("我要自杀", "自杀"),
 ]
-
-for desc, keyword in LIFE_CRITICAL_INPUTS:
-    result = _check_hard_rules_first(desc)
-    # 验证1: 不应返回 None（应命中硬规则）
-    if result is not None:
-        results.add_pass(f"A-{keyword} 命中硬规则", f"输入'{desc}' → _check_hard_rules_first 返回非None")
+def _run_module_a():
+    # 模块 A: 纯函数单元测试 —— _check_hard_rules_first
+    # ==================================================================
+    print("=" * 70)
+    print("  模块 A: _check_hard_rules_first 关键词匹配（纯函数，无需服务器）")
+    print("=" * 70)
+    
+    # 直接导入被测试函数（纯函数，无副作用）
+    from receive_agent import _check_hard_rules_first, _LIFE_RESCUE_RE, _EMERGENCY_RESCUE_RE
+    
+    
+    for desc, keyword in LIFE_CRITICAL_INPUTS:
+        result = _check_hard_rules_first(desc)
+        # 验证1: 不应返回 None（应命中硬规则）
+        if result is not None:
+            results.add_pass(f"A-{keyword} 命中硬规则", f"输入'{desc}' → _check_hard_rules_first 返回非None")
+        else:
+            results.add_fail(f"A-{keyword} 命中硬规则", "非None", "None",
+                             f"输入'{desc}'，关键词'{keyword}'未匹配")
+            continue
+    
+        # 验证2: scene_tag 应为 生命急救
+        if result.get("scene_tag") == "生命急救":
+            results.add_pass(f"A-{keyword} scene_tag=生命急救", f"输入'{desc}'")
+        else:
+            results.add_fail(f"A-{keyword} scene_tag=生命急救", "生命急救",
+                             result.get("scene_tag"))
+    
+        # 验证3: urgency 应为 高
+        if result.get("urgency") == "高":
+            results.add_pass(f"A-{keyword} urgency=高", f"输入'{desc}'")
+        else:
+            results.add_fail(f"A-{keyword} urgency=高", "高", result.get("urgency"))
+    
+        # 验证4: event_type 应为 安全隐患
+        if result.get("event_type") == "安全隐患":
+            results.add_pass(f"A-{keyword} event_type=安全隐患", f"输入'{desc}'")
+        else:
+            results.add_fail(f"A-{keyword} event_type=安全隐患", "安全隐患",
+                             result.get("event_type"))
+    
+    # A-7: 普通输入不应命中硬规则
+    normal_result = _check_hard_rules_first("楼下垃圾很多")
+    if normal_result is None:
+        results.add_pass("A-垃圾 不命中硬规则", "输入'楼下垃圾很多' → 返回None，走正常语义校验流程")
     else:
-        results.add_fail(f"A-{keyword} 命中硬规则", "非None", "None",
-                         f"输入'{desc}'，关键词'{keyword}'未匹配")
-        continue
-
-    # 验证2: scene_tag 应为 生命急救
-    if result.get("scene_tag") == "生命急救":
-        results.add_pass(f"A-{keyword} scene_tag=生命急救", f"输入'{desc}'")
-    else:
-        results.add_fail(f"A-{keyword} scene_tag=生命急救", "生命急救",
-                         result.get("scene_tag"))
-
-    # 验证3: urgency 应为 高
-    if result.get("urgency") == "高":
-        results.add_pass(f"A-{keyword} urgency=高", f"输入'{desc}'")
-    else:
-        results.add_fail(f"A-{keyword} urgency=高", "高", result.get("urgency"))
-
-    # 验证4: event_type 应为 安全隐患
-    if result.get("event_type") == "安全隐患":
-        results.add_pass(f"A-{keyword} event_type=安全隐患", f"输入'{desc}'")
-    else:
-        results.add_fail(f"A-{keyword} event_type=安全隐患", "安全隐患",
-                         result.get("event_type"))
-
-# A-7: 普通输入不应命中硬规则
-normal_result = _check_hard_rules_first("楼下垃圾很多")
-if normal_result is None:
-    results.add_pass("A-垃圾 不命中硬规则", "输入'楼下垃圾很多' → 返回None，走正常语义校验流程")
-else:
-    results.add_fail("A-垃圾 不命中硬规则", "None",
-                     f"scene_tag={normal_result.get('scene_tag')}",
-                     "不应该被硬规则拦截")
-
-# A-8: 验证正则覆盖所有关键词
-print("\n--- 关键词覆盖检查 ---")
-all_keywords = [
-    "心脏骤停", "心跳停止", "心肺复苏", "大出血", "昏迷", "窒息", "触电", "电击伤", "电击",
-    "突发重病", "心梗", "心肌梗死", "脑溢血", "中风", "溺水",
-    "人死了", "有人死", "死人", "去世", "身亡", "猝死", "割腕", "自杀", "自残", "跳楼", "轻生", "煤气中毒",
-]
-for kw in all_keywords:
-    test_str = f"测试{kw}情况"
-    r = _check_hard_rules_first(test_str)
-    if r is None:
-        results.add_fail(f"A-覆盖-{kw}", "命中硬规则", "未命中", f"关键词'{kw}'未在_LIFE_RESCUE_RE中匹配")
-    else:
-        results.add_pass(f"A-覆盖-{kw}", f"关键词'{kw}'命中 → scene_tag={r['scene_tag']}")
-
-# 验证紧急救援关键词
-emergency_keywords = ["火灾", "起火", "着火", "燃气泄漏", "煤气泄漏", "电梯困人", "建筑物坍塌", "坍塌", "严重交通事故", "爆炸", "高空坠物"]
-for kw in emergency_keywords:
-    test_str = f"小区{kw}了"
-    r = _check_hard_rules_first(test_str)
-    if r is None:
-        results.add_fail(f"A-覆盖-{kw}", "命中紧急救援", "未命中", f"关键词'{kw}'未在_EMERGENCY_RESCUE_RE中匹配")
-    else:
-        scene = r.get("scene_tag", "?")
-        if scene == "紧急救援":
-            results.add_pass(f"A-覆盖-{kw}", f"关键词'{kw}' → scene_tag=紧急救援")
-        elif scene == "生命急救":
-            # 有些关键词可能同时命中两个正则，但生命急救优先
-            results.add_pass(f"A-覆盖-{kw}", f"关键词'{kw}' → scene_tag=生命急救（优先于紧急救援）")
-
+        results.add_fail("A-垃圾 不命中硬规则", "None",
+                         f"scene_tag={normal_result.get('scene_tag')}",
+                         "不应该被硬规则拦截")
+    
+    # A-8: 验证正则覆盖所有关键词
+    print("\n--- 关键词覆盖检查 ---")
+    all_keywords = [
+        "心脏骤停", "心跳停止", "心肺复苏", "大出血", "昏迷", "窒息", "触电", "电击伤", "电击",
+        "突发重病", "心梗", "心肌梗死", "脑溢血", "中风", "溺水",
+        "人死了", "有人死", "死人", "去世", "身亡", "猝死", "割腕", "自杀", "自残", "跳楼", "轻生", "煤气中毒",
+    ]
+    for kw in all_keywords:
+        test_str = f"测试{kw}情况"
+        r = _check_hard_rules_first(test_str)
+        if r is None:
+            results.add_fail(f"A-覆盖-{kw}", "命中硬规则", "未命中", f"关键词'{kw}'未在_LIFE_RESCUE_RE中匹配")
+        else:
+            results.add_pass(f"A-覆盖-{kw}", f"关键词'{kw}'命中 → scene_tag={r['scene_tag']}")
+    
+    # 验证紧急救援关键词
+    emergency_keywords = ["火灾", "起火", "着火", "燃气泄漏", "煤气泄漏", "电梯困人", "建筑物坍塌", "坍塌", "严重交通事故", "爆炸", "高空坠物"]
+    for kw in emergency_keywords:
+        test_str = f"小区{kw}了"
+        r = _check_hard_rules_first(test_str)
+        if r is None:
+            results.add_fail(f"A-覆盖-{kw}", "命中紧急救援", "未命中", f"关键词'{kw}'未在_EMERGENCY_RESCUE_RE中匹配")
+        else:
+            scene = r.get("scene_tag", "?")
+            if scene == "紧急救援":
+                results.add_pass(f"A-覆盖-{kw}", f"关键词'{kw}' → scene_tag=紧急救援")
+            elif scene == "生命急救":
+                # 有些关键词可能同时命中两个正则，但生命急救优先
+                results.add_pass(f"A-覆盖-{kw}", f"关键词'{kw}' → scene_tag=生命急救（优先于紧急救援）")
+    
 
 # ==================================================================
 # 模块 B: API 端到端测试（fastapi TestClient）
@@ -426,13 +426,9 @@ def run_api_tests():
         main_module._background_tasks.clear()
 
 # ==================================================================
-# 模块 C: 验证硬规则在 receive_node 中也生效
-# ==================================================================
-print("\n" + "=" * 70)
-print("  模块 C: receive_node 内部的硬规则检查")
 print("=" * 70)
 
-def test_receive_node_hard_rules():
+def case_receive_node_hard_rules():
     """验证 receive_node 内部也优先检查硬规则"""
     from receive_agent import receive_node
 
@@ -459,27 +455,45 @@ def test_receive_node_hard_rules():
                 results.add_fail(f"C-{keyword} receive_node极速返回", "< 100ms",
                                  f"{elapsed*1000:.0f}ms")
 
-test_receive_node_hard_rules()
 
 
 # ==================================================================
 # 运行所有测试
-# ==================================================================
-try:
+def test_suite():
+    # 数据隔离已由 conftest（pytest）或 __main__（直跑）保证；
+    # auth/main 初始化在 run_api_tests 内延迟导入（数据隔离之后）。
+    _run_module_a()
+    print("\n" + "=" * 70)
+    print("  模块 C: receive_node 内部的硬规则检查")
+    print("=" * 70)
+    case_receive_node_hard_rules()
     print("\n" + "=" * 70)
     print("  运行 API 端到端测试（模块 B）")
     print("=" * 70)
     run_api_tests()
-finally:
-    teardown()
+    all_pass = results.summary()
+    if all_pass:
+        print("🎉 全部测试通过！BUG修复有效，生命急救消息不会被丢弃。")
+    else:
+        print("⚠️  部分测试失败，详见上方详情。")
+    assert all_pass, "存在失败项，详见上方明细"
 
-# 最终汇总
-all_pass = results.summary()
 
-print()
-if all_pass:
-    print("🎉 全部测试通过！BUG修复有效，生命急救消息不会被丢弃。")
-else:
-    print("⚠️  部分测试失败，详见上方详情。")
+def main():
+    setup()
+    code = 1
+    try:
+        try:
+            test_suite()
+            code = 0
+        except AssertionError:
+            code = 1
+    finally:
+        teardown()
+    sys.exit(code)
 
-sys.exit(0 if all_pass else 1)
+
+if __name__ == "__main__":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
+    main()

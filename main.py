@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 # 复用已有工作流与持久化配置
 from workflow import workflow, WorkflowState, dispatch_record_workflow
 import record_agent
-from receive_agent import _is_valid_input, receive_node, _check_hard_rules_first, _check_fuzzy_emergency
+from receive_agent import receive_node, _check_hard_rules_first, _check_fuzzy_emergency
 import receive_agent  # noqa: F811  用于调试：确认加载的模块路径
 import dispatch_agent
 import auth
@@ -164,22 +164,40 @@ async def _process_event(
             task = _tasks.get(event_id)
             if task is None:
                 return
-            # 处理中事件完成后标记为"已完成"；待审核事件保留原状态
-            if task["status"] == "处理中":
-                task["status"] = "已完成"
-            task.update({
-                "address": result["address"],
-                "event_type": result["event_type"],
-                "urgency": result["urgency"],
-                "scene_tag": result["scene_tag"],
-                "handler": result["handler"],
-                "completed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            })
-            _save_tasks(_tasks)
+            # D2 修复：先校验 invoke 结果、后变更状态，避免「表面成功」
+            REQUIRED = ("handler", "address", "event_type", "urgency", "scene_tag")
+            if not isinstance(result, dict):
+                # 状态守卫：仅处理中/待审核可被改写为处理失败，防止覆盖「已撤销」
+                if task.get("status") in ("处理中", "待审核"):
+                    task["status"] = "处理失败"
+                    task["error"] = "事件处理结果无效"
+                    _save_tasks(_tasks)
+                logger.error("事件处理结果无效（非 dict），event_id=%s，result=%r", event_id, result)
+            elif missing := [k for k in REQUIRED if k not in result]:
+                # 状态守卫：仅处理中/待审核可被改写为处理失败，防止覆盖「已撤销」
+                if task.get("status") in ("处理中", "待审核"):
+                    task["status"] = "处理失败"
+                    task["error"] = "事件处理结果缺失必需字段：" + ",".join(missing)
+                    _save_tasks(_tasks)
+                logger.error("事件处理结果缺失必需字段，event_id=%s，missing=%s", event_id, ",".join(missing))
+            else:
+                # 处理中事件完成后标记为"已完成"；待审核事件保留原状态
+                if task["status"] == "处理中":
+                    task["status"] = "已完成"
+                task.update({
+                    "address": result["address"],
+                    "event_type": result["event_type"],
+                    "urgency": result["urgency"],
+                    "scene_tag": result["scene_tag"],
+                    "handler": result["handler"],
+                    "completed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                })
+                _save_tasks(_tasks)
     except asyncio.TimeoutError:
         async with _task_lock:
             task = _tasks.get(event_id)
-            if task is not None:
+            # 状态守卫：仅处理中/待审核可被改写为处理超时，防止覆盖「已撤销」
+            if task is not None and task.get("status") in ("处理中", "待审核"):
                 task["status"] = "处理超时"
                 task["error"] = "AI 处理超过60秒，已超时"
                 _save_tasks(_tasks)
@@ -187,7 +205,8 @@ async def _process_event(
     except Exception as exc:
         async with _task_lock:
             task = _tasks.get(event_id)
-            if task is not None:
+            # 状态守卫：仅处理中/待审核可被改写为处理失败，防止覆盖「已撤销」
+            if task is not None and task.get("status") in ("处理中", "待审核"):
                 task["status"] = "处理失败"
                 task["error"] = f"{type(exc).__name__}：{exc}"
                 _save_tasks(_tasks)
@@ -298,7 +317,7 @@ class EventRequest(BaseModel):
     """
     事件提交请求体。
     """
-    description: str = Field(..., description="居民事件描述字符串", min_length=1)
+    description: str = Field(..., description="居民事件描述字符串", min_length=1, max_length=500)
     confirmed: bool = Field(default=False, description="用户是否已确认高风险描述（用于模糊急救二次提交）")
     emergency_type: str | None = Field(default=None, description="模糊急救类型：medical/police/fire（用于二次提交时传递）")
     lat: float | None = Field(default=None, ge=-90, le=90, description="事件实时定位纬度")
@@ -530,6 +549,14 @@ async def admin_list_users(
 
 
 # ------------------------------------------------------------------
+# API 端点：社区名称（公开，前端标题/页头动态显示用）
+# ------------------------------------------------------------------
+@app.get("/api/community")
+async def public_get_community() -> dict[str, Any]:
+    '''获取社区名称等公开配置（无需登录，供各页面标题/页头动态显示）。'''
+    return geo.get_community_config()
+
+
 # API 端点：社区中心设置（管理员）
 # ------------------------------------------------------------------
 @app.get("/api/admin/community")
@@ -759,7 +786,7 @@ async def create_event(
                 )
 
         # ------------------------------------------------------------------
-        # 同步语义校验（唯一一次）：多轮采样消除随机性
+        # 同步语义校验（唯一一次）：LLM 多轮采样投票提取语义
         # ------------------------------------------------------------------
         semantic_result: dict[str, str] | None = None
         try:
@@ -777,7 +804,7 @@ async def create_event(
             }
             semantic_result = await asyncio.wait_for(
                 asyncio.to_thread(receive_node, check_state),
-                timeout=50.0,  # 3轮×15秒 ≈ 45秒，留5秒余量
+                timeout=50.0,  # 3轮并行×15秒，留足余量
             )
         except asyncio.TimeoutError:
             logger.warning("语义校验超时，创建待审核事件：description='%s'", request.description)
@@ -871,6 +898,67 @@ async def create_event(
             }
             bg_task = asyncio.create_task(
                 _process_event(event_id, exc_state, current_user["id"], request.lat, request.lng)
+            )
+            _background_tasks.add(bg_task)
+            bg_task.add_done_callback(_background_tasks.discard)
+            return EventResponse(
+                success=True,
+                data=EventResponseData(
+                    event_id=event_id,
+                    address="",
+                    event_type="待审核",
+                    urgency="中",
+                    scene_tag="常规",
+                    handler="",
+                    status="待审核",
+                    created_at=created_at,
+                ),
+            )
+
+        # ------------------------------------------------------------------
+        # 语义校验结果守卫（D1 修复）：receive_node 返回 None / 非 dict 时，
+        # 复用「API异常」降级路径转待审核，避免对 None 调用 .get() 抛内部异常
+        # ------------------------------------------------------------------
+        if semantic_result is None or not isinstance(semantic_result, dict):
+            logger.error("语义校验返回无效结果：description='%s'，result=%r", request.description, semantic_result)
+            # 复用「API异常」降级路径：建待审核任务（error="语义校验服务异常，已转人工审核"）、
+            # 启动 _process_event（emergency_type="人工部"、status="待审核"）、
+            # 返回 EventResponse(success=True, data.status="待审核", error=None)
+            event_id = str(uuid.uuid4())
+            created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            async with _task_lock:
+                _tasks[event_id] = _build_task(
+                    event_id=event_id,
+                    description=request.description,
+                    created_at=created_at,
+                    status="待审核",
+                    address="",
+                    event_type="待审核",
+                    urgency="中",
+                    scene_tag="常规",
+                    user=current_user,
+                    error="语义校验服务异常，已转人工审核",
+                    lat=request.lat,
+                    lng=request.lng,
+                    beneficiary=beneficiary,
+                )
+                _save_tasks(_tasks)
+            # 启动后台让 dispatch_agent 设置 handler="人工部"
+            invalid_state = {
+                "description": request.description,
+                "address": "",
+                "event_type": "待审核",
+                "urgency": "中",
+                "scene_tag": "常规",
+                "handler": "",
+                "confidence": "none",
+                "confirmation_required": False,
+                "emergency_type": "人工部",
+                "confirmed": False,
+                "status": "待审核",
+            }
+            bg_task = asyncio.create_task(
+                _process_event(event_id, invalid_state, current_user["id"], request.lat, request.lng)
             )
             _background_tasks.add(bg_task)
             bg_task.add_done_callback(_background_tasks.discard)
@@ -1187,6 +1275,49 @@ async def get_event(
         error=task.get("error"),
         reply=task.get("reply") or None,
     )
+
+
+# ------------------------------------------------------------------
+# API 端点：POST /api/events/{event_id}/cancel
+# ------------------------------------------------------------------
+@app.post("/api/events/{event_id}/cancel")
+async def cancel_event(
+    event_id: str,
+    current_user: dict[str, Any] = Depends(get_current_user_dependency),
+) -> dict[str, Any]:
+    """
+    居民撤销自己提交的事件（提交后 5 分钟内，任何状态均可撤销，「已撤销」除外）。
+
+    仅事件提交者本人可撤销（管理员即使调用也返回 403，不支持代撤销）。
+    5 分钟窗口以后端为权威：now - created_at > 300 秒即拒绝；
+    created_at 解析失败按超时处理。撤销仅标记状态为「已撤销」，保留全部记录字段。
+    """
+    async with _task_lock:
+        task = _tasks.get(event_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="事件不存在")
+        # 归属校验：仅本人可撤销（非本人，含管理员代撤销 -> 403）
+        if task.get("user_id") != current_user.get("id"):
+            raise HTTPException(status_code=403, detail="无权操作该事件")
+        if task.get("status") == "已撤销":
+            raise HTTPException(status_code=400, detail="事件已撤销")
+        # 5 分钟窗口：created_at 按 "%Y-%m-%d %H:%M:%S" 解析，解析失败按超时处理
+        try:
+            created = datetime.strptime(task.get("created_at", ""), "%Y-%m-%d %H:%M:%S")
+        except (TypeError, ValueError):
+            created = None
+        if created is None or (datetime.now() - created).total_seconds() > 300:
+            raise HTTPException(status_code=400, detail="已超过5分钟，无法撤销")
+        task["status"] = "已撤销"
+        _save_tasks(_tasks)
+
+    return {
+        "success": True,
+        "data": {
+            "event_id": task["event_id"],
+            "status": task["status"],
+        },
+    }
 
 
 # ------------------------------------------------------------------

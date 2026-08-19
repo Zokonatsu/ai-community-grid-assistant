@@ -49,15 +49,12 @@ def teardown_test_env():
     if os.path.exists(BAK_SECURE_DIR):
         os.rename(BAK_SECURE_DIR, ORIGINAL_SECURE_DIR)
 
-setup_test_env()
 
 os.environ["LLM_API_KEY"] = "test-key"
 os.environ["LLM_BASE_URL"] = "http://test"
 os.environ["DATA_ENCRYPTION_KEY"] = "1" * 64
+os.environ["AUTH_STORE"] = "file"
 
-import auth
-import importlib
-importlib.reload(auth)
 
 def _mock_receive_node(state):
     import receive_agent as _ra
@@ -76,15 +73,6 @@ def _mock_receive_node(state):
         "emergency_type": "",
     }
 
-with patch("receive_agent.OpenAI"), \
-     patch("receive_agent.receive_node", side_effect=_mock_receive_node), \
-     patch("dispatch_agent.logger"), \
-     patch("record_agent.logger"):
-
-    from main import app
-    from fastapi.testclient import TestClient
-
-client = TestClient(app)
 
 RESULTS: list[tuple[str, bool, str]] = []
 
@@ -105,6 +93,8 @@ def register(username, password="test123456", real_name="测试用户", phone="1
         "building": building,
         "unit": unit,
         "room": room,
+        "register_lat": 30.274150,
+        "register_lng": 120.155150,
     }
     return client.post("/api/auth/register", json=body).json()
 
@@ -112,99 +102,108 @@ def login(username, password="test123456"):
     res = client.post("/api/auth/login", json={"username": username, "password": password})
     return res.json()
 
-# 注册本人提交的居民
-register("res_self", real_name="自我测试", phone="13900000021", building="2栋", unit="3单元", room="401")
-tok_self = login("res_self").get("data", {}).get("token")
-check("0.1 本人居民登录成功", bool(tok_self), "")
-
-admin_token = login("admin", "admin123456").get("data", {}).get("token")
-check("0.2 管理员登录成功", bool(admin_token), "")
-
-# ---------------------------------------------------------------
-# 1. 本人提交：无需额外字段
-# ---------------------------------------------------------------
-res_self_ev = client.post("/api/events",
-                          json={"description": "我家水管坏了"},
-                          headers=auth_header(tok_self))
-self_body = res_self_ev.json()
-check("1.1 本人提交（无 beneficiary 字段）成功", res_self_ev.status_code == 200 and self_body.get("success"), res_self_ev.text[:200])
-self_id = self_body.get("data", {}).get("event_id")
-
-evs = client.get("/api/events", headers=auth_header(tok_self)).json()
-self_ev = next((e for e in evs if e["event_id"] == self_id), {})
-check("1.2 本人事件 beneficiary_type=self", self_ev.get("beneficiary_type") == "self", f"type={self_ev.get('beneficiary_type')}")
-check("1.3 本人事件被帮助人=提交人 real_name", self_ev.get("beneficiary_name") == "自我测试", f"name={self_ev.get('beneficiary_name')}")
-check("1.4 本人事件被帮助人=提交人住户信息", self_ev.get("beneficiary_building") == "2栋"
-      and self_ev.get("beneficiary_unit") == "3单元" and self_ev.get("beneficiary_room") == "401",
-      f"b={self_ev.get('beneficiary_building')} u={self_ev.get('beneficiary_unit')} r={self_ev.get('beneficiary_room')}")
-
-# ---------------------------------------------------------------
-# 2. 代人办全字段提交
-# ---------------------------------------------------------------
-res_proxy_ev = client.post("/api/events",
-                           json={
-                               "description": "替邻居报修楼道灯",
-                               "beneficiary_type": "proxy",
-                               "beneficiary_name": "李四",
-                               "beneficiary_phone": "13911112222",
-                               "beneficiary_building": "5栋",
-                               "beneficiary_unit": "1单元",
-                               "beneficiary_room": "203",
-                           },
-                           headers=auth_header(tok_self))
-proxy_body = res_proxy_ev.json()
-check("2.1 代人办全字段提交成功", res_proxy_ev.status_code == 200 and proxy_body.get("success"), res_proxy_ev.text[:200])
-proxy_id = proxy_body.get("data", {}).get("event_id")
-
-evs_admin = client.get("/api/events", headers=auth_header(admin_token)).json()
-proxy_ev = next((e for e in evs_admin if e["event_id"] == proxy_id), {})
-check("2.2 代办事件 beneficiary_type=proxy", proxy_ev.get("beneficiary_type") == "proxy", f"type={proxy_ev.get('beneficiary_type')}")
-check("2.3 代办事件存储被帮助人姓名", proxy_ev.get("beneficiary_name") == "李四", f"name={proxy_ev.get('beneficiary_name')}")
-check("2.4 代办事件存储被帮助人手机/住户", proxy_ev.get("beneficiary_phone") == "13911112222"
-      and proxy_ev.get("beneficiary_building") == "5栋" and proxy_ev.get("beneficiary_room") == "203",
-      f"p={proxy_ev.get('beneficiary_phone')} b={proxy_ev.get('beneficiary_building')} r={proxy_ev.get('beneficiary_room')}")
-
-# ---------------------------------------------------------------
-# 3. 代人办缺字段 -> 拒绝
-# ---------------------------------------------------------------
-miss_name = client.post("/api/events",
-                        json={"description": "缺姓名", "beneficiary_type": "proxy",
-                              "beneficiary_phone": "13911112222", "beneficiary_building": "5栋",
-                              "beneficiary_unit": "1单元", "beneficiary_room": "203"},
-                        headers=auth_header(tok_self)).json()
-check("3.1 缺被帮助人姓名被拒绝", (not miss_name.get("success")) and "姓名" in miss_name.get("error", ""),
-      f"error={miss_name.get('error')}")
-
-miss_room = client.post("/api/events",
-                        json={"description": "缺房间", "beneficiary_type": "proxy",
-                              "beneficiary_name": "李四", "beneficiary_phone": "13911112222",
-                              "beneficiary_building": "5栋", "beneficiary_unit": "1单元"},
-                        headers=auth_header(tok_self)).json()
-check("3.2 缺房间号被拒绝", (not miss_room.get("success")) and "房间号" in miss_room.get("error", ""),
-      f"error={miss_room.get('error')}")
-
-# ---------------------------------------------------------------
-# 4. beneficiary_type 非法 -> 拒绝
-# ---------------------------------------------------------------
-bad_type = client.post("/api/events",
-                       json={"description": "非法类型", "beneficiary_type": "other"},
-                       headers=auth_header(tok_self)).json()
-check("4.1 非法提交方式被拒绝", (not bad_type.get("success")) and "提交方式不合法" in bad_type.get("error", ""),
-      f"error={bad_type.get('error')}")
-
-# ---------------------------------------------------------------
-# 5. 居民自己的事件列表可见 beneficiary_* 字段
-# ---------------------------------------------------------------
-evs_self_list = client.get("/api/events", headers=auth_header(tok_self)).json()
-self_ev2 = next((e for e in evs_self_list if e["event_id"] == proxy_id), {})
-check("5.1 居民自己的代办事件列表含 beneficiary_*", self_ev2.get("beneficiary_type") == "proxy"
-      and self_ev2.get("beneficiary_name") == "李四", f"type={self_ev2.get('beneficiary_type')} name={self_ev2.get('beneficiary_name')}")
-
-
-def main():
-    print("=" * 70)
-    print("事件提交方式（本人/代人办）测试")
-    print("=" * 70)
+def test_suite():
+    # 数据隔离已由 conftest（pytest）或 __main__（直跑）保证；
+    # auth/main 初始化必须在数据隔离生效之后（延迟导入 + reload）。
+    global client
+    import auth
+    import importlib
+    importlib.reload(auth)
+    with patch("receive_agent.OpenAI"), \
+         patch("receive_agent.receive_node", side_effect=_mock_receive_node), \
+         patch("dispatch_agent.logger"), \
+         patch("record_agent.logger"):
+        from main import app
+        from fastapi.testclient import TestClient
+    client = TestClient(app)
+    # 注册本人提交的居民
+    register("res_self", real_name="自我测试", phone="13900000021", building="2栋", unit="3单元", room="401")
+    tok_self = login("res_self").get("data", {}).get("token")
+    check("0.1 本人居民登录成功", bool(tok_self), "")
+    
+    admin_token = login("admin", "admin123456").get("data", {}).get("token")
+    check("0.2 管理员登录成功", bool(admin_token), "")
+    
+    # ---------------------------------------------------------------
+    # 1. 本人提交：无需额外字段
+    # ---------------------------------------------------------------
+    res_self_ev = client.post("/api/events",
+                              json={"description": "我家水管坏了"},
+                              headers=auth_header(tok_self))
+    self_body = res_self_ev.json()
+    check("1.1 本人提交（无 beneficiary 字段）成功", res_self_ev.status_code == 200 and self_body.get("success"), res_self_ev.text[:200])
+    self_id = self_body.get("data", {}).get("event_id")
+    
+    evs = client.get("/api/events", headers=auth_header(tok_self)).json()
+    self_ev = next((e for e in evs if e["event_id"] == self_id), {})
+    check("1.2 本人事件 beneficiary_type=self", self_ev.get("beneficiary_type") == "self", f"type={self_ev.get('beneficiary_type')}")
+    check("1.3 本人事件被帮助人=提交人 real_name", self_ev.get("beneficiary_name") == "自我测试", f"name={self_ev.get('beneficiary_name')}")
+    check("1.4 本人事件被帮助人=提交人住户信息", self_ev.get("beneficiary_building") == "2栋"
+          and self_ev.get("beneficiary_unit") == "3单元" and self_ev.get("beneficiary_room") == "401",
+          f"b={self_ev.get('beneficiary_building')} u={self_ev.get('beneficiary_unit')} r={self_ev.get('beneficiary_room')}")
+    
+    # ---------------------------------------------------------------
+    # 2. 代人办全字段提交
+    # ---------------------------------------------------------------
+    res_proxy_ev = client.post("/api/events",
+                               json={
+                                   "description": "替邻居报修楼道灯",
+                                   "beneficiary_type": "proxy",
+                                   "beneficiary_name": "李四",
+                                   "beneficiary_phone": "13911112222",
+                                   "beneficiary_building": "5栋",
+                                   "beneficiary_unit": "1单元",
+                                   "beneficiary_room": "203",
+                               },
+                               headers=auth_header(tok_self))
+    proxy_body = res_proxy_ev.json()
+    check("2.1 代人办全字段提交成功", res_proxy_ev.status_code == 200 and proxy_body.get("success"), res_proxy_ev.text[:200])
+    proxy_id = proxy_body.get("data", {}).get("event_id")
+    
+    evs_admin = client.get("/api/events", headers=auth_header(admin_token)).json()
+    proxy_ev = next((e for e in evs_admin if e["event_id"] == proxy_id), {})
+    check("2.2 代办事件 beneficiary_type=proxy", proxy_ev.get("beneficiary_type") == "proxy", f"type={proxy_ev.get('beneficiary_type')}")
+    check("2.3 代办事件存储被帮助人姓名", proxy_ev.get("beneficiary_name") == "李四", f"name={proxy_ev.get('beneficiary_name')}")
+    check("2.4 代办事件存储被帮助人手机/住户", proxy_ev.get("beneficiary_phone") == "13911112222"
+          and proxy_ev.get("beneficiary_building") == "5栋" and proxy_ev.get("beneficiary_room") == "203",
+          f"p={proxy_ev.get('beneficiary_phone')} b={proxy_ev.get('beneficiary_building')} r={proxy_ev.get('beneficiary_room')}")
+    
+    # ---------------------------------------------------------------
+    # 3. 代人办缺字段 -> 拒绝
+    # ---------------------------------------------------------------
+    miss_name = client.post("/api/events",
+                            json={"description": "缺姓名", "beneficiary_type": "proxy",
+                                  "beneficiary_phone": "13911112222", "beneficiary_building": "5栋",
+                                  "beneficiary_unit": "1单元", "beneficiary_room": "203"},
+                            headers=auth_header(tok_self)).json()
+    check("3.1 缺被帮助人姓名被拒绝", (not miss_name.get("success")) and "姓名" in miss_name.get("error", ""),
+          f"error={miss_name.get('error')}")
+    
+    miss_room = client.post("/api/events",
+                            json={"description": "缺房间", "beneficiary_type": "proxy",
+                                  "beneficiary_name": "李四", "beneficiary_phone": "13911112222",
+                                  "beneficiary_building": "5栋", "beneficiary_unit": "1单元"},
+                            headers=auth_header(tok_self)).json()
+    check("3.2 缺房间号被拒绝", (not miss_room.get("success")) and "房间号" in miss_room.get("error", ""),
+          f"error={miss_room.get('error')}")
+    
+    # ---------------------------------------------------------------
+    # 4. beneficiary_type 非法 -> 拒绝
+    # ---------------------------------------------------------------
+    bad_type = client.post("/api/events",
+                           json={"description": "非法类型", "beneficiary_type": "other"},
+                           headers=auth_header(tok_self)).json()
+    check("4.1 非法提交方式被拒绝", (not bad_type.get("success")) and "提交方式不合法" in bad_type.get("error", ""),
+          f"error={bad_type.get('error')}")
+    
+    # ---------------------------------------------------------------
+    # 5. 居民自己的事件列表可见 beneficiary_* 字段
+    # ---------------------------------------------------------------
+    evs_self_list = client.get("/api/events", headers=auth_header(tok_self)).json()
+    self_ev2 = next((e for e in evs_self_list if e["event_id"] == proxy_id), {})
+    check("5.1 居民自己的代办事件列表含 beneficiary_*", self_ev2.get("beneficiary_type") == "proxy"
+          and self_ev2.get("beneficiary_name") == "李四", f"type={self_ev2.get('beneficiary_type')} name={self_ev2.get('beneficiary_name')}")
+    # 输出明细并断言（pytest 与直跑共用同一套校验逻辑）
     failed = 0
     for name, ok, detail in RESULTS:
         mark = "PASS" if ok else "FAIL"
@@ -212,8 +211,20 @@ def main():
             failed += 1
         print(f"  [{mark}] {name}" + (f"  ({detail})" if detail else ""))
     print(f"\n结果：{len(RESULTS) - failed}/{len(RESULTS)} 通过")
-    teardown_test_env()
-    sys.exit(0 if failed == 0 else 1)
+    assert failed == 0, f"{failed} 项校验失败，详见上方明细"
+
+def main():
+    setup_test_env()
+    code = 1
+    try:
+        try:
+            test_suite()
+            code = 0
+        except AssertionError:
+            code = 1
+    finally:
+        teardown_test_env()
+    sys.exit(code)
 
 
 if __name__ == "__main__":

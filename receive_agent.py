@@ -46,9 +46,9 @@ client = OpenAI(
 # ------------------------------------------------------------------
 # 语义校验多轮采样配置
 # ------------------------------------------------------------------
-# 对同一输入并行调用多次 LLM API，通过投票消除单次调用的随机性波动。
-# 单次 timeout 设为 15 秒，3 轮累计不超过 45 秒，与原有超时策略一致。
-SEMANTIC_CHECK_ROUNDS: int = 3
+# 对同一输入并行调用 3 次 LLM API，通过投票消除单次调用的随机性波动。
+# 单次 timeout 设为 15 秒，3 轮并行总耗时约 1×15s。
+SEMANTIC_CHECK_ROUNDS: int = 3  # 多轮投票：消除边界输入（如迷信/闲聊）的判定随机性
 _SEMANTIC_SINGLE_TIMEOUT: float = 15.0
 
 # ------------------------------------------------------------------
@@ -69,7 +69,7 @@ _EMERGENCY_RESCUE_RE = re.compile(
 
 # 模糊急救关键词：短词无上下文时需要前端二次确认
 _FUZZY_MEDICAL_RE = re.compile(
-    r"吐血|上吊|晕倒|猝死|窒息|中毒",
+    r"吐血|上吊|晕倒|猝死|窒息|中毒|救命|救我|呼救",
     re.IGNORECASE,
 )
 _FUZZY_POLICE_RE = re.compile(
@@ -77,7 +77,14 @@ _FUZZY_POLICE_RE = re.compile(
     re.IGNORECASE,
 )
 _FUZZY_FIRE_RE = re.compile(
-    r"着火|火灾|燃气泄漏|被困|爆炸",
+    r"着火|火灾|燃气泄漏|被困|爆炸|救火",
+    re.IGNORECASE,
+)
+
+# 迷信/超自然内容：明确非社区事务，直接拒绝（避免 LLM 误判为精神急救/受理）
+_SUPERNATURAL_RE = re.compile(
+    r"有鬼|闹鬼|见鬼|撞鬼|鬼影|鬼魂|鬼火|鬼上身|鬼压床|鬼打墙|鬼敲门|妖魔鬼怪|妖怪|妖精|邪灵|阴气|中邪|附身|"
+    r"僵尸|吸血鬼|幽灵|托梦|前世|来世|阴间|阳间|神婆|跳大神|驱鬼|招鬼|降头|阴魂|冤魂",
     re.IGNORECASE,
 )
 
@@ -389,9 +396,9 @@ def _is_valid_input(description: str) -> bool:
     ):
         return True
 
-    # 长度不足 3 个字符过于简短，无法构成有效描述
+    # 仅拒绝 1 个字符（无法构成有效描述）；2 字交 LLM 语义判断（漏水/煤气/停电等合法短报）
     # （生命急救/紧急救援/模糊急救旁路已在上方优先放行，不受此限制）
-    if len(cleaned) < 3:
+    if len(cleaned) < 2:
         return False
 
     # 纯数字或纯标点符号（无任何字母/汉字）
@@ -400,6 +407,10 @@ def _is_valid_input(description: str) -> bool:
 
     # 纯问候语、纯闲聊、纯测试字符串等明显无效输入
     if _INVALID_INPUT_RE.match(cleaned):
+        return False
+
+    # 迷信/超自然内容：明确非社区事务，直接拒绝
+    if _SUPERNATURAL_RE.search(cleaned):
         return False
 
     return True
@@ -523,8 +534,7 @@ def receive_node(state: ReceiveState) -> ReceiveState:
     # ------------------------------------------------------------------
     # 步骤2：多轮采样语义校验（消除单次调用随机性）
     # ------------------------------------------------------------------
-    # 对同一描述调用多次 LLM API，通过投票统计获得稳定结果。
-    # 使用线程池并行执行，将顺序3轮改为并行，总耗时从 3×15s 降至约 1×15s。
+    # 对同一描述并行调用多次 LLM API（ThreadPoolExecutor），投票统计获得稳定结果。
     # 任何一轮调用异常均单独捕获，不影响其他轮次。
     parsed_results: list[dict] = []
 
@@ -594,24 +604,7 @@ def receive_node(state: ReceiveState) -> ReceiveState:
                 "emergency_type": "人工部",
             }
 
-        # 安全兜底：短词（长度≤4字符）即使模型判断无效，也不直接拒绝，降级为待审核
-        # 短词缺乏上下文，模型容易误判，优先进入人工审核而非直接拦截
-        if len(description.strip()) <= 4:
-            logger.warning(
-                "语义校验安全兜底：模型判定无效，但输入为短词（长度≤4），降级为待审核。description='%s'",
-                description,
-            )
-            return {
-                "description": description,
-                "address": "",
-                "event_type": "待审核",
-                "urgency": "高",
-                "scene_tag": "常规",
-                "handler": "",
-                "confidence": "medium",
-                "confirmation_required": False,
-                "emergency_type": "人工部",
-            }
+        # 短词乱打/闲聊不再转待审核：LLM 判无效即拒绝（真实紧急短词已由前置硬规则/模糊急救拦截）
 
         reject_reason = merged.get("reject_reason", "语义判断为无效输入")
         logger.warning(

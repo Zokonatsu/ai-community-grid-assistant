@@ -1,4 +1,14 @@
-"""Test script: verify input validation stability (multi-round voting, confidence, pending review)"""
+"""
+tests/run_tests.py —— 实时冒烟脚本（定位说明，T20260820-001-TD）。
+
+定位：实时冒烟脚本，不是 pytest 回归套件。
+- 前置条件：服务需已启动（默认 127.0.0.1:8000）且下方 TOKEN 有效；
+- 行为：直接对运行中的服务发 HTTP 请求，验证输入稳定性
+  （多轮投票 / 置信度 / 待审核）；
+- 回归请用 tests/run_regression.py core / full（pytest 套件，含数据隔离与崩溃保护）。
+
+原始说明：Test script: verify input validation stability (multi-round voting, confidence, pending review)
+"""
 import subprocess
 import json
 import time

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   common.css · 「知·社区网格」设计地基
+   common.css · 社区事件处理服务设计地基
    冷调极简·苹果风 | 深蓝藏青强调 | 跟随系统深浅切换
    原生 CSS 变量实现（非官方设计系统，属"简约高级"美学）
    ========================================================================== */
@@ -214,6 +214,16 @@ body {
 }
 .btn-cancel:hover { background: var(--surface-2); color: var(--text-1); }
 
+/* 事件列表操作列：小号按钮（撤销 / 已执行） */
+.btn-sm {
+    margin-top: 0;
+    padding: 4px 12px;
+    font-size: 12px;
+    border-radius: var(--radius-pill);
+}
+.btn-cancel-event { background: var(--danger-soft); color: var(--danger); }
+.btn-cancel-event:hover { background: var(--danger); color: #ffffff; }
+
 /* --------------------------------------------------------------------------
    Form Controls
    标签在上、错误在下；focus 用强调色光环
@@ -403,6 +413,7 @@ input:disabled, select:disabled { opacity: 0.6; cursor: not-allowed; }
 .tag-success       { background: var(--success-soft);  color: var(--success); }
 .tag-pending       { background: var(--warning-soft);  color: var(--warning); }
 .tag-accepted      { background: var(--accent-soft);   color: var(--accent); }
+.tag-cancelled     { background: var(--muted-soft);    color: var(--text-2); text-decoration: line-through; }
 .tag-scene-life    { background: var(--danger-soft);   color: var(--danger); }
 .tag-scene-rescue  { background: var(--warning-soft);  color: var(--warning); }
 .tag-scene-normal  { background: var(--accent-soft);   color: var(--accent); }

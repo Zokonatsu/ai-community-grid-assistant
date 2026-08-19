@@ -30,8 +30,8 @@ AUTH_STORE = os.getenv("AUTH_STORE", "file").strip().lower()
 # 数据文件路径
 # 账号/会话数据使用 AES-256-GCM 加密存于 secure/（密钥见环境变量
 # DATA_ENCRYPTION_KEY）；明文 events/tasks 等仍存于 data/。
-# AUTH_STORE=cloudbase 时，用户数据改为读写云存储（cloud_store），
-# 会话数据仍保留本地 secure/sessions.json.enc。
+# AUTH_STORE=cloudbase 时，用户与会话数据均改为读写云存储（cloud_store），
+# 本地 secure/*.enc 不再作为权威（file 模式仍为本地加密文件）。
 # ------------------------------------------------------------------
 DATA_DIR = "./data"
 SECURE_DIR = "./secure"
@@ -99,6 +99,30 @@ def _save_users(data: dict[str, Any]) -> None:
         return
     _save_json("users", USERS_FILE, data)
 
+# ------------------------------------------------------------------
+# 会话数据存储分发（本地加密文件 / 云存储）
+# ------------------------------------------------------------------
+def _load_sessions() -> dict[str, Any]:
+    """读取会话数据，按 AUTH_STORE 分发。
+
+    云存储模式：对象不存在 -> 返回 {}（安全默认，视为空库）；
+    其它异常 -> 抛错 fail-fast，防止误判导致数据覆盖。
+    """
+    if AUTH_STORE == "cloudbase":
+        blob = cloud_store.download(cloud_store.SESSIONS_OBJECT_KEY)
+        if blob is None:
+            return {}
+        return decrypt("sessions", blob)
+    return _load_json("sessions", SESSIONS_FILE)
+
+
+def _save_sessions(data: dict[str, Any]) -> None:
+    """保存会话数据：先 AES-256-GCM 加密，再按 AUTH_STORE 写入本地或云存储。"""
+    if AUTH_STORE == "cloudbase":
+        cloud_store.upload(cloud_store.SESSIONS_OBJECT_KEY, encrypt("sessions", data))
+        return
+    _save_json("sessions", SESSIONS_FILE, data)
+
 
 # ------------------------------------------------------------------
 # 旧版明文数据迁移
@@ -165,11 +189,15 @@ def _migrate_legacy_to_secure() -> None:
 # ------------------------------------------------------------------
 def _init_auth() -> None:
     global _users, _sessions
-    # 首次升级：把旧版明文账号数据迁移到加密存储（幂等，secure 为权威）
+    # 云存储模式：先确保存储桶存在，再加载 users/sessions（桶缺失自动创建）
+    if AUTH_STORE == "cloudbase":
+        cloud_store.ensure_bucket()
+    # 首次升级：把旧版明文账号数据迁移到加密存储（幂等，secure 为权威；
+    # cloudbase 模式跳过，身份数据以云端为准）
     _migrate_legacy_to_secure()
 
     _users = _load_users()
-    _sessions = _load_json("sessions", SESSIONS_FILE)
+    _sessions = _load_sessions()
     _cleanup_expired_sessions()
 
     # 数据兼容：为存量用户补齐住户/定位字段。
@@ -209,6 +237,7 @@ def _init_auth() -> None:
         }
         _users[admin_id] = admin_user
         _save_users(_users)
+        _save_sessions(_sessions)  # 空库重建：会话表一并上云（空表）
         logger.info("系统初始化：已创建默认管理员账号 admin / admin123456，请及时修改密码")
 
 
@@ -287,7 +316,7 @@ def _cleanup_expired_sessions() -> None:
     for t in expired:
         _sessions.pop(t, None)
     if expired:
-        _save_json("sessions", SESSIONS_FILE, _sessions)
+        _save_sessions(_sessions)
         logger.info("清理 %d 条过期会话", len(expired))
 
 
@@ -301,7 +330,8 @@ def register_user(
 ) -> tuple[bool, str, dict[str, Any] | None]:
     """
     注册新用户。
-    居民注册必须填写楼栋/单元/房间号，注册即生效（status=active），可直接提交事件。
+    居民注册必须填写楼栋/单元/房间号，且定位必须在小区范围内（无定位/越界拒绝），
+    注册即生效（status=active），可直接提交事件。
     返回：(success, message, user_dict)
     """
     username = username.strip()
@@ -342,12 +372,15 @@ def register_user(
 
         user_id = secrets.token_hex(16)
         register_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # 定位越界/失败均允许注册（不挡住真实住户），location_status 标记为 unverified，仅供后台展示。
-        if register_lat is not None and register_lng is not None:
-            within, _dist = geo.is_within_community(register_lat, register_lng)
-            location_status = "verified" if within else "unverified"
-        else:
-            location_status = "unverified"
+        # 注册必须在小区范围内：无定位/越界一律拒绝（强制开启，无关闭开关）
+        if register_lat is None or register_lng is None:
+            return False, "注册需先获取定位，请允许浏览器定位权限后重试", None
+        within, _dist = geo.is_within_community(register_lat, register_lng)
+        if not within:
+            return False, "当前定位不在小区范围内，无法注册", None
+
+        # 通过定位校验后注册即生效，定位状态恒为 verified
+        location_status = "verified"
         user = {
             "id": user_id,
             "username": username,
@@ -401,7 +434,7 @@ def login_user(username: str, password: str) -> tuple[bool, str, dict[str, Any] 
             "user_id": user["id"],
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
-        _save_json("sessions", SESSIONS_FILE, _sessions)
+        _save_sessions(_sessions)
 
     return True, "登录成功", {"token": token, "user": _public_user(user)}
 
@@ -419,7 +452,7 @@ def logout_user(token: str | None) -> bool:
     with _auth_lock:
         if token in _sessions:
             del _sessions[token]
-            _save_json("sessions", SESSIONS_FILE, _sessions)
+            _save_sessions(_sessions)
             return True
     return False
 
@@ -445,7 +478,7 @@ def get_current_user(token: str | None) -> dict[str, Any] | None:
         cutoff = (datetime.now() - timedelta(days=_SESSION_TTL_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
         if created < cutoff:
             _sessions.pop(token, None)
-            _save_json("sessions", SESSIONS_FILE, _sessions)
+            _save_sessions(_sessions)
             return None
 
         user = _users.get(session.get("user_id"))

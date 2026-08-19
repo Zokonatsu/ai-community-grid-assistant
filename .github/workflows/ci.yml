@@ -1,0 +1,53 @@
+# ============================================================
+# CI：push / PR 自动回归 + 前端/安全静态检查（全程离线，不注入 secrets）
+# 任务书：docs/coordination/tasks/T20260820-001-TC.md（3.1 冻结契约）
+# 说明：仓库当前为本地，推送到 GitHub 后自动生效。
+# ============================================================
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  regression:
+    name: 回归（core）
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Pytest collection sanity
+        run: python -m pytest tests --collect-only -q
+
+      - name: Run core regression
+        run: python tests/run_regression.py core
+
+  frontend-security:
+    name: 前端/安全检查
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Frontend JS syntax check
+        run: python scripts/check_frontend_js.py
+
+      - name: Secret leak scan
+        run: python scripts/scan_secrets.py

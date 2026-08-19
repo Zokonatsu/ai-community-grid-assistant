@@ -22,8 +22,6 @@ import shutil
 from unittest.mock import patch, MagicMock
 
 # 强制使用 UTF-8 输出，解决 Windows GBK 编码问题
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 # ------------------------------------------------------------------
 # 测试环境准备
@@ -50,18 +48,17 @@ def _restore(src, bak):
     if os.path.exists(bak):
         os.rename(bak, src)
 
-for src, bak in [(ORIGINAL_DATA_DIR, BAK_DATA_DIR), (ORIGINAL_SECURE_DIR, BAK_SECURE_DIR)]:
-    _backup(src, bak)
-os.makedirs(ORIGINAL_DATA_DIR, exist_ok=True)
 os.makedirs(ORIGINAL_SECURE_DIR, exist_ok=True)
 
 # 账号数据加密密钥（64 位 hex，固定测试值），须在 import main（触发 import auth）前设置
 os.environ["DATA_ENCRYPTION_KEY"] = "1" * 64
+os.environ["AUTH_STORE"] = "file"
 
 # ------------------------------------------------------------------
 # 测试结果收集
 # ------------------------------------------------------------------
 class TestResults:
+    __test__ = False  # 防止 pytest 误收集为测试类
     def __init__(self):
         self.passed = []
         self.failed = []
@@ -105,7 +102,7 @@ print("=" * 70)
 print("  测试组 1: 语义校验API调用超时 → 转待审核，消息不丢失")
 print("=" * 70)
 
-async def test_timeout():
+async def case_timeout():
     """
     模拟语义校验超时，验证消息不丢失（转待审核事件）。
 
@@ -212,7 +209,7 @@ print("\n" + "=" * 70)
 print("  测试组 2: 语义校验返回 API异常 → 转待审核，消息不丢失")
 print("=" * 70)
 
-async def test_api_error():
+async def case_api_error():
     """模拟 receive_node 返回 event_type='API异常'"""
     import main as main_module
 
@@ -293,7 +290,7 @@ print("\n" + "=" * 70)
 print("  测试组 3: 语义校验判定无效输入 → 拒绝，不创建任务")
 print("=" * 70)
 
-async def test_invalid_input():
+async def case_invalid_input():
     """模拟 receive_node 返回 event_type='无效输入'"""
     import main as main_module
 
@@ -371,7 +368,7 @@ print("\n" + "=" * 70)
 print("  测试组 4: receive_node 抛异常 → 转待审核，消息不丢失")
 print("=" * 70)
 
-async def test_exception():
+async def case_exception():
     """模拟 receive_node 抛出异常 (如网络错误、JSON解析失败等)"""
     import main as main_module
 
@@ -451,7 +448,7 @@ print("\n" + "=" * 70)
 print("  测试组 5: 正常输入 → 语义校验通过，正常创建任务")
 print("=" * 70)
 
-async def test_normal_flow():
+async def case_normal_flow():
     """模拟 receive_node 返回正常结果，验证流程不受影响"""
     import main as main_module
 
@@ -572,7 +569,7 @@ print("\n" + "=" * 70)
 print("  测试组 6: 代码结构审查 - 验证修复在正确的代码位置")
 print("=" * 70)
 
-def test_code_structure():
+def case_code_structure():
     """审查 main.py 代码结构，确认语义校验的异常处理在创建任务之前"""
     import main as main_module
     import inspect
@@ -636,28 +633,43 @@ def test_code_structure():
 # ==================================================================
 async def run_all_tests():
     """运行所有异步测试"""
-    await test_timeout()
-    await test_api_error()
-    await test_invalid_input()
-    await test_exception()
-    await test_normal_flow()
-    test_code_structure()
+    await case_timeout()
+    await case_api_error()
+    await case_invalid_input()
+    await case_exception()
+    await case_normal_flow()
+    case_code_structure()
 
-
-if __name__ == "__main__":
+def test_suite():
+    """pytest 收集入口：运行全部异步/同步校验并断言（数据隔离由 conftest/__main__ 保证）。"""
     asyncio.run(run_all_tests())
-
-    # 最终汇总
     all_pass = results.summary()
-
-    print()
     if all_pass:
         print("🎉 全部测试通过！语义校验超时/异常消息不丢失。")
     else:
         print("⚠️  部分测试失败，详见上方详情。")
+    assert all_pass, "存在失败项，详见上方明细"
 
-    # 恢复被备份的 data/secure 目录
+
+def main():
     for src, bak in [(ORIGINAL_DATA_DIR, BAK_DATA_DIR), (ORIGINAL_SECURE_DIR, BAK_SECURE_DIR)]:
-        _restore(src, bak)
+        _backup(src, bak)
+    os.makedirs(ORIGINAL_DATA_DIR, exist_ok=True)
+    os.makedirs(ORIGINAL_SECURE_DIR, exist_ok=True)
+    code = 1
+    try:
+        try:
+            test_suite()
+            code = 0
+        except AssertionError:
+            code = 1
+    finally:
+        for src, bak in [(ORIGINAL_DATA_DIR, BAK_DATA_DIR), (ORIGINAL_SECURE_DIR, BAK_SECURE_DIR)]:
+            _restore(src, bak)
+    sys.exit(code)
 
-    sys.exit(0 if all_pass else 1)
+
+if __name__ == "__main__":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
+    main()

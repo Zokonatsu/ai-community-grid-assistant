@@ -9,7 +9,7 @@
 <body>
     <!-- 顶部栏：左标题 + 右用户区 -->
     <div class="topbar">
-        <div class="topbar-title">
+        <div class="topbar-title" id="comm-title">
             知·社区网格
             <span class="topbar-sub">社区事件提交与派单</span>
         </div>
@@ -21,10 +21,6 @@
                 <span class="role-tag" id="user-role">-</span>
             </div>
             <div class="user-actions">
-                <a id="admin-link" style="display:none;" href="/admin.html">
-                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
-                    <span>进入管理后台</span>
-                </a>
                 <a onclick="logout()">
                     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
                     <span>退出登录</span>
@@ -161,11 +157,28 @@
 
     <script>
         const API_BASE = '';
+
+        // 社区名称动态化：标题/页头随后台设置更新
+        (function () {
+            fetch(API_BASE + '/api/community')
+                .then(r => (r.ok ? r.json() : null))
+                .then(cfg => {
+                    if (cfg && cfg.name) {
+                        var t = cfg.name + '网格';
+                        document.title = t;
+                        var el = document.getElementById('comm-title');
+                        if (el) el.textContent = t;
+                    }
+                })
+                .catch(function () {});
+        })();
         let pollTimer = null;
         let confirmTimer = null;
         let confirmSeconds = 5;
         let currentDesc = '';
         let currentEmergencyType = '';
+        let listPollTimer = null;
+        const POLL_LIST_MS = 15000;
 
         // ------------------------------------------------------------------
         // 认证相关
@@ -262,18 +275,17 @@
                 }
                 const user = await res.json();
                 window.currentUser = user;
+                // 管理员不进入事件提交页，直接进入管理后台
+                if (user.role === 'admin') {
+                    window.location.href = '/admin.html';
+                    return false;
+                }
                 // 显示用户栏
                 document.getElementById('userbar').style.display = 'flex';
                 document.getElementById('user-name').textContent = user.real_name || user.username;
                 const roleEl = document.getElementById('user-role');
-                if (user.role === 'admin') {
-                    roleEl.textContent = '街道管理员';
-                    roleEl.className = 'role-tag admin';
-                    document.getElementById('admin-link').style.display = 'inline';
-                } else {
-                    roleEl.textContent = '居民';
-                    roleEl.className = 'role-tag resident';
-                }
+                roleEl.textContent = '居民';
+                roleEl.className = 'role-tag resident';
                 return true;
             } catch (e) {
                 // 网络异常时暂不跳转，允许离线查看已缓存内容
@@ -641,13 +653,82 @@
             pollTimer = setInterval(check, 3000);
         }
 
-        async function loadList() {
+        // ------------------------------------------------------------------
+        // 事件撤销：操作列（提交后 5 分钟内可撤销，不看事件状态，
+        //           已撤销除外；超过 5 分钟 -> 灰色「已执行」）
+        // ------------------------------------------------------------------
+        let cancelTickTimer = null;
+        const CANCEL_WINDOW_MS = 300 * 1000;
+
+        function eventExpired(createdAt) {
+            if (!createdAt) return true;
+            const t = new Date(String(createdAt).replace(' ', 'T'));
+            if (isNaN(t.getTime())) return true;
+            return (Date.now() - t.getTime()) > CANCEL_WINDOW_MS;
+        }
+
+        function renderActionCell(e) {
+            if (e.status === '已撤销') {
+                return '<span class="tag tag-cancelled">已撤销</span>';
+            }
+            if (!eventExpired(e.created_at)) {
+                return `<button type="button" class="btn btn-sm btn-cancel-event" onclick="cancelEvent('${e.event_id}')">撤销</button>`;
+            }
+            return '<button type="button" class="btn btn-sm" disabled title="已超过可撤销时限">已执行</button>';
+        }
+
+        async function cancelEvent(eventId) {
+            try {
+                const res = await fetch(`${API_BASE}/api/events/${eventId}/cancel`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(false)
+                });
+                if (checkUnauthorized(res)) return;
+                let detail = '';
+                try {
+                    const data = await res.json();
+                    detail = data.detail || data.error || '';
+                } catch (e) { /* 非 JSON 响应时忽略 */ }
+                if (res.ok) {
+                    loadList();
+                } else {
+                    alert(detail || `撤销失败（HTTP ${res.status}）`);
+                    loadList();
+                }
+            } catch (e) {
+                alert('网络请求失败，请稍后重试');
+            }
+        }
+
+        // 5 分钟边界自动变灰：本地定时器按 created_at 周期重算操作列（≤60 秒）
+        function startCancelTick() {
+            if (cancelTickTimer) clearInterval(cancelTickTimer);
+            cancelTickTimer = setInterval(() => {
+                const events = window.userEvents || [];
+                events.forEach(e => {
+                    const row = document.querySelector(`#listContainer tr[data-event-id="${e.event_id}"]`);
+                    if (!row) return;
+                    const td = row.querySelector('td[data-label="操作"]');
+                    if (td) td.innerHTML = renderActionCell(e);
+                });
+            }, 30000);
+        }
+
+        async function loadList(quiet = false) {
             const container = document.getElementById('listContainer');
             try {
                 const res = await fetch(`${API_BASE}/api/events`, {
                     headers: getAuthHeaders(false)
                 });
                 if (checkUnauthorized(res)) return;
+                if (!res.ok) {
+                    // 轮询失败（非 401）：保留现有列表内容，不覆盖
+                    if (quiet) {
+                        console.warn(`列表轮询失败（HTTP ${res.status}），保留当前列表`);
+                        return;
+                    }
+                    // 非轮询路径保持原有行为（交由下方 json 解析决定空态/失败态）
+                }
                 const events = await res.json();
                 window.userEvents = Array.isArray(events) ? events : [];
                 if (!Array.isArray(events) || events.length === 0) {
@@ -666,6 +747,7 @@
                     return '';
                 };
                 const statusClass = s => {
+                    if (s === '已撤销') return 'tag-cancelled';
                     if (s === '处理中') return 'tag-processing';
                     if (s === '处理超时' || s === '处理失败' || s === '已拒绝') return 'tag-failed';
                     if (s === '已完成' || s === '已派单') return 'tag-success';
@@ -681,7 +763,7 @@
                     return `<span class="tag ${statusClass(e.status)}">${e.status || '-'}</span>`;
                 };
                 const rows = events.map(e => `
-                    <tr>
+                    <tr data-event-id="${e.event_id}">
                         <td data-label="创建时间">${e.created_at || '-'}</td>
                         <td data-label="描述">${e.description || '-'}</td>
                         <td data-label="类型">${e.event_type || '-'}</td>
@@ -689,6 +771,7 @@
                         <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${e.scene_tag || '-'}</span></td>
                         <td data-label="处理部门">${e.handler || '-'}</td>
                         <td data-label="状态">${statusCell(e)}</td>
+                        <td data-label="操作">${renderActionCell(e)}</td>
                     </tr>
                 `).join('');
                 container.innerHTML = `
@@ -702,19 +785,48 @@
                                 <th>场景标签</th>
                                 <th>处理部门</th>
                                 <th>状态</th>
+                                <th>操作</th>
                             </tr>
                         </thead>
                         <tbody>${rows}</tbody>
                     </table>
                 `;
+                startCancelTick();
             } catch (e) {
+                if (quiet) {
+                    console.warn('列表轮询异常，保留当前列表', e);
+                    return;
+                }
                 container.innerHTML = '<div class="empty">加载失败</div>';
             }
         }
 
-        // 页面初始化：先认证，再加载数据
+        // ------------------------------------------------------------------
+        // 列表轮询：管理员回复后红点自动出现（15 秒自动刷新，复用 loadList，
+        //           不改渲染逻辑；与 30 秒撤销按钮重算定时器并存）
+        // ------------------------------------------------------------------
+        function startListPolling() {
+            if (listPollTimer) clearInterval(listPollTimer);
+            listPollTimer = setInterval(() => {
+                // 回复弹窗打开期间不触发刷新；页面不可见时暂停（可选）
+                const overlay = document.getElementById('replyOverlay');
+                if (overlay && !overlay.classList.contains('hidden')) return;
+                if (document.hidden) return;
+                loadList(true);
+            }, POLL_LIST_MS);
+        }
+
+        // 页面卸载时清理轮询定时器
+        window.addEventListener('beforeunload', () => {
+            if (listPollTimer) clearInterval(listPollTimer);
+        });
+
+        // 页面初始化：先认证，再加载数据；加载成功后启动 15 秒列表轮询
         initAuth().then(ok => {
-            if (ok) loadList();
+            if (ok) {
+                loadList();
+                startListPolling();
+            }
         });
     </script>
 </body>
