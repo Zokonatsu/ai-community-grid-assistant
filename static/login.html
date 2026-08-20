@@ -76,7 +76,7 @@
                     <label for="reg-locate-btn">当前位置定位</label>
                     <div class="locate-row">
                         <button type="button" class="btn" id="reg-locate-btn" onclick="locateRegister()">获取定位</button>
-                        <span id="reg-locate-status" class="locate-status">未定位（必须定位且需在小区范围内才能注册）</span>
+                        <span id="reg-locate-status" class="locate-status">未定位（有定位时需在小区范围内）</span>
                     </div>
                     <input type="hidden" id="reg-lat">
                     <input type="hidden" id="reg-lng">
@@ -176,7 +176,7 @@
                 document.getElementById('reg-lng').value = pos.lng;
                 statusEl.textContent = `已定位（${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}）`;
             } else {
-                statusEl.textContent = '定位不可用（需 HTTPS 或 localhost），未定位无法注册，请允许定位权限后重试';
+                statusEl.textContent = '定位不可用（需 HTTPS 或 localhost）；若社区已开放无定位注册，可直接点注册';
             }
         }
 
@@ -255,10 +255,10 @@
                 errorEl.classList.remove('hidden');
                 return;
             }
+            const statusEl = document.getElementById('reg-locate-status');
             if (register_lat === null || register_lng === null) {
-                errorEl.textContent = '注册需先获取定位，请允许浏览器定位权限后重试';
-                errorEl.classList.remove('hidden');
-                return;
+                // 定位不可用时不拦截：是否允许无定位注册由后端 COMMUNITY_REQUIRE_LOCATION 决定
+                statusEl.textContent = '未获取定位，将按无定位提交（若社区要求定位会被拒绝）';
             }
 
             btn.disabled = true;

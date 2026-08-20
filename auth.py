@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import cloud_store
+import config
 import geo
 from secure_store import decrypt, encrypt, load_encrypted, save_encrypted
 
@@ -372,15 +373,18 @@ def register_user(
 
         user_id = secrets.token_hex(16)
         register_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # 注册必须在小区范围内：无定位/越界一律拒绝（强制开启，无关闭开关）
-        if register_lat is None or register_lng is None:
-            return False, "注册需先获取定位，请允许浏览器定位权限后重试", None
-        within, _dist = geo.is_within_community(register_lat, register_lng)
-        if not within:
-            return False, "当前定位不在小区范围内，无法注册", None
-
-        # 通过定位校验后注册即生效，定位状态恒为 verified
-        location_status = "verified"
+        # 注册定位校验（默认开启，可用 COMMUNITY_REQUIRE_LOCATION=false 关闭）
+        # 开启：必须带定位且在小区范围内，否则拒绝（原产品规则，浏览器定位需 HTTPS/localhost）
+        # 关闭：允许无定位注册（暂无 HTTPS 的环境临时开放注册用）
+        if config.COMMUNITY_REQUIRE_LOCATION:
+            if register_lat is None or register_lng is None:
+                return False, "注册需先获取定位，请允许浏览器定位权限后重试", None
+            within, _dist = geo.is_within_community(register_lat, register_lng)
+            if not within:
+                return False, "当前定位不在小区范围内，无法注册", None
+            location_status = "verified"
+        else:
+            location_status = "unverified"
         user = {
             "id": user_id,
             "username": username,
