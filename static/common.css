@@ -533,9 +533,7 @@ input:disabled, select:disabled { opacity: 0.6; cursor: not-allowed; }
     position: relative;
     /* 内容过多时限高，避免弹窗铺满屏幕导致关闭按钮不可见 */
     max-height: calc(100vh - 40px);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
+    overflow-y: auto;
 }
 
 .modal-title {
@@ -605,9 +603,8 @@ input:disabled, select:disabled { opacity: 0.6; cursor: not-allowed; }
     word-break: break-word;
     margin-top: 16px;
     /* 内容过长时内部滚动，标题与关闭按钮保持可见 */
+    max-height: 50vh;
     overflow-y: auto;
-    min-height: 0;
-    flex: 1 1 auto;
 }
 
 /* 提交确认弹窗：标签 + 值 行 */
