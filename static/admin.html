@@ -874,7 +874,7 @@
                                 <textarea id="reply-text-${first.created_at}" placeholder="请输入回复内容">${savedReplies[first.created_at] || ''}</textarea>
                                 ${transferControl(first)}
                                 <div class="reply-actions">
-                                    <button class="btn-sm btn-accept" onclick="acceptWithReply('${first.created_at}')">受理</button>
+                                    ${first.handler === '人工部' ? '' : `<button class="btn-sm btn-accept" onclick="acceptWithReply('${first.created_at}')">受理</button>`}
                                     <button class="btn-sm btn-reject" onclick="rejectEvent('${first.created_at}')">拒绝</button>
                                 </div>
                             </div>
@@ -902,7 +902,7 @@
                                         <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容">${savedReplies[e.created_at] || ''}</textarea>
                                         ${transferControl(e)}
                                         <div class="reply-actions">
-                                            <button class="btn-sm btn-accept" onclick="acceptWithReply('${e.created_at}')">受理</button>
+                                            ${e.handler === '人工部' ? '' : `<button class="btn-sm btn-accept" onclick="acceptWithReply('${e.created_at}')">受理</button>`}
                                             <button class="btn-sm btn-reject" onclick="rejectEvent('${e.created_at}')">拒绝</button>
                                         </div>
                                     </div>
@@ -946,7 +946,7 @@
                             <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容">${savedReplies[e.created_at] || ''}</textarea>
                             ${transferControl(e)}
                             <div class="reply-actions">
-                                <button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>
+                                ${e.handler === '人工部' ? '' : `<button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>`}
                                 <button class="btn-sm btn-reject" onclick="rejectEvent('${e.created_at}')">拒绝</button>
                             </div>
                         </div>
@@ -1433,9 +1433,11 @@
 
         // 加载数据
         async function loadData(force = false) {
-            // 自动刷新时若管理员正在回复框输入，跳过本次刷新，避免打字被重建 DOM 打断
+            // 自动刷新时若管理员正在回复框输入或选择转交部门，跳过本次刷新，避免被打断
             const activeEl = document.activeElement;
-            if (!force && activeEl && activeEl.tagName === 'TEXTAREA' && activeEl.id && activeEl.id.startsWith('reply-text-')) {
+            const typingInReply = activeEl && activeEl.tagName === 'TEXTAREA' && activeEl.id && activeEl.id.startsWith('reply-text-');
+            const pickingTransfer = activeEl && activeEl.tagName === 'SELECT' && activeEl.id && activeEl.id.startsWith('transfer-select-');
+            if (!force && (typingInReply || pickingTransfer)) {
                 return;
             }
             try {
