@@ -1433,11 +1433,11 @@ async def reject_event(
         task = _tasks.get(event_id)
         if task is None:
             raise HTTPException(status_code=404, detail="事件不存在")
-        if task.get("status") == "已撤销":
-            raise HTTPException(status_code=400, detail="事件已撤销")
+        if task.get("status") in ("已撤销", "拒绝"):
+            raise HTTPException(status_code=400, detail="事件已撤销或已拒绝")
         if task.get("status") not in ("待审核", "已受理", "已完成"):
             raise HTTPException(status_code=400, detail="当前状态不可拒绝")
-        task["status"] = "已撤销"
+        task["status"] = "拒绝"
         task["reviewer_id"] = current_user.get("id", "")
         reply_entry = {
             "content": f"【已拒绝】{request.reply}",
@@ -1458,7 +1458,7 @@ async def reject_event(
             "urgency": task.get("urgency", ""),
             "scene_tag": task.get("scene_tag", ""),
             "handler": task.get("handler", ""),
-            "status": "已撤销",
+            "status": "拒绝",
             "created_at": "",
             "user_id": task.get("user_id", ""),
             "confidence": task.get("confidence", ""),

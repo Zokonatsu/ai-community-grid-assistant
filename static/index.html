@@ -754,6 +754,7 @@
                     return '';
                 };
                 const statusClass = s => {
+                    if (s === '拒绝') return 'tag-failed';
                     if (s === '已撤销') return 'tag-cancelled';
                     if (s === '处理中') return 'tag-processing';
                     if (s === '处理超时' || s === '处理失败') return 'tag-failed';

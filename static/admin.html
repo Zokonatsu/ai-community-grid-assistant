@@ -555,6 +555,7 @@
                     <option value="处理超时">处理超时</option>
                     <option value="处理失败">处理失败</option>
                     <option value="已撤销">已撤销</option>
+                    <option value="拒绝">拒绝</option>
                 </select>
                 <label>类型：</label>
                 <select id="filterType">
@@ -776,6 +777,7 @@
         function statusClass(s) {
             if (s === '处理中') return 'tag-processing';
             if (s === '处理超时' || s === '处理失败') return 'tag-failed';
+            if (s === '拒绝') return 'tag-failed';
             if (s === '已撤销') return 'tag-cancelled';
             if (s === '已完成' || s === '已派单') return 'tag-success';
             if (s === '待审核') return 'tag-pending';
@@ -1348,6 +1350,7 @@
                     <td data-label="紧急程度"><span class="tag ${urgencyClass(e.urgency)}">${e.urgency || '-'}</span></td>
                     <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${e.scene_tag || '-'}</span></td>
                     <td data-label="处理部门">${e.handler || '-'}</td>
+                    <td data-label="回复">${e.reply || '-'}</td>
                     <td data-label="位置">${locationCell(e)}</td>
                     <td data-label="状态"><span class="tag ${statusClass(e.status)}">${e.status || '-'}</span></td>
                 </tr>
@@ -1363,6 +1366,7 @@
                             <th onclick="sortBy('urgency')">紧急程度<span class="sort-indicator">${sortIndicator('urgency')}</span></th>
                             <th onclick="sortBy('scene_tag')">场景标签<span class="sort-indicator">${sortIndicator('scene_tag')}</span></th>
                             <th onclick="sortBy('handler')">处理部门<span class="sort-indicator">${sortIndicator('handler')}</span></th>
+                            <th>回复</th>
                             <th>位置</th>
                             <th onclick="sortBy('status')">状态<span class="sort-indicator">${sortIndicator('status')}</span></th>
                         </tr>
