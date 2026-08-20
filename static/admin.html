@@ -551,7 +551,7 @@
                     <option value="常规">常规</option>
                 </select>
                 <button class="btn-sm" onclick="applyFilters()">筛选</button>
-                <button class="btn-sm btn-refresh" onclick="loadData()">
+                <button class="btn-sm btn-refresh" onclick="loadData(true)">
                     <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.2 6.2A4.8 4.8 0 1 0 13 8"/><path d="M13.2 2.8V6h-3.2"/></svg>
                     刷新
                 </button>
@@ -791,22 +791,28 @@
                 collapsedState[el.id] = el.classList.contains('visible');
             });
 
-            // 保存已受理输入框中用户正在输入的内容，避免定时刷新时丢失
+            // 保存所有回复输入框中正在输入的内容，避免定时刷新时丢失
             const savedReplies = {};
-            const acceptedContainer = document.getElementById('reviewAcceptedContainer');
-            acceptedContainer.querySelectorAll('textarea[id^="reply-text-"]').forEach(textarea => {
+            const savedReplyBoxVisible = {};
+            document.querySelectorAll('textarea[id^="reply-text-"]').forEach(textarea => {
                 const key = textarea.id.replace('reply-text-', '');
                 if (textarea.value.trim()) {
                     savedReplies[key] = textarea.value;
                 }
             });
+            document.querySelectorAll('[id^="reply-box-"]').forEach(el => {
+                if (el.classList.contains('visible')) {
+                    savedReplyBoxVisible[el.id] = true;
+                }
+            });
+            const acceptedContainer = document.getElementById('reviewAcceptedContainer');
 
             // 保存当前焦点位置和光标，避免重建DOM后光标消失
             let focusId = null;
             let selStart = 0;
             let selEnd = 0;
             const activeEl = document.activeElement;
-            if (activeEl && acceptedContainer.contains(activeEl) && activeEl.tagName === 'TEXTAREA') {
+            if (activeEl && activeEl.tagName === 'TEXTAREA' && activeEl.id && activeEl.id.startsWith('reply-text-')) {
                 focusId = activeEl.id;
                 selStart = activeEl.selectionStart;
                 selEnd = activeEl.selectionEnd;
@@ -843,8 +849,8 @@
                             <div class="review-actions">
                                 <button class="btn-sm btn-accept" onclick="acceptEvent('${first.created_at}')">受理</button>
                             </div>
-                            <div class="reply-box" id="reply-box-${first.created_at}">
-                                <textarea id="reply-text-${first.created_at}" placeholder="请输入回复内容"></textarea>
+                            <div class="reply-box${savedReplyBoxVisible['reply-box-' + first.created_at] ? ' visible' : ''}" id="reply-box-${first.created_at}">
+                                <textarea id="reply-text-${first.created_at}" placeholder="请输入回复内容">${savedReplies[first.created_at] || ''}</textarea>
                                 <button class="btn-sm btn-done" onclick="submitReply('${first.created_at}')">提交回复</button>
                             </div>
                     `;
@@ -869,8 +875,8 @@
                                     <div class="review-actions">
                                         <button class="btn-sm btn-accept" onclick="acceptEvent('${e.created_at}')">受理</button>
                                     </div>
-                                    <div class="reply-box" id="reply-box-${e.created_at}">
-                                        <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容"></textarea>
+                                    <div class="reply-box${savedReplyBoxVisible['reply-box-' + e.created_at] ? ' visible' : ''}" id="reply-box-${e.created_at}">
+                                        <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容">${savedReplies[e.created_at] || ''}</textarea>
                                         <button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>
                                     </div>
                                 </div>
@@ -1186,7 +1192,7 @@
                 const data = await res.json();
                 if (data.success) {
                     // 成功受理后刷新数据
-                    await loadData();
+                    await loadData(true);
                 }
             } catch (e) {
                 alert('网络请求失败');
@@ -1239,7 +1245,7 @@
                 const data = await res.json();
                 if (data.success) {
                     alert('回复提交成功');
-                    await loadData();
+                    await loadData(true);
                 }
             } catch (e) {
                 alert('网络请求失败');
@@ -1362,7 +1368,12 @@
         }
 
         // 加载数据
-        async function loadData() {
+        async function loadData(force = false) {
+            // 自动刷新时若管理员正在回复框输入，跳过本次刷新，避免打字被重建 DOM 打断
+            const activeEl = document.activeElement;
+            if (!force && activeEl && activeEl.tagName === 'TEXTAREA' && activeEl.id && activeEl.id.startsWith('reply-text-')) {
+                return;
+            }
             try {
                 const res = await fetch(`${API_BASE}/api/events`, {
                     headers: getAuthHeaders(false)
@@ -1411,7 +1422,7 @@
                 loadData();
                 loadCommunitySettings();
                 // 每 10 秒自动刷新一次
-                setInterval(loadData, 10000);
+                setInterval(() => loadData(false), 10000);
             }
         });
     </script>
