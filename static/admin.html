@@ -254,6 +254,14 @@
         .reply-box.visible { display: block; }
         .reply-box textarea { min-height: 60px; }
         .reply-box .btn-sm { margin-top: 8px; }
+        .btn-reject { background: var(--danger); }
+        .btn-reject:hover { background: var(--danger); filter: brightness(0.92); }
+        .btn-transfer { background: var(--warning); }
+        .btn-transfer:hover { background: var(--warning); filter: brightness(0.92); }
+        .transfer-row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+        .transfer-row select { flex: 1; padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); font-size: 13px; background: var(--surface); color: var(--text-1); }
+        .reply-actions { display: flex; gap: 8px; margin-top: 8px; }
+        .reply-actions .btn-sm { margin-top: 0; }
 
         /* ---- 同一用户多事件折叠 ---- */
         .review-collapsed { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border-strong); }
@@ -778,7 +786,8 @@
                 const room = (e.beneficiary_building || '') + (e.beneficiary_unit || '') + (e.beneficiary_room || '');
                 return `<div class="review-beneficiary">代人办：${escapeHtml(e.beneficiary_name || '-')} · ${escapeHtml(e.beneficiary_phone || '-')} · ${escapeHtml(room)}</div>`;
             }
-            return `<div class="review-beneficiary">本人：${escapeHtml(e.user_name || '-')}</div>`;
+            const room = (e.user_building || '') + (e.user_unit || '') + (e.user_room || '');
+            return `<div class="review-beneficiary">用户：${escapeHtml(e.user_name || '-')} · ${escapeHtml(e.user_phone || '-')} · ${escapeHtml(room || '未填住址')}</div>`;
         }
 
         function renderReviewLists() {
@@ -846,12 +855,13 @@
                             </div>
                             <div class="review-desc">${first.description || '-'}</div>
                             ${beneficiaryLine(first)}
-                            <div class="review-actions">
-                                <button class="btn-sm btn-accept" onclick="acceptEvent('${first.created_at}')">受理</button>
-                            </div>
-                            <div class="reply-box${savedReplyBoxVisible['reply-box-' + first.created_at] ? ' visible' : ''}" id="reply-box-${first.created_at}">
+                            <div class="reply-box visible" id="reply-box-${first.created_at}">
                                 <textarea id="reply-text-${first.created_at}" placeholder="请输入回复内容">${savedReplies[first.created_at] || ''}</textarea>
-                                <button class="btn-sm btn-done" onclick="submitReply('${first.created_at}')">提交回复</button>
+                                ${transferControl(first)}
+                                <div class="reply-actions">
+                                    <button class="btn-sm btn-accept" onclick="acceptWithReply('${first.created_at}')">受理</button>
+                                    <button class="btn-sm btn-reject" onclick="rejectEvent('${first.created_at}')">拒绝</button>
+                                </div>
                             </div>
                     `;
                     if (rest.length > 0) {
@@ -872,12 +882,13 @@
                                     </div>
                                     <div class="review-desc">${e.description || '-'}</div>
                                     ${beneficiaryLine(e)}
-                                    <div class="review-actions">
-                                        <button class="btn-sm btn-accept" onclick="acceptEvent('${e.created_at}')">受理</button>
-                                    </div>
-                                    <div class="reply-box${savedReplyBoxVisible['reply-box-' + e.created_at] ? ' visible' : ''}" id="reply-box-${e.created_at}">
+                                    <div class="reply-box visible" id="reply-box-${e.created_at}">
                                         <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容">${savedReplies[e.created_at] || ''}</textarea>
-                                        <button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>
+                                        ${transferControl(e)}
+                                        <div class="reply-actions">
+                                            <button class="btn-sm btn-accept" onclick="acceptWithReply('${e.created_at}')">受理</button>
+                                            <button class="btn-sm btn-reject" onclick="rejectEvent('${e.created_at}')">拒绝</button>
+                                        </div>
                                     </div>
                                 </div>
                             `;
@@ -916,7 +927,11 @@
                         ` : ''}
                         <div class="reply-box visible" id="reply-box-${e.created_at}">
                             <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容">${savedReplies[e.created_at] || ''}</textarea>
-                            <button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>
+                            ${transferControl(e)}
+                            <div class="reply-actions">
+                                <button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>
+                                <button class="btn-sm btn-reject" onclick="rejectEvent('${e.created_at}')">拒绝</button>
+                            </div>
                         </div>
                     </div>
                 `).join('');
@@ -1199,6 +1214,91 @@
             }
         }
 
+        // 转交控件：仅人工部事件显示（转交需填写回复）
+        function transferControl(e) {
+            if (e.handler !== '人工部') return '';
+            const depts = ['物业部','环卫部','安保部','调解员','工程部','综合部'];
+            return `<div class="transfer-row">
+                <select id="transfer-select-${e.created_at}">
+                    ${depts.map(d => `<option value="${d}">转交至${d}</option>`).join('')}
+                </select>
+                <button type="button" class="btn-sm btn-transfer" onclick="transferEvent('${e.created_at}')">转交</button>
+            </div>`;
+        }
+
+        async function acceptWithReply(createdAt) {
+            const event = allEvents.find(e => e.created_at === createdAt);
+            if (!event || !event.event_id) { alert('找不到事件ID，请刷新页面'); return; }
+            const textEl = document.getElementById(`reply-text-${createdAt}`);
+            const reply = textEl ? textEl.value.trim() : '';
+            if (!reply) { alert('受理前请先填写回复内容'); return; }
+            try {
+                const res = await fetch(`${API_BASE}/api/events/${event.event_id}/accept`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ reply })
+                });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) { const err = await res.json(); alert(err.detail || '受理失败'); return; }
+                const data = await res.json();
+                if (data.success) {
+                    if (textEl) textEl.value = '';
+                    alert('受理成功');
+                    await loadData(true);
+                }
+            } catch (e) { alert('网络请求失败'); }
+        }
+
+        async function rejectEvent(createdAt) {
+            const event = allEvents.find(e => e.created_at === createdAt);
+            if (!event || !event.event_id) { alert('找不到事件ID，请刷新页面'); return; }
+            const textEl = document.getElementById(`reply-text-${createdAt}`);
+            const reply = textEl ? textEl.value.trim() : '';
+            if (!reply) { alert('拒绝前请先填写回复原因'); return; }
+            if (!confirm('确定拒绝该事件吗？拒绝后状态将变为已撤销。')) return;
+            try {
+                const res = await fetch(`${API_BASE}/api/events/${event.event_id}/reject`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ reply })
+                });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) { const err = await res.json(); alert(err.detail || '拒绝失败'); return; }
+                const data = await res.json();
+                if (data.success) {
+                    if (textEl) textEl.value = '';
+                    alert('已拒绝，事件状态更新为已撤销');
+                    await loadData(true);
+                }
+            } catch (e) { alert('网络请求失败'); }
+        }
+
+        async function transferEvent(createdAt) {
+            const event = allEvents.find(e => e.created_at === createdAt);
+            if (!event || !event.event_id) { alert('找不到事件ID，请刷新页面'); return; }
+            const textEl = document.getElementById(`reply-text-${createdAt}`);
+            const reply = textEl ? textEl.value.trim() : '';
+            if (!reply) { alert('转交前请先填写转交说明'); return; }
+            const sel = document.getElementById(`transfer-select-${createdAt}`);
+            const handler = sel ? sel.value : '';
+            if (!handler) { alert('请选择转交部门'); return; }
+            try {
+                const res = await fetch(`${API_BASE}/api/events/${event.event_id}/transfer`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ handler, reply })
+                });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) { const err = await res.json(); alert(err.detail || '转交失败'); return; }
+                const data = await res.json();
+                if (data.success) {
+                    if (textEl) textEl.value = '';
+                    alert('已转交至 ' + data.data.handler);
+                    await loadData(true);
+                }
+            } catch (e) { alert('网络请求失败'); }
+        }
+
         function toggleReplyBox(createdAt) {
             const box = document.getElementById(`reply-box-${createdAt}`);
             if (box) box.classList.toggle('visible');
@@ -1244,6 +1344,7 @@
                 }
                 const data = await res.json();
                 if (data.success) {
+                    if (textEl) textEl.value = '';
                     alert('回复提交成功');
                     await loadData(true);
                 }
@@ -1308,7 +1409,7 @@
             if (e.beneficiary_type === 'proxy') {
                 return '<span class="tag tag-warning">代办</span> ';
             }
-            return '<span class="tag tag-muted">本人</span> ';
+            return '<span class="tag tag-muted">' + escapeHtml(e.user_name || '本人') + '</span> ';
         }
 
         // 事件位置单元格：坐标 + 距中心米数 + 高德地图链接 + 定位状态徽章（仅管理员可见该数据）

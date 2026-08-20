@@ -260,6 +260,9 @@ def _build_task(
         "user_name": user.get("real_name", ""),
         "user_phone": user.get("phone", ""),
         "user_id_card": user.get("id_card", ""),
+        "user_building": user.get("building", ""),
+        "user_unit": user.get("unit", ""),
+        "user_room": user.get("room", ""),
         "reply": "",
         "event_lat": lat,
         "event_lng": lng,
@@ -636,6 +639,9 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
                 "user_name": task.get("user_name", ""),
                 "user_phone": task.get("user_phone", ""),
                 "user_id_card": task.get("user_id_card", ""),
+                "user_building": task.get("user_building", ""),
+                "user_unit": task.get("user_unit", ""),
+                "user_room": task.get("user_room", ""),
                 "beneficiary_type": task.get("beneficiary_type", "self"),
                 "beneficiary_name": task.get("beneficiary_name", ""),
                 "beneficiary_phone": task.get("beneficiary_phone", ""),
@@ -1323,13 +1329,23 @@ async def cancel_event(
 # ------------------------------------------------------------------
 # API 端点：POST /api/events/{event_id}/accept
 # ------------------------------------------------------------------
+class AcceptRequest(BaseModel):
+    reply: str = Field(default="", description="受理时填写的回复内容（可选）")
+
+
+# 可转交的处理部门白名单（与 dispatch_agent.EVENT_TYPE_TO_HANDLER 保持一致）
+VALID_HANDLERS = ("物业部", "环卫部", "安保部", "调解员", "工程部", "综合部")
+
+
 @app.post("/api/events/{event_id}/accept")
 async def accept_event(
     event_id: str,
+    request: AcceptRequest | None = None,
     current_user: dict[str, Any] = Depends(get_admin_dependency),
 ) -> dict[str, Any]:
     """
     后台人员受理待审核事件，将状态更新为"已受理"。
+    可选携带 reply：受理时一并填写回复内容。
     """
     async with _task_lock:
         task = _tasks.get(event_id)
@@ -1339,6 +1355,16 @@ async def accept_event(
             raise HTTPException(status_code=400, detail="仅待审核事件可受理")
         task["status"] = "已受理"
         task["reviewer_id"] = current_user.get("id", "")
+        if request and (request.reply or "").strip():
+            reply_entry = {
+                "content": request.reply.strip(),
+                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "reviewer_id": current_user.get("id", ""),
+                "reviewer_name": current_user.get("real_name", ""),
+            }
+            task.setdefault("replies", []).append(reply_entry)
+            task["reply"] = request.reply.strip()
+            task["completed_at"] = reply_entry["created_at"]
         _save_tasks(_tasks)
 
     # 追加记录到 events.jsonl
@@ -1374,6 +1400,131 @@ async def accept_event(
 # ------------------------------------------------------------------
 class ReplyRequest(BaseModel):
     reply: str = Field(..., min_length=1, description="后台回复内容")
+
+
+class TransferRequest(BaseModel):
+    handler: str = Field(..., min_length=1, description="转交的处理部门")
+    reply: str = Field(..., min_length=1, description="转交说明（必填）")
+
+
+@app.post("/api/events/{event_id}/reject")
+async def reject_event(
+    event_id: str,
+    request: ReplyRequest,
+    current_user: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    """
+    管理员拒绝事件（必须写回复），状态改为"已撤销"。
+    用户端与管理员后台的事件列表均显示为已撤销。
+    """
+    async with _task_lock:
+        task = _tasks.get(event_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="事件不存在")
+        if task.get("status") == "已撤销":
+            raise HTTPException(status_code=400, detail="事件已撤销")
+        if task.get("status") not in ("待审核", "已受理", "已完成"):
+            raise HTTPException(status_code=400, detail="当前状态不可拒绝")
+        task["status"] = "已撤销"
+        task["reviewer_id"] = current_user.get("id", "")
+        reply_entry = {
+            "content": f"【已拒绝】{request.reply}",
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "reviewer_id": current_user.get("id", ""),
+            "reviewer_name": current_user.get("real_name", ""),
+        }
+        task.setdefault("replies", []).append(reply_entry)
+        task["reply"] = request.reply
+        task["completed_at"] = reply_entry["created_at"]
+        _save_tasks(_tasks)
+
+    try:
+        record_agent.record_node({
+            "description": task["description"],
+            "address": task.get("address", ""),
+            "event_type": task.get("event_type", ""),
+            "urgency": task.get("urgency", ""),
+            "scene_tag": task.get("scene_tag", ""),
+            "handler": task.get("handler", ""),
+            "status": "已撤销",
+            "created_at": "",
+            "user_id": task.get("user_id", ""),
+            "confidence": task.get("confidence", ""),
+            "reply": request.reply,
+        })
+    except Exception as exc:
+        logger.warning("拒绝记录写入失败：event_id=%s，异常=%s", event_id, exc)
+
+    return {
+        "success": True,
+        "data": {
+            "event_id": task["event_id"],
+            "status": task["status"],
+        },
+    }
+
+
+@app.post("/api/events/{event_id}/transfer")
+async def transfer_event(
+    event_id: str,
+    request: TransferRequest,
+    current_user: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    """
+    管理员将事件转交到指定部门（必须写回复）。
+    转交后事件处理部门更新为转交部门；用户端与管理端列表同步显示新部门。
+    """
+    handler = request.handler.strip()
+    if handler not in VALID_HANDLERS:
+        raise HTTPException(status_code=400, detail=f"无效的转交部门：{handler}")
+    async with _task_lock:
+        task = _tasks.get(event_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="事件不存在")
+        if task.get("status") == "已撤销":
+            raise HTTPException(status_code=400, detail="事件已撤销，无法转交")
+        if task.get("status") not in ("待审核", "已受理", "已完成"):
+            raise HTTPException(status_code=400, detail="当前状态不可转交")
+        task["handler"] = handler
+        if task.get("status") == "待审核":
+            task["status"] = "已受理"
+        task["reviewer_id"] = current_user.get("id", "")
+        reply_entry = {
+            "content": f"【转交至{handler}】{request.reply}",
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "reviewer_id": current_user.get("id", ""),
+            "reviewer_name": current_user.get("real_name", ""),
+        }
+        task.setdefault("replies", []).append(reply_entry)
+        task["reply"] = request.reply
+        task["completed_at"] = reply_entry["created_at"]
+        _save_tasks(_tasks)
+
+    try:
+        record_agent.record_node({
+            "description": task["description"],
+            "address": task.get("address", ""),
+            "event_type": task.get("event_type", ""),
+            "urgency": task.get("urgency", ""),
+            "scene_tag": task.get("scene_tag", ""),
+            "handler": handler,
+            "status": task["status"],
+            "created_at": "",
+            "user_id": task.get("user_id", ""),
+            "confidence": task.get("confidence", ""),
+            "reply": request.reply,
+        })
+    except Exception as exc:
+        logger.warning("转交记录写入失败：event_id=%s，异常=%s", event_id, exc)
+
+    return {
+        "success": True,
+        "data": {
+            "event_id": task["event_id"],
+            "status": task["status"],
+            "handler": handler,
+        },
+    }
 
 
 @app.post("/api/events/{event_id}/reply")
