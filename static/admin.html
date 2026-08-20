@@ -922,7 +922,7 @@
             }
 
             // 待审核：每户平时只显示最新一条，其余收起，点击展开看该户全部
-            function renderPendingHouse(events) {
+            function renderPendingHouse(events, type) {
                 if (events.length === 0) return '<div class="empty">暂无待审核事件</div>';
                 const groups = {};
                 for (const e of events) {
@@ -936,21 +936,21 @@
                     const first = evs[0];
                     const rest = evs.slice(1);
                     const safeKey = (k === 'unknown' ? 'u' : k.replace(/[^a-zA-Z0-9]/g, '_')) + '_' + first.event_id.slice(0, 8);
-                    let html = eventCard(first, 'pending');
+                    let html = eventCard(first, type);
                     if (rest.length > 0) {
                         const expanded = userRestState['user-rest-' + safeKey] === true;
                         html += `
-                            <button class="review-expand-btn" id="expand-btn-${safeKey}" onclick="toggleUserRest('${safeKey}')">展开该用户其余 ${rest.length} 条待审核事件</button>
+                            <button class="review-expand-btn" id="expand-btn-${safeKey}" onclick="toggleUserRest('${safeKey}')">展开该用户其余 ${rest.length} 条事件</button>
                             <div class="review-collapsed ${expanded ? 'visible' : ''}" id="user-rest-${safeKey}">
-                                ${rest.map(e => eventCard(e, 'pending')).join('')}
+                                ${rest.map(e => eventCard(e, type)).join('')}
                             </div>`;
                     }
                     return html;
                 }).join('');
             }
 
-            pendingContainer.innerHTML = renderPendingHouse(pendingEvents);
-            acceptedContainer.innerHTML = renderHouse(acceptedEvents, 'accepted', '暂无已受理事件');
+            pendingContainer.innerHTML = renderPendingHouse(pendingEvents, 'pending');
+            acceptedContainer.innerHTML = renderPendingHouse(acceptedEvents, 'accepted');
 
             // 恢复焦点和光标
             if (focusId) {
@@ -1266,7 +1266,7 @@
             const btn = document.getElementById('expand-btn-' + safeKey);
             if (!box || !btn) return;
             const isVisible = box.classList.toggle('visible');
-            btn.textContent = isVisible ? '收起' : '展开该用户其余 ' + (box.children.length) + ' 条待审核事件';
+            btn.textContent = isVisible ? '收起' : '展开该用户其余 ' + (box.children.length) + ' 条事件';
         }
 
         function escapeHtml(text) {
