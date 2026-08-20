@@ -73,7 +73,7 @@ _FUZZY_MEDICAL_RE = re.compile(
     re.IGNORECASE,
 )
 _FUZZY_POLICE_RE = re.compile(
-    r"绑架|抢劫|杀人|持刀|行凶",
+    r"绑架|抢劫|杀人|持刀|行凶|走丢|走失|失踪|失联|被拐|拐卖|人贩子",
     re.IGNORECASE,
 )
 _FUZZY_FIRE_RE = re.compile(

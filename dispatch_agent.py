@@ -51,6 +51,9 @@ class DispatchState(TypedDict):
     scene_tag: str
     handler: str
     confidence: str
+    # 急救类型（medical/police/fire）。必须声明，否则 LangGraph 按节点注解
+    # 转换输入状态时该字段会被剥离，导致 confirmed 后派单丢失类型而错误兜底。
+    emergency_type: str
 
 
 # ------------------------------------------------------------------
@@ -76,7 +79,8 @@ _FUZZY_MEDICAL_RE = re.compile(
     re.IGNORECASE,
 )
 _FUZZY_POLICE_RE = re.compile(
-    r"绑架|抢劫|杀人|持刀|行凶|强奸|强盗|性侵|猥亵|骚扰|盗窃|偷窃|偷东西|打架|斗殴|暴力|威胁|恐吓|暴恐|寻仇|吸毒",
+    r"绑架|抢劫|杀人|持刀|行凶|强奸|强盗|性侵|猥亵|骚扰|盗窃|偷窃|偷东西|打架|斗殴|暴力|威胁|恐吓|暴恐|寻仇|吸毒|"
+    r"走丢|走失|失踪|失联|被拐|拐卖|人贩子",
     re.IGNORECASE,
 )
 _FUZZY_FIRE_RE = re.compile(
