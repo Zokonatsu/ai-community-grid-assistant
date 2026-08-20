@@ -507,6 +507,9 @@ def get_user_by_id(user_id: str) -> dict[str, Any] | None:
         "phone": user["phone"],
         "id_card": user.get("id_card", ""),
         "role": user["role"],
+        "building": user.get("building", ""),
+        "unit": user.get("unit", ""),
+        "room": user.get("room", ""),
         "created_at": user["created_at"],
     }
 
