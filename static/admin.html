@@ -262,6 +262,27 @@
         .transfer-row select { flex: 1; padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); font-size: 13px; background: var(--surface); color: var(--text-1); }
         .reply-actions { display: flex; gap: 8px; margin-top: 8px; }
         .reply-actions .btn-sm { margin-top: 0; }
+        .user-tip { position: relative; cursor: help; }
+        .user-tip::after {
+            content: attr(data-tip);
+            position: absolute;
+            left: 0;
+            top: calc(100% + 6px);
+            background: #1f2937;
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            line-height: 1.6;
+            white-space: pre-line;
+            width: max-content;
+            max-width: 280px;
+            box-shadow: 0 6px 20px rgba(0,0,0,.25);
+            z-index: 60;
+            display: none;
+            pointer-events: none;
+        }
+        .user-tip:hover::after { display: block; }
 
         /* ---- 同一用户多事件折叠 ---- */
         .review-collapsed { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border-strong); }
@@ -538,7 +559,7 @@
                     <option value="已派单">已派单</option>
                     <option value="处理超时">处理超时</option>
                     <option value="处理失败">处理失败</option>
-                    <option value="已拒绝">已拒绝</option>
+                    <option value="已撤销">已撤销</option>
                 </select>
                 <label>类型：</label>
                 <select id="filterType">
@@ -753,7 +774,8 @@
         }
         function statusClass(s) {
             if (s === '处理中') return 'tag-processing';
-            if (s === '处理超时' || s === '处理失败' || s === '已拒绝') return 'tag-failed';
+            if (s === '处理超时' || s === '处理失败') return 'tag-failed';
+            if (s === '已撤销') return 'tag-cancelled';
             if (s === '已完成' || s === '已派单') return 'tag-success';
             if (s === '待审核') return 'tag-pending';
             if (s === '已受理') return 'tag-accepted';
@@ -1409,7 +1431,9 @@
             if (e.beneficiary_type === 'proxy') {
                 return '<span class="tag tag-warning">代办</span> ';
             }
-            return '<span class="tag tag-muted">' + escapeHtml(e.user_name || '本人') + '</span> ';
+            const room = (e.user_building || '') + (e.user_unit || '') + (e.user_room || '');
+            const tip = '姓名：' + (e.user_name || '-') + '\n电话：' + (e.user_phone || '-') + '\n住址：' + (room || '未填写');
+            return '<span class="tag tag-muted user-tip" data-tip="' + escapeHtml(tip) + '">' + escapeHtml(e.user_name || '本人') + '</span> ';
         }
 
         // 事件位置单元格：坐标 + 距中心米数 + 高德地图链接 + 定位状态徽章（仅管理员可见该数据）

@@ -756,7 +756,7 @@
                 const statusClass = s => {
                     if (s === '已撤销') return 'tag-cancelled';
                     if (s === '处理中') return 'tag-processing';
-                    if (s === '处理超时' || s === '处理失败' || s === '已拒绝') return 'tag-failed';
+                    if (s === '处理超时' || s === '处理失败') return 'tag-failed';
                     if (s === '已完成' || s === '已派单') return 'tag-success';
                     if (s === '待审核') return 'tag-pending';
                     if (s === '已受理') return 'tag-accepted';
