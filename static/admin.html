@@ -908,7 +908,7 @@
                 return houseKeys.map(k => {
                     const evs = groups[k].slice().sort((x, y) => String(y.created_at).localeCompare(String(x.created_at)));
                     const first = evs[0];
-                    const safeKey = (k === 'unknown' ? 'u' : k.replace(/[^a-zA-Z0-9]/g, '_')) + '_' + first.event_id.slice(0, 8);
+                    const safeKey = (type === 'pending' ? 'p' : 'a') + '_' + (k === 'unknown' ? 'u' : k.replace(/[^a-zA-Z0-9]/g, '_'));
                     const room = (first.user_building || '') + (first.user_unit || '') + (first.user_room || '');
                     const wasVisible = houseState['house-body-' + safeKey];
                     const visible = wasVisible === undefined ? true : wasVisible;
