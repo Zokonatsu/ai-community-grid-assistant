@@ -209,6 +209,10 @@
         }
         .comm-pin { background: none; border: none; }  /* 自定义 divIcon，去掉 leaflet 默认白框 */
         .comm-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; }
+        .locate-hint.error {
+            color: var(--danger);
+            font-weight: 600;
+        }
         .loc-link {
             margin-left: 8px;
             font-size: 12px;
@@ -1003,11 +1007,18 @@
                     resolve(null);
                     return;
                 }
-                navigator.geolocation.getCurrentPosition(
-                    pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-                    () => resolve(null),
-                    { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
-                );
+                let done = false;
+                const finish = v => { if (!done) { done = true; resolve(v); } };
+                try {
+                    navigator.geolocation.getCurrentPosition(
+                        pos => finish({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+                        () => finish(null),
+                        { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+                    );
+                } catch (e) {
+                    // 非安全上下文/部分浏览器会同步抛异常：兜底为不可用，避免按钮卡在"定位中…"无反应
+                    finish(null);
+                }
             });
         }
 
@@ -1083,7 +1094,13 @@
         async function locateCommunity() {
             const btn = document.getElementById('comm-locate-btn');
             const msg = document.getElementById('comm-msg');
-            if (!commMap) { msg.textContent = '地图未就绪，请稍后再试'; return; }
+            msg.className = 'locate-hint';
+            if (!commMap) { msg.className = 'locate-hint error'; msg.textContent = '地图未就绪，请刷新页面后再试'; return; }
+            if (window.isSecureContext === false) {
+                msg.className = 'locate-hint error';
+                msg.textContent = '当前为 http 访问，浏览器已禁用定位（需 HTTPS 或 localhost）。请直接拖动/点击地图标记选择社区中心后保存';
+                return;
+            }
             btn.disabled = true;
             btn.textContent = '定位中…';
             const pos = await getPosition();
@@ -1093,9 +1110,11 @@
                 commMap.flyTo([pos.lat, pos.lng], 16);
                 commMarker.setLatLng([pos.lat, pos.lng]);
                 setCommCenter(pos.lat, pos.lng);
+                msg.className = 'locate-hint';
                 msg.textContent = '已定位到当前位置，拖动标记或点击地图调整社区中心';
             } else {
-                msg.textContent = '定位不可用（需 HTTPS 或 localhost），可直接在地图上拖动标记选择';
+                msg.className = 'locate-hint error';
+                msg.textContent = '未能获取定位（浏览器拒绝位置权限或定位不可用）。请允许位置权限后重试，或直接拖动/点击地图标记选择社区中心';
             }
         }
 

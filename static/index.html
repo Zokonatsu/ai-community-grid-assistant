@@ -198,11 +198,18 @@
                     resolve(null);
                     return;
                 }
-                navigator.geolocation.getCurrentPosition(
-                    pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-                    () => resolve(null),
-                    { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
-                );
+                let done = false;
+                const finish = v => { if (!done) { done = true; resolve(v); } };
+                try {
+                    navigator.geolocation.getCurrentPosition(
+                        pos => finish({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+                        () => finish(null),
+                        { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+                    );
+                } catch (e) {
+                    // 非安全上下文/部分浏览器会同步抛异常：兜底为不可用，避免提交流程卡死
+                    finish(null);
+                }
             });
         }
 
