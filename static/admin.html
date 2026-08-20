@@ -813,6 +813,11 @@
             document.querySelectorAll('[id^="house-body-"]').forEach(el => {
                 houseState[el.id] = el.classList.contains('visible');
             });
+            // 保存待审核"展开该用户其余事件"状态
+            const userRestState = {};
+            document.querySelectorAll('[id^="user-rest-"]').forEach(el => {
+                userRestState[el.id] = el.classList.contains('visible');
+            });
 
             // 保存所有回复输入框中正在输入的内容，避免定时刷新时丢失
             const savedReplies = {};
@@ -916,7 +921,35 @@
                 }).join('');
             }
 
-            pendingContainer.innerHTML = renderHouse(pendingEvents, 'pending', '暂无待审核事件');
+            // 待审核：每户平时只显示最新一条，其余收起，点击展开看该户全部
+            function renderPendingHouse(events) {
+                if (events.length === 0) return '<div class="empty">暂无待审核事件</div>';
+                const groups = {};
+                for (const e of events) {
+                    const key = e.user_id_card || e.user_id || 'unknown';
+                    (groups[key] = groups[key] || []).push(e);
+                }
+                const lastTime = arr => arr.reduce((m, e) => (e.created_at > m ? e.created_at : m), '');
+                const houseKeys = Object.keys(groups).sort((a, b) => String(lastTime(groups[b])).localeCompare(String(lastTime(groups[a]))));
+                return houseKeys.map(k => {
+                    const evs = groups[k].slice().sort((x, y) => String(y.created_at).localeCompare(String(x.created_at)));
+                    const first = evs[0];
+                    const rest = evs.slice(1);
+                    const safeKey = (k === 'unknown' ? 'u' : k.replace(/[^a-zA-Z0-9]/g, '_')) + '_' + first.event_id.slice(0, 8);
+                    let html = eventCard(first, 'pending');
+                    if (rest.length > 0) {
+                        const expanded = userRestState['user-rest-' + safeKey] === true;
+                        html += `
+                            <button class="review-expand-btn" id="expand-btn-${safeKey}" onclick="toggleUserRest('${safeKey}')">展开该用户其余 ${rest.length} 条待审核事件</button>
+                            <div class="review-collapsed ${expanded ? 'visible' : ''}" id="user-rest-${safeKey}">
+                                ${rest.map(e => eventCard(e, 'pending')).join('')}
+                            </div>`;
+                    }
+                    return html;
+                }).join('');
+            }
+
+            pendingContainer.innerHTML = renderPendingHouse(pendingEvents);
             acceptedContainer.innerHTML = renderHouse(acceptedEvents, 'accepted', '暂无已受理事件');
 
             // 恢复焦点和光标
@@ -1226,6 +1259,14 @@
             const card = body.closest('.house-card');
             const toggle = card ? card.querySelector('.house-toggle') : null;
             if (toggle) toggle.textContent = body.classList.contains('visible') ? '收起' : '展开';
+        }
+
+        function toggleUserRest(safeKey) {
+            const box = document.getElementById('user-rest-' + safeKey);
+            const btn = document.getElementById('expand-btn-' + safeKey);
+            if (!box || !btn) return;
+            const isVisible = box.classList.toggle('visible');
+            btn.textContent = isVisible ? '收起' : '展开该用户其余 ' + (box.children.length) + ' 条待审核事件';
         }
 
         function escapeHtml(text) {
