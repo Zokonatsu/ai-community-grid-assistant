@@ -1,6 +1,9 @@
 # 基于 Python 3.14 官方精简镜像
 FROM python:3.14-slim
 
+# 统一时区（北京），避免事件时间/撤销窗口与浏览器不一致
+ENV TZ=Asia/Shanghai
+
 # 设置工作目录
 WORKDIR /app
 

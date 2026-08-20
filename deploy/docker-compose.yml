@@ -10,6 +10,7 @@ services:
     environment:
       - LLM_API_KEY=${LLM_API_KEY}
       - LLM_BASE_URL=${LLM_BASE_URL}
+      - TZ=Asia/Shanghai
       - LLM_MODEL=${LLM_MODEL}
       - DATA_ENCRYPTION_KEY=${DATA_ENCRYPTION_KEY}
       # 账号存储后端：file（默认，本地加密文件）| cloudbase（腾讯云 COS 云存储）
