@@ -804,33 +804,26 @@
             return `<div class="review-beneficiary">用户：${escapeHtml(e.user_name || '-')} · ${escapeHtml(e.user_phone || '-')} · ${escapeHtml(room || '未填住址')}</div>`;
         }
 
-        function renderReviewLists() {
+                function renderReviewLists() {
             const pendingEvents = allEvents.filter(e => e.status === '待审核');
             const acceptedEvents = allEvents.filter(e => e.status === '已受理' || e.status === '已完成');
 
-            // 保存折叠/展开状态，避免定时刷新时丢失
-            const collapsedState = {};
-            document.querySelectorAll('[id^="collapsed-"]').forEach(el => {
-                collapsedState[el.id] = el.classList.contains('visible');
+            // 保存户折叠展开状态
+            const houseState = {};
+            document.querySelectorAll('[id^="house-body-"]').forEach(el => {
+                houseState[el.id] = el.classList.contains('visible');
             });
 
             // 保存所有回复输入框中正在输入的内容，避免定时刷新时丢失
             const savedReplies = {};
-            const savedReplyBoxVisible = {};
             document.querySelectorAll('textarea[id^="reply-text-"]').forEach(textarea => {
                 const key = textarea.id.replace('reply-text-', '');
                 if (textarea.value.trim()) {
                     savedReplies[key] = textarea.value;
                 }
             });
-            document.querySelectorAll('[id^="reply-box-"]').forEach(el => {
-                if (el.classList.contains('visible')) {
-                    savedReplyBoxVisible[el.id] = true;
-                }
-            });
-            const acceptedContainer = document.getElementById('reviewAcceptedContainer');
 
-            // 保存当前焦点位置和光标，避免重建DOM后光标消失
+            // 保存当前焦点位置和光标
             let focusId = null;
             let selStart = 0;
             let selEnd = 0;
@@ -842,97 +835,11 @@
             }
 
             const pendingContainer = document.getElementById('reviewPendingContainer');
-            if (pendingEvents.length === 0) {
-                pendingContainer.innerHTML = '<div class="empty">暂无待审核事件</div>';
-            } else {
-                // 按身份证号分组，同一用户的多个事件折叠展示
-                const grouped = {};
-                for (const e of pendingEvents) {
-                    const key = e.user_id_card || 'unknown';
-                    if (!grouped[key]) grouped[key] = [];
-                    grouped[key].push(e);
-                }
-                let html = '';
-                for (const [idCard, events] of Object.entries(grouped)) {
-                    const first = events[0];
-                    const rest = events.slice(1);
-                    const safeId = idCard.replace(/[^a-zA-Z0-9]/g, '_');
-                    html += `
-                        <div class="review-card" id="card-${first.created_at}">
-                            <div class="review-header">
-                                <div class="review-user">
-                                    <strong>${first.user_name || '-'}</strong>
-                                    <span class="user-meta">${ICON.phone}${first.user_phone || '-'}</span>
-                                    <span class="user-meta">${ICON.idcard}${first.user_id_card || '-'}</span>
-                                </div>
-                                <div><span class="tag ${statusClass(first.status)}">${first.status}</span></div>
-                            </div>
-                            <div class="review-desc">${first.description || '-'}</div>
-                            <div class="review-time">发送时间：${first.created_at || '-'}</div>
-                            ${beneficiaryLine(first)}
-                            <div class="reply-box visible" id="reply-box-${first.created_at}">
-                                <textarea id="reply-text-${first.created_at}" placeholder="请输入回复内容">${savedReplies[first.created_at] || ''}</textarea>
-                                ${transferControl(first)}
-                                <div class="reply-actions">
-                                    ${first.handler === '人工部' ? '' : `<button class="btn-sm btn-accept" onclick="acceptWithReply('${first.created_at}')">受理</button>`}
-                                    <button class="btn-sm btn-reject" onclick="rejectEvent('${first.created_at}')">拒绝</button>
-                                </div>
-                            </div>
-                    `;
-                    if (rest.length > 0) {
-                        html += `
-                            <button class="review-expand-btn" id="expand-btn-${safeId}" onclick="toggleCollapsed('${safeId}')">展开该用户其余 ${rest.length} 条待审核事件</button>
-                            <div class="review-collapsed" id="collapsed-${safeId}">
-                        `;
-                        for (const e of rest) {
-                            html += `
-                                <div class="collapsed-card" id="card-${e.created_at}">
-                                    <div class="review-header">
-                                        <div class="review-user">
-                                            <strong>${e.user_name || '-'}</strong>
-                                            <span class="user-meta">${ICON.phone}${e.user_phone || '-'}</span>
-                                            <span class="user-meta">${ICON.idcard}${e.user_id_card || '-'}</span>
-                                        </div>
-                                        <div><span class="tag ${statusClass(e.status)}">${e.status}</span></div>
-                                    </div>
-                                    <div class="review-desc">${e.description || '-'}</div>
-                                    <div class="review-time">发送时间：${e.created_at || '-'}</div>
-                                    ${beneficiaryLine(e)}
-                                    <div class="reply-box visible" id="reply-box-${e.created_at}">
-                                        <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容">${savedReplies[e.created_at] || ''}</textarea>
-                                        ${transferControl(e)}
-                                        <div class="reply-actions">
-                                            ${e.handler === '人工部' ? '' : `<button class="btn-sm btn-accept" onclick="acceptWithReply('${e.created_at}')">受理</button>`}
-                                            <button class="btn-sm btn-reject" onclick="rejectEvent('${e.created_at}')">拒绝</button>
-                                        </div>
-                                    </div>
-                                </div>
-                            `;
-                        }
-                        html += `</div>`;
-                    }
-                    html += `</div>`;
-                }
-                pendingContainer.innerHTML = html;
-            }
+            const acceptedContainer = document.getElementById('reviewAcceptedContainer');
 
-            if (acceptedEvents.length === 0) {
-                acceptedContainer.innerHTML = '<div class="empty">暂无已受理事件</div>';
-            } else {
-                acceptedContainer.innerHTML = acceptedEvents.map(e => `
-                    <div class="review-card accepted" id="card-${e.created_at}">
-                        <div class="review-header">
-                            <div class="review-user">
-                                <strong>${e.user_name || '-'}</strong>
-                                <span class="user-meta">${ICON.phone}${e.user_phone || '-'}</span>
-                                <span class="user-meta">${ICON.idcard}${e.user_id_card || '-'}</span>
-                            </div>
-                            <div><span class="tag ${statusClass(e.status)}">${e.status}</span></div>
-                        </div>
-                        <div class="review-desc">${e.description || '-'}</div>
-                        <div class="review-time">发送时间：${e.created_at || '-'}</div>
-                        ${beneficiaryLine(e)}
-                        ${(e.replies && e.replies.length > 0) ? `
+            // 事件卡片（pending / accepted 按钮与回复历史不同）
+            function eventCard(e, type) {
+                const history = (type === 'accepted' && e.replies && e.replies.length > 0) ? `
                             <div class="reply-history">
                                 ${e.replies.map(r => `
                                     <div class="reply-history-item">
@@ -941,31 +848,78 @@
                                     </div>
                                 `).join('')}
                             </div>
-                        ` : ''}
-                        <div class="reply-box visible" id="reply-box-${e.created_at}">
-                            <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容">${savedReplies[e.created_at] || ''}</textarea>
-                            ${transferControl(e)}
-                            <div class="reply-actions">
-                                ${e.handler === '人工部' ? '' : `<button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>`}
-                                <button class="btn-sm btn-reject" onclick="rejectEvent('${e.created_at}')">拒绝</button>
+                        ` : '';
+                const acceptBtn = type === 'pending'
+                    ? `<button class="btn-sm btn-accept" onclick="acceptWithReply('${e.created_at}')">受理</button>`
+                    : `<button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>`;
+                return `
+                            <div class="review-card ${type === 'accepted' ? 'accepted' : ''}" id="card-${e.created_at}">
+                                <div class="review-header">
+                                    <div class="review-user">
+                                        <strong>${e.user_name || '-'}</strong>
+                                        <span class="user-meta">${ICON.phone}${e.user_phone || '-'}</span>
+                                        <span class="user-meta">${ICON.idcard}${e.user_id_card || '-'}</span>
+                                    </div>
+                                    <div><span class="tag ${statusClass(e.status)}">${e.status}</span></div>
+                                </div>
+                                <div class="review-desc">${e.description || '-'}</div>
+                                <div class="review-time">发送时间：${e.created_at || '-'}</div>
+                                ${beneficiaryLine(e)}
+                                ${history}
+                                <div class="reply-box visible" id="reply-box-${e.created_at}">
+                                    <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容">${savedReplies[e.created_at] || ''}</textarea>
+                                    ${transferControl(e)}
+                                    <div class="reply-actions">
+                                        ${e.handler === '人工部' ? '' : acceptBtn}
+                                        <button class="btn-sm btn-reject" onclick="rejectEvent('${e.created_at}')">拒绝</button>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                    </div>
-                `).join('');
+                `;
             }
 
-            // 恢复折叠状态
-            Object.entries(collapsedState).forEach(([id, wasVisible]) => {
-                const el = document.getElementById(id);
-                if (el && wasVisible) {
-                    el.classList.add('visible');
-                    const btnId = id.replace('collapsed-', 'expand-btn-');
-                    const btn = document.getElementById(btnId);
-                    if (btn) btn.textContent = '收起';
+            // 一户一折叠：按住户分组，组内/户间均按时间倒序（最新在前）
+            function renderHouse(events, type, emptyText) {
+                if (events.length === 0) return `<div class="empty">${emptyText}</div>`;
+                const groups = {};
+                for (const e of events) {
+                    const key = e.user_id_card || e.user_id || 'unknown';
+                    (groups[key] = groups[key] || []).push(e);
                 }
-            });
+                const lastTime = arr => arr.reduce((m, e) => (e.created_at > m ? e.created_at : m), '');
+                const houseKeys = Object.keys(groups).sort((a, b) => String(lastTime(groups[b])).localeCompare(String(lastTime(groups[a]))));
+                return houseKeys.map(k => {
+                    const evs = groups[k].slice().sort((x, y) => String(y.created_at).localeCompare(String(x.created_at)));
+                    const first = evs[0];
+                    const safeKey = (k === 'unknown' ? 'u' : k.replace(/[^a-zA-Z0-9]/g, '_')) + '_' + first.event_id.slice(0, 8);
+                    const room = (first.user_building || '') + (first.user_unit || '') + (first.user_room || '');
+                    const wasVisible = houseState['house-body-' + safeKey];
+                    const visible = wasVisible === undefined ? true : wasVisible;
+                    const statuses = [...new Set(evs.map(e => e.status))].join(' / ');
+                    return `
+                        <div class="house-card">
+                            <div class="house-header" onclick="toggleHouse('${safeKey}')">
+                                <div class="house-info">
+                                    <strong>${escapeHtml(first.user_name || '-')}</strong>
+                                    <span class="house-meta">${escapeHtml(first.user_phone || '-')}</span>
+                                    <span class="house-meta">${escapeHtml(room || '未填住址')}</span>
+                                </div>
+                                <div class="house-right">
+                                    <span class="house-count">${evs.length} 条 · ${escapeHtml(statuses)}</span>
+                                    <span class="house-toggle">${visible ? '收起' : '展开'}</span>
+                                </div>
+                            </div>
+                            <div class="house-body ${visible ? 'visible' : ''}" id="house-body-${safeKey}">
+                                ${evs.map(e => eventCard(e, type)).join('')}
+                            </div>
+                        </div>`;
+                }).join('');
+            }
 
-            // 重新渲染后恢复焦点和光标位置
+            pendingContainer.innerHTML = renderHouse(pendingEvents, 'pending', '暂无待审核事件');
+            acceptedContainer.innerHTML = renderHouse(acceptedEvents, 'accepted', '暂无已受理事件');
+
+            // 恢复焦点和光标
             if (focusId) {
                 const newEl = document.getElementById(focusId);
                 if (newEl) {
@@ -1265,12 +1219,13 @@
             if (box) box.classList.toggle('visible');
         }
 
-        function toggleCollapsed(safeId) {
-            const collapsed = document.getElementById('collapsed-' + safeId);
-            const btn = document.getElementById('expand-btn-' + safeId);
-            if (!collapsed || !btn) return;
-            const isVisible = collapsed.classList.toggle('visible');
-            btn.textContent = isVisible ? '收起' : '展开该用户其余 ' + (collapsed.children.length) + ' 条待审核事件';
+                function toggleHouse(safeKey) {
+            const body = document.getElementById('house-body-' + safeKey);
+            if (!body) return;
+            body.classList.toggle('visible');
+            const card = body.closest('.house-card');
+            const toggle = card ? card.querySelector('.house-toggle') : null;
+            if (toggle) toggle.textContent = body.classList.contains('visible') ? '收起' : '展开';
         }
 
         function escapeHtml(text) {
