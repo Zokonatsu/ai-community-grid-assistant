@@ -649,6 +649,18 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
                 "beneficiary_unit": task.get("beneficiary_unit", ""),
                 "beneficiary_room": task.get("beneficiary_room", ""),
             }
+            # 快照缺失时从用户库实时补齐（老事件无住址快照 / 用户补录住址后生效）
+            if not event_item.get("user_building") and task.get("user_id"):
+                _u = auth.get_user_by_id(task["user_id"])
+                if _u:
+                    event_item["user_building"] = _u.get("building", "")
+                    event_item["user_unit"] = _u.get("unit", "")
+                    event_item["user_room"] = _u.get("room", "")
+                    if not event_item.get("user_name"):
+                        event_item["user_name"] = _u.get("real_name", "")
+                    if not event_item.get("user_phone"):
+                        event_item["user_phone"] = _u.get("phone", "")
+
             # 定位坐标/距中心米数仅管理员可见，居民端不返回（避免暴露他人位置）
             if current_user.get("role") == "admin":
                 event_item["event_lat"] = task.get("event_lat")
