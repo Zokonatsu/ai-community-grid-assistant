@@ -284,6 +284,9 @@
             pointer-events: none;
         }
         .user-tip:hover::after { display: block; }
+        .beneficiary-tag { display: inline-block; font-size: 13px; color: var(--text-2); }
+        .beneficiary-tag b { color: var(--text-1); font-weight: 600; }
+        .review-beneficiary { line-height: 1.8; }
 
         /* ---- 同一用户多事件折叠 ---- */
         .review-collapsed { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border-strong); }
@@ -571,6 +574,12 @@
                     <option value="紧急救援">紧急救援</option>
                     <option value="常规">常规</option>
                 </select>
+                <label>提交方式：</label>
+                <select id="filterBeneficiary">
+                    <option value="">全部</option>
+                    <option value="self">本人</option>
+                    <option value="proxy">代人办</option>
+                </select>
                 <button class="btn-sm" onclick="applyFilters()">筛选</button>
                 <button class="btn-sm btn-refresh" onclick="loadData(true)">
                     <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.2 6.2A4.8 4.8 0 1 0 13 8"/><path d="M13.2 2.8V6h-3.2"/></svg>
@@ -796,12 +805,15 @@
 
         // 被帮助人信息行（本人/代人办）
         function beneficiaryLine(e) {
+            const uRoom = (e.user_building || '') + (e.user_unit || '') + (e.user_room || '');
             if (e.beneficiary_type === 'proxy') {
-                const room = (e.beneficiary_building || '') + (e.beneficiary_unit || '') + (e.beneficiary_room || '');
-                return `<div class="review-beneficiary">代人办：${escapeHtml(e.beneficiary_name || '-')} · ${escapeHtml(e.beneficiary_phone || '-')} · ${escapeHtml(room)}</div>`;
+                const bRoom = (e.beneficiary_building || '') + (e.beneficiary_unit || '') + (e.beneficiary_room || '');
+                return `<div class="review-beneficiary">
+                    <span class="beneficiary-tag"><b>办理人</b>：${escapeHtml(e.user_name || '-')} · ${escapeHtml(e.user_phone || '-')} · ${escapeHtml(uRoom || '未填住址')}</span>
+                    <span class="beneficiary-tag"><b>代办人</b>：${escapeHtml(e.beneficiary_name || '-')} · ${escapeHtml(e.beneficiary_phone || '-')} · ${escapeHtml(bRoom || '未填住址')}</span>
+                </div>`;
             }
-            const room = (e.user_building || '') + (e.user_unit || '') + (e.user_room || '');
-            return `<div class="review-beneficiary">用户：${escapeHtml(e.user_name || '-')} · ${escapeHtml(e.user_phone || '-')} · ${escapeHtml(room || '未填住址')}</div>`;
+            return `<div class="review-beneficiary">用户：${escapeHtml(e.user_name || '-')} · ${escapeHtml(e.user_phone || '-')} · ${escapeHtml(uRoom || '未填住址')}</div>`;
         }
 
                 function renderReviewLists() {
@@ -1364,7 +1376,12 @@
         // 提交方式标签：本人 / 代办
         function beneficiaryTag(e) {
             if (e.beneficiary_type === 'proxy') {
-                return '<span class="tag tag-warning">代办</span> ';
+                const uRoom = (e.user_building || '') + (e.user_unit || '') + (e.user_room || '');
+                const bRoom = (e.beneficiary_building || '') + (e.beneficiary_unit || '') + (e.beneficiary_room || '');
+                const tip = '办理人：' + (e.user_name || '-') + '\n电话：' + (e.user_phone || '-') + '\n住址：' + (uRoom || '未填写')
+                    + '\n\n代办人：' + (e.beneficiary_name || '-') + '\n电话：' + (e.beneficiary_phone || '-') + '\n住址：' + (bRoom || '未填写');
+                return '<span class="tag tag-warning user-tip" data-tip="' + escapeHtml(tip) + '">办理人:' + escapeHtml(e.user_name || '-') + '</span> '
+                    + '<span class="tag tag-warning user-tip" data-tip="' + escapeHtml(tip) + '">代办人:' + escapeHtml(e.beneficiary_name || '-') + '</span> ';
             }
             const room = (e.user_building || '') + (e.user_unit || '') + (e.user_room || '');
             const tip = '姓名：' + (e.user_name || '-') + '\n电话：' + (e.user_phone || '-') + '\n住址：' + (room || '未填写');
@@ -1412,12 +1429,14 @@
             const typeFilter = document.getElementById('filterType').value;
             const urgencyFilter = document.getElementById('filterUrgency').value;
             const sceneFilter = document.getElementById('filterScene').value;
+            const bfFilter = document.getElementById('filterBeneficiary').value;
 
             return allEvents.filter(e => {
                 if (statusFilter && e.status !== statusFilter) return false;
                 if (typeFilter && e.event_type !== typeFilter) return false;
                 if (urgencyFilter && e.urgency !== urgencyFilter) return false;
                 if (sceneFilter && e.scene_tag !== sceneFilter) return false;
+                if (bfFilter && (e.beneficiary_type || 'self') !== bfFilter) return false;
                 return true;
             });
         }
