@@ -145,7 +145,7 @@
     </div>
 
     <!-- 回复查看弹窗 -->
-    <div class="overlay hidden" id="replyOverlay">
+    <div class="overlay hidden" id="replyOverlay" onclick="if(event.target===this)closeReplyDialog()">
         <div class="modal">
             <div class="modal-close" onclick="closeReplyDialog()" aria-label="关闭">
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
