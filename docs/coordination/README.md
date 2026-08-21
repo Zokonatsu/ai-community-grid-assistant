@@ -1,6 +1,6 @@
 # 跨会话产品协同 · 协调机制
 
-两个 Agent：**产品规划（planner）** + **开发（developer）**，借助 Codex 跨会话消息自动协作，验收循环全程无需用户介入。
+三个 Agent：**测试（tester）** + **产品规划（planner）** + **开发（developer）**，借助 Codex 跨会话消息自动协作：tester 一键测试，失败自动联动 planner 拆任务、developer 修复、验收闭环，全程无需用户介入。
 
 ## 目录
 - `agent-registry.md` — 身份注册表（职责 + 会话 ID）
@@ -10,7 +10,7 @@
 
 ## 消息格式（统一头，跨会话传递）
 每条消息正文用固定块：
-【消息类型】task-card | dev-ready | accept-result | fix-done | question | accepted
+【消息类型】task-card | dev-ready | accept-result | fix-done | question | accepted | test-report
 【任务号】T<YYYYMMDD>-<seq>
 【版本】整数；字段/契约变更时 +1
 【发送方】<agent-id>@<会话ID>
