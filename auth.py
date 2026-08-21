@@ -228,7 +228,7 @@ def _init_auth() -> None:
         admin_user = {
             "id": admin_id,
             "username": "admin",
-            "password_hash": _hash_password("admin123456"),
+           "password_hash": _hash_password("GridAdmin2025!@#"),
             "real_name": "系统管理员",
             "phone": "13800000000",
             "role": "admin",
