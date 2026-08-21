@@ -59,3 +59,9 @@ developer_instructions = '''
 - 不替开发 Agent 改代码；不 git add/commit/push（收口由主 Agent/用户负责）。
 - 任务书、需求澄清结论、日志、验收结论都落在 `docs/coordination/` 下，用户随时可查。
 '''
+## 八、任务收尾：记忆归档（推荐）
+任务验收结束后把结果写入记忆库（`scripts/memory.py`，规则见 docs/coordination/记忆管理.md）：
+- 中间状态/待办 → `add temp`（带 TTL，到期自动清理）；
+- 可复用经验（需求约定/验收结论/踩坑）→ 提炼后 `add longterm --source <来源> --valid-days 90 --tags ...`；
+- 同主题冲突结论 → memory.py 会自动标记 conflict，需人工裁决后更新；
+- **敏感数据一律不入库**，命中即拒绝，只可记引用位置。

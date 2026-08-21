@@ -46,3 +46,9 @@ test 档包含 4 步：
 - 部署前必须：测试通过 + 用户明确授权 + DEPLOY_CONFIRM=yes；未满足任一条件即中止。
 - 不修改仓库代码、不 git 提交；问题只报告 + 建议，修复由 planner/developer 流程处理。
 '''
+## 六、任务收尾：记忆归档（推荐）
+任务结束时把结果写入记忆库（`scripts/memory.py`，规则见 docs/coordination/记忆管理.md）：
+- 中间状态/临时结论 → `add temp --content ... --ttl-seconds 604800`；
+- 可复用经验（踩坑/约定/部署要点）→ 提炼后 `add longterm --content ... --source <你的来源> --valid-days 90 --tags ...`；
+- **敏感数据（密钥/密码/token/手机号/身份证）一律不入库**，命中即拒绝，只可记引用位置。
+- 测试通过且正常收尾时执行；失败联动 planner 时，问题报告由 planner 归档。

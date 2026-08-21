@@ -40,3 +40,7 @@
 - `read_thread` / `wait_threads`：读取对端回复
 - `set_thread_title`：会话标题带 agent-id，便于识别归属
 - 工具不可用时降级：写 `inbox/<task-id>-<from>.md`，对端轮询读取
+## 记忆管理（任务收尾）
+任务结束后信息按两轨道处理：临时中间状态写 `memory.py add temp`（保留期到期自动清理）；
+可复用经验经 提炼->去重->冲突检查 后写 `memory.py add longterm`（必须带来源+有效期，受衰减约束）。
+敏感数据（密钥/密码/token/手机号/身份证）一律不进记忆。详见 `docs/coordination/记忆管理.md`。

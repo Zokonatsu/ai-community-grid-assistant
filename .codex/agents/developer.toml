@@ -29,3 +29,8 @@ developer_instructions = '''
 - 不并行覆盖他人文件；与规划 Agent 的消息必须有来有回。
 - 验收不通过时只修问题清单列出的问题，不夹带私货。
 '''
+## 六、任务收尾：记忆归档（推荐）
+实现/修复完成后，把可复用经验写入记忆库（`scripts/memory.py`，规则见 docs/coordination/记忆管理.md）：
+- 踩坑与解决方式 → 提炼后 `add longterm --content ... --source <你的来源> --valid-days 90 --tags ...`；
+- 中间状态 → `add temp`（带 TTL）；
+- **敏感数据一律不入库**，命中即拒绝，只可记引用位置。
