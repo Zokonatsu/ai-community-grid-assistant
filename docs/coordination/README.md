@@ -19,12 +19,14 @@
 【正文】...
 
 ## 自动协作流程
-0. **planner 先向用户提问澄清需求，直到用户确认理解**（未确认不写任务书、不派发）
-1. planner 写任务书（含冻结契约）→ 发【task-card】
+0. **tester 测试/上线**（`python scripts/pipeline.py test|all`）：
+   - 通过 → 输出结论；用户要求上线时继续 部署+冒烟（pipeline all），全部通过即上线完成；
+   - 失败 → 写问题报告 + 发【test-report】给 planner（inbox：`<时间>-test-report-tester.md`）。
+1. **planner 收到【test-report】** → 读问题清单 → 按需向用户澄清 → 写任务书（含冻结契约）→ 发【task-card】
 2. developer 读任务书 → 实现 → 发【dev-ready】（附变更清单 + 测试结果）
 3. planner 对照契约验收 → 发【accept-result】`accepted` / `rejected`+问题清单
 4. `rejected` → developer 修复 → 发【fix-done】→ 回到 3（循环直到 `accepted`）
-5. `accepted` → 任务归档，结束
+5. `accepted` → 任务归档；tester 复测（可选）→ 通过后结束
 
 ## 可追溯性（责任可查）
 - **身份**：每个 Agent 启动即在 `agent-registry.md` 注册 agent-id / 职责 / 会话 ID
