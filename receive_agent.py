@@ -18,13 +18,23 @@ receive_agent.py
 import json
 import logging
 import re
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import TypedDict
 
-from openai import OpenAI
+from openai import OpenAI, APIConnectionError, APITimeoutError, APIStatusError
 from langgraph.graph import StateGraph, START, END
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception,
+    before_sleep_log,
+)
 
 import config
+from log_redact import redact_pii
 
 # ------------------------------------------------------------------
 # 配置日志记录器
@@ -184,11 +194,11 @@ def _check_hard_rules_first(description: str) -> dict | None:
 
 
 # ------------------------------------------------------------------
-# 单次 LLM API 调用（隔离异常，便于多轮采样）
+# 单次 LLM API 调用（隔离异常，便于多轮采样；瞬时异常自动重试）
 # ------------------------------------------------------------------
-def _call_llm_once(description: str) -> dict:
+def _call_llm_once_impl(description: str) -> dict:
     """
-    单次调用 LLM API 进行语义提取。
+    单次真实调用 LLM API 进行语义提取（无重试、无熔断，供上层包装）。
 
     返回模型解析后的字典；任何异常均向上抛出，由调用方决定是否重试。
     """
@@ -207,6 +217,140 @@ def _call_llm_once(description: str) -> dict:
     if not isinstance(parsed, dict):
         raise ValueError(f"模型返回非字典类型: {type(parsed)}")
     return parsed
+
+
+# ------------------------------------------------------------------
+# 瞬时异常识别（用于退避重试判定）
+# ------------------------------------------------------------------
+def _is_transient_llm_error(exc: BaseException) -> bool:
+    """
+    判断异常是否为可重试的瞬时 LLM 异常。
+
+    仅覆盖：连接错误、超时、429/限流、5xx 服务端错误；
+    业务解析类异常（JSON 解析失败、模型返回非 dict）不在其中，不重试。
+    """
+    if isinstance(exc, (APIConnectionError, APITimeoutError)):
+        return True
+    if isinstance(exc, APIStatusError):
+        # 429（限流）与 5xx（服务端故障）视为瞬时；其余 4xx 业务错误不重试
+        return exc.status_code == 429 or exc.status_code >= 500
+    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        return True
+    return False
+
+
+# ------------------------------------------------------------------
+# 单次 LLM API 调用（含指数退避重试）
+# ------------------------------------------------------------------
+def _call_llm_once(description: str) -> dict:
+    """
+    单次 LLM API 调用（瞬时异常自动重试）。
+
+    默认重试 2 次、退避 1s/2s（LLM_RETRY_ATTEMPTS / LLM_RETRY_BASE_DELAY，
+    运行期读取 config，便于测试短退避覆盖）。业务解析类异常不重试直接上抛。
+    """
+    attempts = max(1, int(config.LLM_RETRY_ATTEMPTS) + 1)
+    base_delay = max(0.0, float(config.LLM_RETRY_BASE_DELAY))
+
+    @retry(
+        stop=stop_after_attempt(attempts),
+        wait=wait_exponential(
+            multiplier=base_delay,
+            min=base_delay if base_delay > 0 else 0.0,
+            max=60.0,
+        ),
+        retry=retry_if_exception(_is_transient_llm_error),
+        reraise=True,
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+    )
+    def _attempt() -> dict:
+        return _call_llm_once_impl(description)
+
+    return _attempt()
+
+
+# ------------------------------------------------------------------
+# LLM 调用熔断器（多轮采样循环之外包一层，open 期间直接降级）
+# ------------------------------------------------------------------
+class _LLMCircuitBreaker:
+    """
+    简单线程安全熔断器（单机内存）。
+
+    状态机：
+      closed    ：正常；连续失败达到阈值（LLM_CIRCUIT_THRESHOLD，默认 5）-> open
+      open      ：冷却期（LLM_CIRCUIT_COOLDOWN，默认 60s）内拒绝真实调用；
+                  到期自动进入 half_open（半开），允许一次试探调用
+      half_open ：试探成功 -> closed（计数清零）；试探失败 -> 重新 open
+
+    供 receive_node 在多轮采样循环之外调用：open 期间不触发任何 LLM 调用，
+    直接走既有「API异常 / confidence=none」降级路径（main 层转「待审核」）。
+    """
+
+    def __init__(self, threshold: int, cooldown: float) -> None:
+        self.threshold = max(1, int(threshold))
+        self.cooldown = max(0.0, float(cooldown))
+        self._state = "closed"
+        self._consecutive_failures = 0
+        self._opened_at = 0.0
+        self._lock = threading.Lock()
+
+    def _now(self) -> float:
+        return time.monotonic()
+
+    def state(self) -> str:
+        """返回当前状态；open 冷却到期时自动切换为 half_open。"""
+        with self._lock:
+            if self._state == "open" and self._now() - self._opened_at >= self.cooldown:
+                self._state = "half_open"
+                logger.info(
+                    "LLM 熔断器冷却结束，进入半开状态，允许一次试探调用"
+                    "（阈值=%d，冷却=%ss）",
+                    self.threshold,
+                    self.cooldown,
+                )
+            return self._state
+
+    def allow_call(self) -> bool:
+        """是否允许发起真实 LLM 调用：open 拒绝，closed/half_open 放行。"""
+        return self.state() != "open"
+
+    def record_success(self) -> None:
+        """记录一次成功：计数清零并恢复 closed。"""
+        with self._lock:
+            if self._state != "closed":
+                logger.info("LLM 熔断器试探成功，恢复 closed（连续失败计数清零）")
+            self._state = "closed"
+            self._consecutive_failures = 0
+            self._opened_at = 0.0
+
+    def record_failure(self) -> None:
+        """记录一次失败：连续失败达到阈值打开熔断；半开试探失败立即重开。"""
+        with self._lock:
+            if self._state == "half_open":
+                self._state = "open"
+                self._opened_at = self._now()
+                logger.error(
+                    "LLM 熔断器半开试探失败，重新打开（冷却 %ss）",
+                    self.cooldown,
+                )
+                return
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= self.threshold:
+                self._state = "open"
+                self._opened_at = self._now()
+                logger.error(
+                    "LLM 熔断器打开：连续失败 %d 次（>= 阈值 %d），冷却 %ss",
+                    self._consecutive_failures,
+                    self.threshold,
+                    self.cooldown,
+                )
+
+
+# 熔断器实例：配置运行期读取（测试可整体替换为短阈值/短冷却实例）
+llm_circuit = _LLMCircuitBreaker(
+    threshold=config.LLM_CIRCUIT_THRESHOLD,
+    cooldown=config.LLM_CIRCUIT_COOLDOWN,
+)
 
 
 # ------------------------------------------------------------------
@@ -426,16 +570,9 @@ def _validate_address(address: str, description: str) -> None:
         - 长度小于2或纯数字：记录警告，提示地址可能不合理
     """
     if not address:
-        logger.warning(
-            "未提取到地址信息，description='%s'",
-            description,
-        )
+        logger.warning("未提取到地址信息，description='%s'", redact_pii(description), )
     elif len(address) < 2 or address.isdigit():
-        logger.warning(
-            "提取的地址信息可能不合理，address='%s'，description='%s'",
-            address,
-            description,
-        )
+        logger.warning("提取的地址信息可能不合理，address='%s'，description='%s'", redact_pii(address), redact_pii(description), )
 
 
 # ------------------------------------------------------------------
@@ -475,11 +612,7 @@ def receive_node(state: ReceiveState) -> ReceiveState:
     # ------------------------------------------------------------------
     hard_result = _check_hard_rules_first(description)
     if hard_result is not None:
-        logger.warning(
-            "前置硬规则命中（%s），跳过LLM调用：description='%s'",
-            hard_result["scene_tag"],
-            description,
-        )
+        logger.warning("前置硬规则命中（%s），跳过LLM调用：description='%s'", hard_result["scene_tag"], redact_pii(description), )
         if not state.get("confirmed", False):
             hard_result["confirmation_required"] = True
             # emergency_type 已由 _check_hard_rules_first 设置
@@ -494,11 +627,7 @@ def receive_node(state: ReceiveState) -> ReceiveState:
     if not state.get("confirmed", False):
         fuzzy_result = _check_fuzzy_emergency(description)
         if fuzzy_result is not None:
-            logger.warning(
-                "模糊急救命中（%s），返回确认提示：description='%s'",
-                fuzzy_result["emergency_type"],
-                description,
-            )
+            logger.warning("模糊急救命中（%s），返回确认提示：description='%s'", fuzzy_result["emergency_type"], redact_pii(description), )
             return {
                 "description": description,
                 "address": "",
@@ -516,10 +645,7 @@ def receive_node(state: ReceiveState) -> ReceiveState:
     # 步骤1：前置机械校验（辅助层）
     # ------------------------------------------------------------------
     if not _is_valid_input(description):
-        logger.warning(
-            "前置机械校验拦截：description='%s'",
-            description,
-        )
+        logger.warning("前置机械校验拦截：description='%s'", redact_pii(description), )
         return {
             "description": description,
             "address": "",
@@ -535,6 +661,22 @@ def receive_node(state: ReceiveState) -> ReceiveState:
     # ------------------------------------------------------------------
     # 步骤2：多轮采样语义校验（消除单次调用随机性）
     # ------------------------------------------------------------------
+    # 熔断检查在采样循环之外：open 期间不触发任何 LLM 调用，
+    # 直接走既有「API异常 / confidence=none」降级路径（main 层转「待审核」）。
+    if not llm_circuit.allow_call():
+        logger.error("LLM 熔断器 open，跳过 LLM 调用直接降级（待审核）。描述='%s'，状态=%s", redact_pii(description), llm_circuit.state(), )
+        return {
+            "description": description,
+            "address": "",
+            "event_type": "API异常",
+            "urgency": "低",
+            "scene_tag": "常规",
+            "handler": "",
+            "confidence": "none",
+            "confirmation_required": False,
+            "emergency_type": state.get("emergency_type", ""),
+        }
+
     # 对同一描述并行调用多次 LLM API（ThreadPoolExecutor），投票统计获得稳定结果。
     # 任何一轮调用异常均单独捕获，不影响其他轮次。
     parsed_results: list[dict] = []
@@ -552,20 +694,13 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             try:
                 parsed_results.append(future.result())
             except Exception as exc:
-                logger.warning(
-                    "语义校验某轮 API 异常，继续收集其他轮次结果。描述='%s'，异常=%s",
-                    description,
-                    exc,
-                )
+                logger.warning("语义校验某轮 API 异常，继续收集其他轮次结果。描述='%s'，异常=%s", redact_pii(description), redact_pii(exc), )
                 continue
 
-    # 所有轮次均失败 -> 明确标记为 API异常
+    # 所有轮次均失败 -> 明确标记为 API异常（并计入熔断失败计数）
     if not parsed_results:
-        logger.error(
-            "语义校验全部 %d 轮均失败，标记为 API异常。描述='%s'",
-            SEMANTIC_CHECK_ROUNDS,
-            description,
-        )
+        llm_circuit.record_failure()
+        logger.error("语义校验全部 %d 轮均失败，标记为 API异常。描述='%s'", SEMANTIC_CHECK_ROUNDS, redact_pii(description), )
         return {
             "description": description,
             "address": "",
@@ -578,6 +713,8 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             "emergency_type": state.get("emergency_type", ""),
         }
 
+    llm_circuit.record_success()
+
     # 投票：取多数结果并计算置信度
     merged, confidence = _vote_on_results(parsed_results)
 
@@ -588,10 +725,7 @@ def receive_node(state: ReceiveState) -> ReceiveState:
     if not is_valid:
         # 安全兜底：涉及生命安全/紧急救援的输入，即使模型判断无效，也不直接拒绝
         if _LIFE_RESCUE_RE.search(description) or _EMERGENCY_RESCUE_RE.search(description):
-            logger.warning(
-                "语义校验安全兜底：模型判定无效，但命中紧急关键词，降级为待审核。description='%s'",
-                description,
-            )
+            logger.warning("语义校验安全兜底：模型判定无效，但命中紧急关键词，降级为待审核。description='%s'", redact_pii(description), )
             scene_tag_val = "生命急救" if _LIFE_RESCUE_RE.search(description) else "紧急救援"
             return {
                 "description": description,
@@ -608,12 +742,7 @@ def receive_node(state: ReceiveState) -> ReceiveState:
         # 短词乱打/闲聊不再转待审核：LLM 判无效即拒绝（真实紧急短词已由前置硬规则/模糊急救拦截）
 
         reject_reason = merged.get("reject_reason", "语义判断为无效输入")
-        logger.warning(
-            "语义校验拦截（置信度=%s）：%s。description='%s'",
-            confidence,
-            reject_reason,
-            description,
-        )
+        logger.warning("语义校验拦截（置信度=%s）：%s。description='%s'", confidence, reject_reason, redact_pii(description), )
         return {
             "description": description,
             "address": "",
@@ -642,12 +771,7 @@ def receive_node(state: ReceiveState) -> ReceiveState:
 
     # 置信度低 -> 进入待审核状态，不直接派单
     if confidence == "low":
-        logger.warning(
-            "输入进入待审核状态（语义置信度低）：description='%s'，address='%s'，confidence=%s",
-            description,
-            address,
-            confidence,
-        )
+        logger.warning("输入进入待审核状态（语义置信度低）：description='%s'，address='%s'，confidence=%s", redact_pii(description), redact_pii(address), confidence, )
         return {
             "description": description,
             "address": address,

@@ -42,11 +42,29 @@ LLM_MODEL=deepseek-chat
 
 # 账号数据加密密钥（必填，缺失则服务拒绝启动）
 DATA_ENCRYPTION_KEY=<64 位十六进制>
+
+# CORS 跨域来源白名单（可选；逗号分隔，默认本机 + 生产前端 http://118.31.58.191:8000）
+# CORS_ALLOW_ORIGINS=http://127.0.0.1:8000,http://localhost:8000,http://118.31.58.191:8000
+
+# 限流（可选，默认开启）：登录/注册 5 次/分钟/IP，POST /api/events 10 次/分钟/用户
+# RATE_LIMIT_ENABLED=true
+# RATE_LIMIT_LOGIN=5/minute
+# RATE_LIMIT_EVENTS=10/minute
+
+# LLM 调用可靠性（可选）：瞬时失败退避重试 2 次（1s/2s）+ 连续失败 5 次熔断 60s
+# LLM_RETRY_ATTEMPTS=2
+# LLM_RETRY_BASE_DELAY=1.0
+# LLM_CIRCUIT_THRESHOLD=5
+# LLM_CIRCUIT_COOLDOWN=60
 ```
 
 > **注意**：`LLM_API_KEY` 请替换为你的真实密钥。
 > `DATA_ENCRYPTION_KEY` 用于加密账号/会话数据，生成方式：
 > `python -c "import secrets; print(secrets.token_hex(32))"`。密钥需单独备份，丢失即账号数据永久无法解密。
+>
+> **CORS 说明**：`CORS_ALLOW_ORIGINS` 控制前端跨域来源白名单（默认已含本机与生产前端
+> `http://118.31.58.191:8000`），生产环境前端域名变化时在 `.env` 修改该变量即可，无需改代码。
+> 若设为 `*` 通配所有来源，`allow_credentials` 会自动降级为 `false`（通配 + 凭据组合会被浏览器拒绝）。
 
 ### 4. 启动服务
 
@@ -75,6 +93,23 @@ http://127.0.0.1:8000/
 ---
 
 ## API 接口
+
+### 限流与 429
+
+服务内置单机内存限流（slowapi，默认开启）：
+- `POST /api/auth/login`、`POST /api/auth/register`：按客户端 IP 限流，默认 **5 次/分钟**；
+- `POST /api/events`：按 Bearer token 内 `user_id` 限流（无有效 token 按 IP 兜底），默认 **10 次/分钟**。
+
+超限统一返回 **HTTP 429**，响应体固定为：
+
+```json
+{"detail": "请求过于频繁，请稍后再试"}
+```
+
+前端请将 429 视为「稍后重试」类错误（现有 fetch 错误分支可兜底），无需特殊处理。
+测试/压测环境可通过 `RATE_LIMIT_ENABLED=false` 关闭限流；阈值通过 `RATE_LIMIT_LOGIN`、
+`RATE_LIMIT_EVENTS` 调整（见上文 `.env` 配置）。
+
 
 ### GET /health
 
@@ -351,6 +386,8 @@ curl -X POST http://127.0.0.1:8000/api/events \
 {"description":"我家楼下下水道堵了","address":"","event_type":"物业维修","urgency":"中","handler":"物业部","status":"已派单","created_at":"2026-07-29 14:30:00"}
 ```
 
+> **生产部署**：事件的备份/回滚、扩容与多实例的写入约束，详见 `deploy/DEPLOY.md` 第 7 章「标准化回滚 SOP」与第 8 章「扩容与多实例」。
+
 ## 账号数据加密存储
 
 用户账号与会话数据（用户名、手机号、身份证号、会话 Token 等）使用 **AES-256-GCM** 加密后存入 `secure/` 目录（`users.json.enc`、`sessions.json.enc`），密钥来自环境变量 `DATA_ENCRYPTION_KEY`。
@@ -366,6 +403,8 @@ curl -X POST http://127.0.0.1:8000/api/events \
   DATA_ENCRYPTION_KEY=<旧密钥> python secure_store.py rekey --new <新密钥>   # 轮换密钥（重加密）
   ```
 - 首次从旧版本升级时，`data/users.json` 等明文数据会自动加密迁移到 `secure/`，原文件改名为 `*.migrated.bak`。
+
+> **生产部署**：`DATA_ENCRYPTION_KEY` 与 `secure/*.enc` 必须成对备份/恢复（回滚 SOP 见 `deploy/DEPLOY.md` 第 7 章「标准化回滚 SOP」）；多副本扩容时账号数据建议 `AUTH_STORE=cloudbase` 上云（见 `deploy/DEPLOY.md` 第 8 章「扩容与多实例」）。
 
 ---
 

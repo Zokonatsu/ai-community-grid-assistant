@@ -9,3 +9,13 @@ cryptography==46.0.2
 cos-python-sdk-v5==1.9.44
 pytest==8.3.4
 pytest-cov==6.0.0
+
+# ---- 限流与 LLM 调用可靠性（T20260821-004）----
+slowapi==0.1.9
+tenacity==9.1.4
+
+# ---- Prometheus 监控指标（T20260821-005）----
+prometheus-fastapi-instrumentator==8.1.0
+# prometheus-client 锁定 0.21.0：保持 Content-Type text/plain; version=0.0.4（冻结契约），
+# 0.22+ 将版本号改为 1.0.0（Prometheus 采集均兼容，但按契约锁定）
+prometheus-client==0.21.0

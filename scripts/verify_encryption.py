@@ -20,7 +20,7 @@ import subprocess
 import sys
 import tempfile
 
-PROJ = os.path.dirname(os.path.abspath(__file__))
+PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 项目根（scripts/ 上一级）
 SCRATCH = os.path.join(tempfile.gettempdir(), "verify_enc_scratch")
 KEY = "1" * 64
 WRONG_KEY = "2" * 64
@@ -43,6 +43,7 @@ def reset_scratch(with_users_plaintext=False):
     os.makedirs(SCRATCH)
     shutil.copy(os.path.join(PROJ, "auth.py"), SCRATCH)
     shutil.copy(os.path.join(PROJ, "secure_store.py"), SCRATCH)
+    shutil.copy(os.path.join(PROJ, "config.py"), SCRATCH)  # auth 依赖 config
     shutil.copy(os.path.join(PROJ, "cloud_store.py"), SCRATCH)
     shutil.copy(os.path.join(PROJ, "geo.py"), SCRATCH)
     shutil.copy(os.path.join(PROJ, "community_store.py"), SCRATCH)
@@ -71,6 +72,10 @@ def reset_scratch(with_users_plaintext=False):
 def run(code, key=None, cwd=SCRATCH):
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"
+    # config.py 启动校验 LLM_API_KEY 等必填项：裸环境补默认值，确保场景 1 测的是缺 DATA_ENCRYPTION_KEY
+    env.setdefault("LLM_API_KEY", "test-key")
+    env.setdefault("LLM_BASE_URL", "http://test")
+    env.setdefault("AUTH_STORE", "file")
     if key:
         env["DATA_ENCRYPTION_KEY"] = key
     else:
@@ -105,7 +110,10 @@ if os.path.exists(enc):
         blob = f.read()
     check("加密文件含 MAGIC 头", blob[:8] == b"AGCRYPT1", f"头8字节={blob[:8]!r}")
     check("加密文件无明文 admin 字样", b"admin" not in blob and b"admin123456" not in blob, f"大小={len(blob)}B")
-    check("加密文件是二进制(含0字节)", b"\x00" in blob, "")
+    # 确定性二进制判定：密文含随机字节，几乎必然存在非可打印 ASCII 字节；
+    # 避免依赖「恰好含 0x00」的概率性检查（历史 flaky，见 2026-08-19 日志）。
+    check("加密文件是二进制(非纯ASCII文本)",
+          not all(32 <= b <= 126 for b in blob), f"大小={len(blob)}B")
 # sessions 文件在首次登录（写入会话）后才生成
 r = run("import auth; ok, msg, d = auth.login_user('admin', 'admin123456'); print('L', ok)",
         key=KEY)

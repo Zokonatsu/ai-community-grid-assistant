@@ -24,6 +24,9 @@ from typing import Any, TypedDict
 
 from langgraph.graph import StateGraph, START, END
 
+# T20260821-003：事件记录落盘前字段级加密（复用 DATA_ENCRYPTION_KEY）
+from secure_store import EVENT_ENCRYPT_FIELDS, encrypt_record_fields
+
 # ------------------------------------------------------------------
 # 配置日志记录器
 # ------------------------------------------------------------------
@@ -150,12 +153,15 @@ def record_node(state: RecordState) -> RecordState:
         record["lng"] = lng
 
     # 持久化到 JSONL 文件：锁保护 + 异常降级
-    # 无论文件写入成功或失败，均返回完整状态，确保上游链路不中断
+    # 无论文件写入成功或失败，均返回完整状态，确保上游链路不中断。
+    # T20260821-003：落盘前对敏感字段（description/address/reply/user_id/lat/lng）
+    # 加密，仅加密副本，返回给上游的 result 保持明文。
+    disk_record = encrypt_record_fields(record, EVENT_ENCRYPT_FIELDS)
     try:
         _ensure_data_dir()
         with _write_lock:
             with open(EVENTS_FILE, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                f.write(json.dumps(disk_record, ensure_ascii=False) + "\n")
     except (OSError, IOError, TypeError, ValueError) as exc:
         # OSError/IOError: 磁盘满、权限不足、路径不可写等
         # TypeError/ValueError: json.dumps 序列化异常（理论上不会发生，防御性捕获）

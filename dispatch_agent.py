@@ -22,6 +22,8 @@ from typing import TypedDict
 
 from langgraph.graph import StateGraph, START, END
 
+from log_redact import redact_pii
+
 # ------------------------------------------------------------------
 # 配置日志记录器
 # ------------------------------------------------------------------
@@ -179,7 +181,7 @@ def dispatch_node(state: DispatchState) -> DispatchState:
             logger.warning(
                 "未知的事件类型 '%s'，回退到综合部处理。description='%s'",
                 event_type,
-                state.get("description", ""),
+                redact_pii(state.get("description", "")),
             )
 
         # 紧急标记：若紧急程度为"高"，在 handler 前添加"[紧急]"前缀

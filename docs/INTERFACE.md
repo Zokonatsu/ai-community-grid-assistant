@@ -38,6 +38,16 @@
 - `lat` 范围 `[-90,90]`、`lng` 范围 `[-180,180]`，越界 → 400
 
 
+## 限流（429）
+
+服务内置单机内存限流（slowapi，`RATE_LIMIT_ENABLED` 控制，默认开启）：
+- `POST /api/auth/login`、`POST /api/auth/register`：keyfunc=客户端 IP，默认 `5/minute`（`RATE_LIMIT_LOGIN`）；
+- `POST /api/events`：keyfunc=Bearer token 内 `user_id`，无有效 token 按 IP 兜底，默认 `10/minute`（`RATE_LIMIT_EVENTS`）。
+
+超限统一返回 **HTTP 429**，响应体固定为 `{"detail": "请求过于频繁，请稍后再试"}`
+（全局 exception handler，与其它业务错误码/文案独立）。限流计数为单机内存窗口，
+服务重启即清零；测试环境建议 `RATE_LIMIT_ENABLED=false` 关闭。
+
 ## HTTP API（register）
 
 `POST /api/auth/register`（无需登录），请求体字段：
@@ -79,6 +89,40 @@
 - 撤销仅将状态标记为「已撤销」，不清除 replies/handler 等既有字段（保留记录，居民与后台仍可见）；不物理删除。
 - `GET /api/events` 对已撤销事件照常返回（status=已撤销）。
 - `_process_event` 超时/异常分支仅当 status ∈ {处理中, 待审核} 时才改写为处理超时/处理失败，防止覆盖「已撤销」。
+
+
+## HTTP API（logout）
+
+`POST /api/auth/logout`（可带 Bearer token，无请求体）：
+
+| 场景 | 状态码 | 响应 |
+|---|---|---|
+| 带有效 token | 200 | `{"message": "登出成功"}` |
+| 无 token（幂等） | 200 | `{"message": "登出成功"}` |
+| 无效 token（幂等） | 200 | `{"message": "登出成功"}` |
+
+说明：
+- 鉴权可选（幂等端点）；带有效 token 时删除服务端 session，使该 token 立即失效。
+- 登出后同一 token 调 `GET /api/auth/me` 返回 401「未登录或登录已过期，请重新登录」。
+- 无 token / 无效 token 同样返回 200，不抛错。
+
+
+## HTTP API（metrics）
+
+`GET /metrics`（无需鉴权、不参与业务限流，T20260821-005）：
+
+| 项 | 契约 |
+|---|---|
+| 状态码 | 200 |
+| Content-Type | `text/plain; version=0.0.4; charset=utf-8` |
+| 鉴权 | 不需要（无 Authorization 也 200） |
+| 限流 | 不参与（slowapi 仅作用于显式 `@limiter.limit` 端点，`RATE_LIMIT_ENABLED` 不影响） |
+| OpenAPI | 不展示（`include_in_schema=False`） |
+| 必含指标 | `http_requests_total`、`http_request_duration_seconds`（另含 `http_request_duration_highr_seconds`、`http_request_size_bytes`、`http_response_size_bytes` 与进程/Python 运行时指标） |
+
+说明：
+- 供 Prometheus 抓取；指标清单、scrape 与 Alertmanager 告警配置示例见 docs/监控告警.md。
+- 生产建议经反向代理限制 /metrics 仅内网/运维网段可达。
 
 
 ## 规则

@@ -74,3 +74,54 @@ if AUTH_STORE == "cloudbase":
             + "。请按 DEPLOY.md 在 .env 中配置腾讯云 COS 存储桶信息，"
             + "或改回 AUTH_STORE=file 使用本地存储。"
         )
+
+# ------------------------------------------------------------------
+# CORS 跨域来源白名单（可选，默认本机 + 生产前端域名）
+# ------------------------------------------------------------------
+# 逗号分隔，允许空格，逐项 trim；空项忽略。未设置时默认放行本机与生产前端域名。
+# 生产环境前端若使用独立域名，直接修改该变量即可，无需改代码。
+# 注意：若列表含通配符 *（放行所有来源），allow_credentials 会被自动置为 False
+# （通配来源 + 携带凭据的组合会被浏览器拒绝），见 main.py 中间件注册处。
+_CORS_DEFAULT_ALLOW_ORIGINS = (
+    "http://127.0.0.1:8000,http://localhost:8000,http://118.31.58.191:8000"
+)
+CORS_ALLOW_ORIGINS: list[str] = [
+    item.strip()
+    for item in (os.getenv("CORS_ALLOW_ORIGINS") or _CORS_DEFAULT_ALLOW_ORIGINS).split(",")
+    if item.strip()
+]
+
+# ------------------------------------------------------------------
+# 限流配置（slowapi，T20260821-004）
+# ------------------------------------------------------------------
+# RATE_LIMIT_ENABLED：false 时跳过全部限流（测试环境用，保证既有回归不受 429 干扰）；
+#   生产默认开启。true/1/yes/on 开启，其余视为关闭。
+# RATE_LIMIT_LOGIN ：登录/注册限流，keyfunc=客户端 IP（slowapi 按端点路径各自独立计数）。
+# RATE_LIMIT_EVENTS：POST /api/events 限流，keyfunc=Bearer token 内 user_id，无 token 按 IP。
+# 超限统一返回 HTTP 429 + JSON {"detail": "请求过于频繁，请稍后再试"}（见 main.py）。
+RATE_LIMIT_ENABLED: bool = (
+    os.getenv("RATE_LIMIT_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+)
+RATE_LIMIT_LOGIN: str = (os.getenv("RATE_LIMIT_LOGIN") or "5/minute").strip()
+RATE_LIMIT_EVENTS: str = (os.getenv("RATE_LIMIT_EVENTS") or "10/minute").strip()
+
+# ------------------------------------------------------------------
+# LLM 调用可靠性：退避重试 + 熔断器（receive_agent.py，T20260821-004）
+# ------------------------------------------------------------------
+# LLM_RETRY_ATTEMPTS   ：瞬时失败（连接/超时/限流/5xx）自动重试次数（退避基数秒 1s/2s）
+# LLM_RETRY_BASE_DELAY ：指数退避基数秒（第 1 次重试等待 base，第 2 次等待 base*2）
+# LLM_CIRCUIT_THRESHOLD：连续失败次数达到该值后熔断器 open（open 期间不再调用 LLM）
+# LLM_CIRCUIT_COOLDOWN ：熔断保持秒数；到期自动进入半开，允许一次试探调用恢复
+LLM_RETRY_ATTEMPTS: int = int(os.getenv("LLM_RETRY_ATTEMPTS", "2"))
+LLM_RETRY_BASE_DELAY: float = float(os.getenv("LLM_RETRY_BASE_DELAY", "1.0"))
+LLM_CIRCUIT_THRESHOLD: int = int(os.getenv("LLM_CIRCUIT_THRESHOLD", "5"))
+LLM_CIRCUIT_COOLDOWN: float = float(os.getenv("LLM_CIRCUIT_COOLDOWN", "60"))
+
+# ------------------------------------------------------------------
+# 日志脱敏（问题 10：PII 不落明文日志）
+# ------------------------------------------------------------------
+# LOG_REDACT：true（默认）时，日志中的手机号/身份证等模式化 PII 会被掩码
+# （见 log_redact.py）。生产建议保持开启；本地调试可置 false 看原始内容。
+LOG_REDACT: bool = (
+    os.getenv("LOG_REDACT", "true").strip().lower() in ("1", "true", "yes", "on")
+)

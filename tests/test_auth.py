@@ -181,6 +181,10 @@ def get_me(token):
     res = client.get("/api/auth/me", headers=auth_header(token))
     return res
 
+def logout(token=None):
+    """调用服务端登出端点，返回 Response"""
+    return client.post("/api/auth/logout", headers=auth_header(token))
+
 def submit_event(token, description):
     """提交事件"""
     res = client.post("/api/events", json={"description": description}, headers=auth_header(token))
@@ -549,26 +553,55 @@ def test_suite():
     else:
         results.add_fail("7.2 登出后无Token请求", "401", f"{res.status_code}")
     
-    # 7.3 服务端无主动登出端点
-    results.add_pass(
-        "7.3 服务端缺少 /api/auth/logout",
-        "WARNING:当前系统没有服务端登出 API。logout 仅删除客户端 localStorage。"
-        "服务端 token 仍然有效（直到 7 天过期）。如果有人获取了 token，"
-        "即使前端已登出，仍可用该 token 直接调用 API。"
-        "建议：添加 POST /api/auth/logout 端点以在服务端删除 session。"
-    )
-    
-    # 7.4 验证登出后旧 token 仍然有效（服务端未清除）
-    if resident_token:
-        res = get_me(resident_token)
-        if res.status_code == 200:
-            results.add_pass("7.4 旧Token仍有效（服务端未清除）",
-                "登出后服务端 session 仍存在。前端 localStorage 已删除 token，"
-                "所以正常用户无法使用。但如果 token 泄露，攻击者仍可利用。"
-                "这是一个已知的设计取舍：简单 vs 安全的权衡。")
+    # 7.3 服务端登出：登录 -> logout 200 {"message":"登出成功"} -> 同一 token /me 401
+    logout_login = login(RESIDENT_USER, RESIDENT_PASS)
+    logout_token = (logout_login.get("data") or {}).get("token") if logout_login.get("success") else None
+    if logout_token:
+        res = logout(logout_token)
+        if res.status_code == 200 and res.json() == {"message": "登出成功"}:
+            results.add_pass("7.3 POST /api/auth/logout", '返回 200 + {"message": "登出成功"}')
         else:
-            results.add_pass("7.4 旧Token状态", f"返回 {res.status_code}")
-    
+            results.add_fail("7.3 POST /api/auth/logout", '200 {"message":"登出成功"}',
+                             f"{res.status_code} {res.text[:200]}")
+        res = get_me(logout_token)
+        if res.status_code == 401 and res.json().get("detail") == "未登录或登录已过期，请重新登录":
+            results.add_pass("7.3 登出后同一token访问 /api/auth/me", "返回 401，服务端已删除 session")
+        else:
+            results.add_fail("7.3 登出后同一token访问 /api/auth/me",
+                             "401 未登录或登录已过期，请重新登录", f"{res.status_code} {res.text[:200]}")
+    else:
+        results.add_error("7.3 服务端登出", "无可用 token（重新登录失败）")
+
+    # 7.4 服务端登出后 token 立即失效（登出前 /me 200 -> 登出 -> /me 401）+ 无/无效 token 幂等 200
+    if resident_token:
+        res_before = get_me(resident_token)
+        if res_before.status_code == 200:
+            results.add_pass("7.4 登出前 /api/auth/me", f"返回 200，用户 {res_before.json().get('username')} 仍登录")
+        else:
+            results.add_fail("7.4 登出前 /api/auth/me", "200", f"{res_before.status_code}")
+        res = logout(resident_token)
+        if res.status_code == 200 and res.json() == {"message": "登出成功"}:
+            results.add_pass("7.4 POST /api/auth/logout", '返回 200 + {"message": "登出成功"}')
+        else:
+            results.add_fail("7.4 POST /api/auth/logout", '200 {"message":"登出成功"}',
+                             f"{res.status_code} {res.text[:200]}")
+        res_after = get_me(resident_token)
+        if res_after.status_code == 401:
+            results.add_pass("7.4 登出后 token 立即失效", "同一 token 访问 /api/auth/me 返回 401，需重新登录")
+        else:
+            results.add_fail("7.4 登出后 token 立即失效", "401", f"{res_after.status_code}")
+    else:
+        results.add_error("7.4 登出后 token 立即失效", "无可用 token（3.2 登录失败）")
+
+    # 7.4b 无 token / 无效 token 调 logout -> 200（幂等，不抛错）
+    for _label, _token in (("无Token", None), ("无效Token", "invalid_token_12345")):
+        res = logout(_token)
+        if res.status_code == 200 and res.json() == {"message": "登出成功"}:
+            results.add_pass(f"7.4 {_label}登出幂等", '返回 200 + {"message": "登出成功"}')
+        else:
+            results.add_fail(f"7.4 {_label}登出幂等", '200 {"message":"登出成功"}',
+                             f"{res.status_code} {res.text[:200]}")
+
     # ==================================================================
     # 附加测试：边界情况
     # ==================================================================

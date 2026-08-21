@@ -12,6 +12,7 @@ secure_store.py
   绝不静默返回空字典（否则上层会误判"无用户"并重建 admin 覆盖真实数据）。
 """
 
+import base64
 import json
 import logging
 import os
@@ -66,7 +67,7 @@ def get_key() -> bytes:
 # ------------------------------------------------------------------
 def _aad(kind: str) -> bytes:
     """AAD 域隔离：users 与 sessions 使用不同上下文，防止文件被交换。"""
-    if kind not in ("users", "sessions"):
+    if kind not in ("users", "sessions", "field"):
         raise ValueError(f"未知的存储域 kind={kind!r}")
     return f"ai-community-auth:{kind}:v1".encode("utf-8")
 
@@ -109,6 +110,112 @@ def decrypt(kind: str, blob: bytes, key: bytes | None = None) -> dict:
     if not isinstance(data, dict):
         raise SecureStoreError("解密内容结构异常（应为对象）。")
     return data
+
+
+# ------------------------------------------------------------------
+# 字段级加解密（任务/事件数据 at-rest 字段加密，T20260821-003）
+# ------------------------------------------------------------------
+# 与账号文件加密同一把 DATA_ENCRYPTION_KEY（AES-256-GCM），但使用独立 AAD
+# kind="field"，与 users/sessions 域隔离，防止跨域密文被交换/复用。
+# 格式：enc:v1:<base64(nonce || ciphertext||tag)>，空值不加密原样返回。
+FIELD_PREFIX: str = "enc:v1:"
+
+# 加密字段清单（冻结契约 3.2；非空才加密，空值/None 保持明文/原值）
+TASK_ENCRYPT_FIELDS: tuple[str, ...] = (
+    "description", "address", "reply",
+    "user_name", "user_phone", "user_id_card",
+    "beneficiary_name", "beneficiary_phone", "beneficiary_building",
+    "beneficiary_unit", "beneficiary_room",
+    "event_lat", "event_lng",
+)
+TASK_NUMERIC_FIELDS: tuple[str, ...] = ("event_lat", "event_lng")
+EVENT_ENCRYPT_FIELDS: tuple[str, ...] = (
+    "description", "address", "reply", "user_id", "lat", "lng",
+)
+
+
+def encrypt_field(value: str | None) -> str | None:
+    """字段级加密：非空字符串 -> `enc:v1:<base64>`；空串/None 原样返回。
+
+    数值字段由调用方先 str() 后传入（解密后按数值字段还原 float/None）。
+    密钥缺失/非法时 raise SecureStoreError（与账号数据一致，不静默降级）。
+    """
+    if value is None or value == "":
+        return value
+    key = get_key()
+    plaintext = str(value).encode("utf-8")
+    nonce = secrets.token_bytes(NONCE_LEN)
+    ct_tag = AESGCM(key).encrypt(nonce, plaintext, _aad("field"))
+    return FIELD_PREFIX + base64.b64encode(nonce + ct_tag).decode("ascii")
+
+
+def decrypt_field(value: str | None) -> str | None:
+    """字段级解密：以 `enc:v1:` 开头 -> 解密还原；否则视为明文原样返回（存量兼容）。
+
+    解密失败（密钥不匹配/密文被篡改损坏/编码非法）raise SecureStoreError，
+    与账号数据一致的 fail-fast，绝不静默返回密文或空值。
+    """
+    if value is None or not isinstance(value, str) or not value.startswith(FIELD_PREFIX):
+        return value
+    key = get_key()
+    try:
+        raw = base64.b64decode(value[len(FIELD_PREFIX):], validate=True)
+    except Exception as exc:
+        raise SecureStoreError(
+            f"字段密文 base64 解码失败，数据可能已损坏（前缀 {FIELD_PREFIX}）。"
+        ) from exc
+    if len(raw) <= NONCE_LEN:
+        raise SecureStoreError("字段密文内容过短，已损坏。")
+    nonce, ct_tag = raw[:NONCE_LEN], raw[NONCE_LEN:]
+    try:
+        return AESGCM(key).decrypt(nonce, ct_tag, _aad("field")).decode("utf-8")
+    except Exception as exc:
+        raise SecureStoreError(
+            f"字段解密失败（密钥不匹配或密文被篡改/损坏），前缀 {FIELD_PREFIX}。\n"
+            f"可能原因：1) {KEY_ENV} 与写入时不一致；2) 数据被篡改或损坏。"
+        ) from exc
+
+
+def encrypt_record_fields(
+    record: dict,
+    fields: tuple[str, ...],
+    numeric_fields: tuple[str, ...] = (),
+) -> dict:
+    """返回逐字段加密后的新 dict（不修改原 dict，内存保持明文）。
+
+    - 仅对 fields 中「非空」字段加密（空串/None 保持原值）；
+    - 数值字段（如 event_lat/event_lng/lat/lng）统一 str() 后加密为 enc:v1: 字符串。
+    """
+    out = dict(record)
+    for field in fields:
+        value = out.get(field)
+        if value is None or value == "":
+            continue
+        out[field] = encrypt_field(str(value))
+    return out
+
+
+def decrypt_record_fields(
+    record: dict,
+    fields: tuple[str, ...],
+    numeric_fields: tuple[str, ...] = (),
+) -> dict:
+    """返回逐字段解密后的新 dict：enc:v1: -> 明文；其余原样（存量兼容）。
+
+    - 数值字段解密后还原 float，空/None 还原为 None；
+    - 解密失败 raise SecureStoreError（fail-fast）。
+    """
+    out = dict(record)
+    for field in fields:
+        value = out.get(field)
+        if value is None or not isinstance(value, str) or not value.startswith(FIELD_PREFIX):
+            continue
+        decrypted = decrypt_field(value)
+        if field in numeric_fields:
+            out[field] = float(decrypted) if decrypted not in (None, "") else None
+        else:
+            out[field] = decrypted
+    return out
 
 
 # ------------------------------------------------------------------
@@ -187,3 +294,4 @@ def main(argv: list[str] | None = None) -> int:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     raise SystemExit(main())
+

@@ -37,6 +37,9 @@ os.environ["AUTH_STORE"] = "file"
 os.environ["DATA_ENCRYPTION_KEY"] = "1" * 64
 os.environ["LLM_API_KEY"] = "test-key"
 os.environ["LLM_BASE_URL"] = "http://test"
+# T20260821-004：默认关闭限流，保证既有回归不受 429 干扰；
+# 限流专项测试在测试文件内显式置 RATE_LIMIT_ENABLED=true 后重载 main。
+os.environ["RATE_LIMIT_ENABLED"] = "false"
 
 
 # ------------------------------------------------------------------
