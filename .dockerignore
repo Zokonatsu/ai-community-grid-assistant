@@ -1,0 +1,25 @@
+# 环境变量文件（防止 API Key 泄露进镜像）
+.env
+
+# Python 缓存文件
+__pycache__/
+*.pyc
+*.pyo
+
+# Git 仓库
+.git/
+
+# 虚拟环境
+.venv/
+venv/
+
+# 运行时数据目录（运行时生成，不打包进镜像）
+data/
+secure/
+
+# Docker 构建文件（构建无关）
+Dockerfile
+docker-compose.yml
+
+# 项目文档（构建无关）
+README.md

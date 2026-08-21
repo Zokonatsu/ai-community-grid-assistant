@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 · 知·社区网格</title>
+    <link rel="stylesheet" href="/common.css?v=2">
+</head>
+<body class="auth-body">
+    <div class="auth-container">
+        <div class="auth-header">
+            <h1 id="comm-title">知·社区网格</h1>
+            <p>用户登录与实名认证</p>
+        </div>
+        <div class="card">
+            <div class="tabs">
+                <div class="tab active" id="tab-login" onclick="switchTab('login')">登录</div>
+                <div class="tab" id="tab-register" onclick="switchTab('register')">注册</div>
+            </div>
+
+            <!-- 登录表单 -->
+            <form id="login-form" onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label for="login-username">用户名</label>
+                    <input type="text" id="login-username" placeholder="请输入用户名" required>
+                </div>
+                <div class="form-group">
+                    <label for="login-password">密码</label>
+                    <input type="password" id="login-password" placeholder="请输入密码" required>
+                </div>
+                <button type="submit" class="btn btn-block" id="login-btn">登录</button>
+                <div class="error hidden" id="login-error"></div>
+            </form>
+
+            <!-- 注册表单 -->
+            <form id="register-form" class="hidden" onsubmit="handleRegister(event)">
+                <div class="form-group">
+                    <label for="reg-username">用户名</label>
+                    <input type="text" id="reg-username" placeholder="3-20位，支持中文、字母、数字" required>
+                </div>
+                <div class="form-group">
+                    <label for="reg-password">密码</label>
+                    <input type="password" id="reg-password" placeholder="至少6位" required>
+                </div>
+                <div class="form-group">
+                    <label for="reg-confirm">确认密码</label>
+                    <input type="password" id="reg-confirm" placeholder="再次输入密码" required>
+                </div>
+                <div class="form-group">
+                    <label for="reg-realname">真实姓名</label>
+                    <input type="text" id="reg-realname" placeholder="请输入真实姓名" required>
+                </div>
+                <div class="form-group">
+                    <label for="reg-phone">手机号</label>
+                    <input type="tel" id="reg-phone" placeholder="请输入11位手机号" required>
+                </div>
+                <div class="form-group">
+                    <label for="reg-idcard">身份证号</label>
+                    <input type="text" id="reg-idcard" placeholder="请输入18位身份证号" maxlength="18" required>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="reg-building">楼栋</label>
+                        <input type="text" id="reg-building" placeholder="如：3栋" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-unit">单元</label>
+                        <input type="text" id="reg-unit" placeholder="如：1单元" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-room">房间号</label>
+                        <input type="text" id="reg-room" placeholder="如：1203" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="reg-locate-btn">当前位置定位</label>
+                    <div class="locate-row">
+                        <button type="button" class="btn" id="reg-locate-btn" onclick="locateRegister()">获取定位</button>
+                        <span id="reg-locate-status" class="locate-status">未定位（有定位时需在小区范围内）</span>
+                    </div>
+                    <input type="hidden" id="reg-lat">
+                    <input type="hidden" id="reg-lng">
+                </div>
+                <div class="form-group">
+                    <label for="reg-role">角色</label>
+                    <select id="reg-role" disabled>
+                        <option value="resident">居民</option>
+                    </select>
+                    <input type="hidden" id="reg-role-value" value="resident">
+                </div>
+                <button type="submit" class="btn btn-block" id="register-btn">注册</button>
+                <div class="error hidden" id="register-error"></div>
+                <div class="success hidden" id="register-success"></div>
+            </form>
+
+            <div class="hint">
+                登录状态将保持 7 天，刷新页面后无需重新登录。
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';
+
+        // 社区名称动态化：标题/页头随后台设置更新
+        (function () {
+            fetch(API_BASE + '/api/community')
+                .then(r => (r.ok ? r.json() : null))
+                .then(cfg => {
+                    if (cfg && cfg.name) {
+                        var t = cfg.name + '网格';
+                        document.title = '登录 · ' + t;
+                        var el = document.getElementById('comm-title');
+                        if (el) el.textContent = t;
+                    }
+                })
+                .catch(function () {});
+        })();
+
+                // 若已登录，直接跳转（管理员→后台，其它→首页）
+        (function() {
+            const token = localStorage.getItem('token');
+            if (token) {
+                // 静默校验 token 是否仍有效
+                fetch(`${API_BASE}/api/auth/me`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                }).then(r => {
+                    if (r.ok) {
+                        return r.json().then(user => {
+                            window.location.href = (user && user.role === 'admin') ? '/admin.html' : '/';
+                        });
+                    }
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('user');
+                }).catch(() => {
+                    // 网络异常不做处理，留在登录页
+                });
+            }
+        })();
+
+        function switchTab(tab) {
+            document.getElementById('tab-login').classList.toggle('active', tab === 'login');
+            document.getElementById('tab-register').classList.toggle('active', tab === 'register');
+            document.getElementById('login-form').classList.toggle('hidden', tab !== 'login');
+            document.getElementById('register-form').classList.toggle('hidden', tab !== 'register');
+            // 清空提示
+            document.getElementById('login-error').classList.add('hidden');
+            document.getElementById('register-error').classList.add('hidden');
+            document.getElementById('register-success').classList.add('hidden');
+        }
+
+        // 浏览器定位封装：成功返回 {lat,lng}，失败/拒绝返回 null（未定位则注册被阻止）
+        function getPosition() {
+            return new Promise(resolve => {
+                if (!navigator.geolocation) {
+                    resolve(null);
+                    return;
+                }
+                navigator.geolocation.getCurrentPosition(
+                    pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+                    () => resolve(null),
+                    { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+                );
+            });
+        }
+
+        async function locateRegister() {
+            const statusEl = document.getElementById('reg-locate-status');
+            const btn = document.getElementById('reg-locate-btn');
+            btn.disabled = true;
+            statusEl.textContent = '定位中…';
+            const pos = await getPosition();
+            btn.disabled = false;
+            if (pos) {
+                document.getElementById('reg-lat').value = pos.lat;
+                document.getElementById('reg-lng').value = pos.lng;
+                statusEl.textContent = `已定位（${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}）`;
+            } else {
+                statusEl.textContent = '定位不可用（需 HTTPS 或 localhost）；若社区已开放无定位注册，可直接点注册';
+            }
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const username = document.getElementById('login-username').value.trim();
+            const password = document.getElementById('login-password').value;
+            const btn = document.getElementById('login-btn');
+            const errorEl = document.getElementById('login-error');
+
+            errorEl.classList.add('hidden');
+            btn.disabled = true;
+            btn.textContent = '登录中…';
+
+            try {
+                const res = await fetch(`${API_BASE}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    errorEl.textContent = data.error || '登录失败';
+                    errorEl.classList.remove('hidden');
+                    return;
+                }
+                localStorage.setItem('token', data.data.token);
+                localStorage.setItem('user', JSON.stringify(data.data.user));
+                if (data.data.user.role === 'admin') {
+                    window.location.href = '/admin.html';
+                } else {
+                    window.location.href = '/';
+                }
+            } catch (err) {
+                errorEl.textContent = '网络请求失败，请检查服务是否启动';
+                errorEl.classList.remove('hidden');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '登录';
+            }
+        }
+
+        async function handleRegister(e) {
+            e.preventDefault();
+            const username = document.getElementById('reg-username').value.trim();
+            const password = document.getElementById('reg-password').value;
+            const confirm = document.getElementById('reg-confirm').value;
+            const real_name = document.getElementById('reg-realname').value.trim();
+            const phone = document.getElementById('reg-phone').value.trim();
+            const id_card = document.getElementById('reg-idcard').value.trim().toUpperCase();
+            const building = document.getElementById('reg-building').value.trim();
+            const unit = document.getElementById('reg-unit').value.trim();
+            const room = document.getElementById('reg-room').value.trim();
+            const role = document.getElementById('reg-role-value').value;
+            const register_lat = document.getElementById('reg-lat').value ? parseFloat(document.getElementById('reg-lat').value) : null;
+            const register_lng = document.getElementById('reg-lng').value ? parseFloat(document.getElementById('reg-lng').value) : null;
+            const btn = document.getElementById('register-btn');
+            const errorEl = document.getElementById('register-error');
+            const successEl = document.getElementById('register-success');
+
+            errorEl.classList.add('hidden');
+            successEl.classList.add('hidden');
+
+            if (password !== confirm) {
+                errorEl.textContent = '两次输入的密码不一致';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+            if (!/^[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dX]$/.test(id_card)) {
+                errorEl.textContent = '身份证号格式不正确，请输入18位有效身份证号';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+            if (!building || !unit || !room) {
+                errorEl.textContent = '请填写楼栋、单元和房间号';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+            const statusEl = document.getElementById('reg-locate-status');
+            if (register_lat === null || register_lng === null) {
+                // 定位不可用时不拦截：是否允许无定位注册由后端 COMMUNITY_REQUIRE_LOCATION 决定
+                statusEl.textContent = '未获取定位，将按无定位提交（若社区要求定位会被拒绝）';
+            }
+
+            btn.disabled = true;
+            btn.textContent = '注册中…';
+
+            try {
+                const res = await fetch(`${API_BASE}/api/auth/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password, real_name, phone, id_card, role, building, unit, room, register_lat, register_lng })
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    errorEl.textContent = data.error || '注册失败';
+                    errorEl.classList.remove('hidden');
+                    return;
+                }
+                successEl.textContent = '注册成功，请登录';
+                successEl.classList.remove('hidden');
+                document.getElementById('register-form').reset();
+            } catch (err) {
+                errorEl.textContent = '网络请求失败，请检查服务是否启动';
+                errorEl.classList.remove('hidden');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '注册';
+            }
+        }
+    </script>
+</body>
+</html>
