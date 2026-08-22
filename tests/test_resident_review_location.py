@@ -159,7 +159,7 @@ def test_suite():
     ev_id = body_ev.get("data", {}).get("event_id", "")
     
     # 5. 管理员后台住户列表（只读）：含完整身份证 + 距中心米数
-    admin_login = login("admin", "admin123456")
+    admin_login = login("admin", "GridAdmin2025!@#")
     admin_token = admin_login.get("data", {}).get("token")
     check("5.0 内置管理员可登录", bool(admin_token), str(admin_login.get("error")))
     

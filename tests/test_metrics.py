@@ -29,30 +29,34 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(PROJECT_DIR)
 sys.path.insert(0, PROJECT_DIR)
 
-# 显式开启限流：必须在导入 config/main 之前设置（conftest 默认置 false）。
-os.environ["RATE_LIMIT_ENABLED"] = "true"
-
-
-@pytest.fixture(scope="module")
-def metrics_ctx():
+@pytest.fixture(scope="function")
+def metrics_ctx(monkeypatch):
     """重建 config+main（RATE_LIMIT_ENABLED=true）+ TestClient。
 
     与 test_security_authorization 一致：先 patch receive_agent.OpenAI 再导入
     main，避免模块级构造真实 OpenAI 客户端；在 fixture 内懒加载，保证运行于
     conftest 数据隔离之后。
     """
-    import config  # noqa: F401  确保环境变量先于 main 读取
+    monkeypatch.setenv("RATE_LIMIT_ENABLED", "true")
+    import importlib
+    import sys
+    import config
+    importlib.reload(config)
+    if "main" in sys.modules:
+        del sys.modules["main"]
+        # 清理 prometheus 默认注册表，避免 Instrumentator 重复注册被吞，计数失效
+        from prometheus_client import REGISTRY
+        for collector in list(REGISTRY._collector_to_names.keys()):
+            REGISTRY.unregister(collector)
+
+    from main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
 
     _patch = patch("receive_agent.OpenAI")
     _patch.start()
-    try:
-        import main  # 首次导入即可（本进程独立运行，无需 reload；
-        # reload 会令 metrics.default() 在默认注册表上重复注册被吞，计数失效）
-        from fastapi.testclient import TestClient
-
-        return TestClient(main.app)
-    finally:
-        _patch.stop()
+    yield client
+    _patch.stop()
 
 
 def _requests_total(body: str) -> float:
@@ -75,6 +79,8 @@ def test_metrics_no_auth_200_and_content_type(metrics_ctx):
 
 def test_metrics_contains_standard_metrics(metrics_ctx):
     """包含 http_requests_total 与 http_request_duration_seconds 标准指标。"""
+    # 预热：触发一次 /health，确保 http_requests_total 有样本行（计数 > 0）
+    metrics_ctx.get("/health")
     body = metrics_ctx.get("/metrics").text
     assert "# HELP http_requests_total" in body
     assert "http_requests_total{" in body

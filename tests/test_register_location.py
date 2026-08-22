@@ -173,7 +173,7 @@ def test_suite():
     # ---------------------------------------------------------------
     # 4. 半径持久化生效（后台保存新中心/半径后立即按新值判定）
     # ---------------------------------------------------------------
-    admin_login = login("admin", "admin123456")
+    admin_login = login("admin", "GridAdmin2025!@#")
     admin_token = admin_login.get("data", {}).get("token")
     check("4.0 内置管理员可登录", bool(admin_token), str(admin_login.get("error")))
 

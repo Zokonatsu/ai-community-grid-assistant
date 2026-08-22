@@ -399,7 +399,7 @@ def test_suite():
     # 公开注册入口已按安全策略禁止创建管理员角色（见 test_security_fixes 测试2），
     # 因此不再尝试注册管理员，改为直接登录内置 admin。
     ADMIN_USER = "admin"
-    ADMIN_PASS = "admin123456"
+    ADMIN_PASS = "GridAdmin2025!@#"
     
     # 4.1 管理员登录（内置默认管理员）
     login_result = login(ADMIN_USER, ADMIN_PASS)

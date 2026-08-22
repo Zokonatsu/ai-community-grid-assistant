@@ -10,7 +10,7 @@ test_security_authorization.py
   4. 对象属性越权与列表隔离（BOPLA/API1/API3）：居民只见自己；响应不含他人身份证/手机/定位
      （event_lat/lng/event_distance_m 仅 admin）；请求携带越权字段被忽略。
   5. 资源限制（API4）：超长 description/用户名 -> 422；大请求不 500（现状无限流，以注释记录基线）。
-  6. 安全配置（API8）：错误 detail 不含堆栈/路径/密钥；默认凭据 admin/admin123456 风险基线；
+  6. 安全配置（API8）：错误 detail 不含堆栈/路径/密钥；默认凭据 admin/GridAdmin2025!@# 风险基线；
      CORS 中间件基线（allow_origins=*，待收紧注释）。
   7. 注入与不安全消费（API10）：HTML/脚本内容后端原样存储不执行；LLM 坏 JSON 降级
      （完整断链矩阵见 test_chain_breaks.py）。
@@ -318,7 +318,7 @@ def test_bola_list_isolation_and_bopla():
     try:
         _, token_a, user_a = _register(client, "iso_a")
         _, token_b, user_b = _register(client, "iso_b")
-        admin_token = _login(client, "admin", "admin123456")
+        admin_token = _login(client, "admin", "GridAdmin2025!@#")
 
         # A 提交事件（描述含唯一标记，便于断言）
         desc_a = f"隔离测试-唯一标记-{uuid.uuid4().hex[:6]}"
@@ -398,7 +398,7 @@ def test_resource_limits():
         # 5.3 超长回复（ReplyRequest 无 max_length，现状放行）-> 不 500（基线记录：回复无长度上限）
         eid = _submit_event_pending(client, token, "资源限制-回复基线")
         r = client.post(f"/api/events/{eid}/reply", json={"reply": "回" * 10000},
-                        headers=_auth_header(_login(client, "admin", "admin123456")))
+                        headers=_auth_header(_login(client, "admin", "GridAdmin2025!@#")))
         # 现状：回复无长度上限，应放行（200）而非 500；如未来收紧为 422 也算合规（不 500）
         assert r.status_code in (200, 422), f"超长回复应不 500，实际 {r.status_code}"
         assert r.status_code != 500, "超长回复导致 500"
@@ -436,16 +436,16 @@ def test_security_config():
         assert r.json().get("detail") == "未登录或登录已过期，请重新登录", r.json()
         for marker in _FORBIDDEN:
             assert marker not in r.text, f"401 响应泄露内部标记: {marker}"
-        # 6.4 默认凭据风险基线：admin/admin123456 存在且可登录（显式断言，标注待改密）
-        r = client.post("/api/auth/login", json={"username": "admin", "password": "admin123456"})
+        # 6.4 默认凭据风险基线：admin/GridAdmin2025!@# 存在且可登录（显式断言，标注待改密）
+        r = client.post("/api/auth/login", json={"username": "admin", "password": "GridAdmin2025!@#"})
         assert r.status_code == 200 and r.json().get("success"), \
-            "默认管理员 admin/admin123456 应存在（风险基线）"
+            "默认管理员 admin/GridAdmin2025!@# 应存在（风险基线）"
         # 6.5 CORS 基线：中间件存在；allow_origins=* 为现状（上线前需收紧）
         cors = [m for m in main_module.app.user_middleware
                 if getattr(m, "cls", None).__name__ == "CORSMiddleware"]
         assert cors, "应配置 CORSMiddleware"
         opts = getattr(cors[0], "kwargs", {})
-        print(f"  [PASS] API8 安全配置：错误响应零内部细节；默认凭据基线=admin/admin123456"
+        print(f"  [PASS] API8 安全配置：错误响应零内部细节；默认凭据基线=admin/GridAdmin2025!@#"
               f"（待改密）；CORS 现状 allow_origins={opts.get('allow_origins')}（待收紧）")
     finally:
         restore()
@@ -464,7 +464,7 @@ def test_injection_and_unsafe_consumption():
         # 7.1 服务端原样存储（不执行、不净化）：后端职责是存储，转义在渲染层
         assert main_module._tasks[eid]["description"] == payload, "描述应原样存储"
         # 7.2 回复原样存储（不执行）
-        admin_token = _login(client, "admin", "admin123456")
+        admin_token = _login(client, "admin", "GridAdmin2025!@#")
         r = client.post(f"/api/events/{eid}/reply", json={"reply": payload},
                         headers=_auth_header(admin_token))
         assert r.status_code == 200, r.text[:200]

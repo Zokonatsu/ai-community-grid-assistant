@@ -30,11 +30,6 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(PROJECT_DIR)
 sys.path.insert(0, PROJECT_DIR)
 
-# 显式开启限流：必须在导入 config/main 之前设置（conftest 默认置 false）。
-os.environ["RATE_LIMIT_ENABLED"] = "true"
-os.environ["RATE_LIMIT_LOGIN"] = "5/minute"
-os.environ["RATE_LIMIT_EVENTS"] = "10/minute"
-
 # 生产默认熔断/重试参数由 config 提供；测试内用 monkeypatch 短阈值/短退避覆盖，
 # 此处不覆盖，保持 config.py 默认值可被 grep 验收。
 
@@ -97,17 +92,23 @@ def _wait_state(breaker, target: str, timeout: float = 2.0) -> str:
     return breaker.state()
 
 
-@pytest.fixture(scope="module")
-def rl_ctx():
+@pytest.fixture(scope="function")
+def rl_ctx(monkeypatch):
     """限流测试上下文：显式开启限流的 main app + TestClient。
 
     receive_node 仅替换 main 命名空间（receive_agent.receive_node 保持真实，
     供熔断/重试用例直接调用）。
     """
+    monkeypatch.setenv("RATE_LIMIT_ENABLED", "true")
+    monkeypatch.setenv("RATE_LIMIT_LOGIN", "5/minute")
+    monkeypatch.setenv("RATE_LIMIT_EVENTS", "10/minute")
     import importlib
 
     import config
     importlib.reload(config)  # 确保 RATE_LIMIT_ENABLED=true 生效
+    if "main" in sys.modules:
+        import main
+        main.app.state.limiter.enabled = True
     import auth
     importlib.reload(auth)
 

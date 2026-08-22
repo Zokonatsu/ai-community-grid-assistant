@@ -22,6 +22,7 @@ pytest 测试基础设施：环境固定 + 数据隔离（module 级 autouse fix
 """
 import os
 import shutil
+import sys
 import uuid
 
 import pytest
@@ -40,6 +41,16 @@ os.environ["LLM_BASE_URL"] = "http://test"
 # T20260821-004：默认关闭限流，保证既有回归不受 429 干扰；
 # 限流专项测试在测试文件内显式置 RATE_LIMIT_ENABLED=true 后重载 main。
 os.environ["RATE_LIMIT_ENABLED"] = "false"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _disable_rate_limit_per_module():
+    """每个测试模块开始时强制关闭限流，防止限流专项测试的开启状态泄漏到其他模块。"""
+    os.environ["RATE_LIMIT_ENABLED"] = "false"
+    if "main" in sys.modules:
+        import main
+        main.app.state.limiter.enabled = False
+    yield
 
 
 # ------------------------------------------------------------------
@@ -212,7 +223,7 @@ def resident_pair():
 # ------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def admin_token():
-    """默认管理员 token（空库初始化自动创建 admin/admin123456）。
+    """默认管理员 token（空库初始化自动创建 admin/GridAdmin2025!@#）。
 
     仅在需要后台管理员身份的用例中使用；不得用于绕过居民越权断言。
     """
@@ -220,7 +231,7 @@ def admin_token():
     import auth
 
     importlib.reload(auth)
-    ok, msg, data = auth.login_user("admin", "admin123456")
+    ok, msg, data = auth.login_user("admin", "GridAdmin2025!@#")
     if not ok or not data or not data.get("token"):
         pytest.fail(f"admin_token 预置失败: {msg}")
     return data["token"]

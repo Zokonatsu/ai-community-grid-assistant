@@ -129,7 +129,7 @@ def test_suite():
     # ---------------------------------------------------------------
     # 0. 默认社区配置
     # ---------------------------------------------------------------
-    admin_login = login("admin", "admin123456")
+    admin_login = login("admin", "GridAdmin2025!@#")
     admin_token = admin_login.get("data", {}).get("token")
     check("0.1 内置管理员可登录", bool(admin_token), str(admin_login.get("error")))
     

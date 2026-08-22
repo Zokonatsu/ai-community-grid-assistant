@@ -319,7 +319,7 @@
 
         function escapeHtml(text) {
             const div = document.createElement('div');
-            div.textContent = text;
+            div.textContent = text == null ? '' : String(text);
             return div.innerHTML;
         }
 
@@ -337,7 +337,7 @@
             } else if (replies.length > 0) {
                 html = replies.map(r => `
                     <div class="reply-item">
-                        <div class="reply-meta">${r.reviewer_name || '管理员'} · ${r.created_at}</div>
+                        <div class="reply-meta">${escapeHtml(r.reviewer_name || '管理员')} · ${escapeHtml(r.created_at)}</div>
                         <div class="reply-content">${escapeHtml(r.content)}</div>
                     </div>
                 `).join('');
@@ -679,7 +679,7 @@
                 return '<span class="tag tag-cancelled">已撤销</span>';
             }
             if (!eventExpired(e.created_at)) {
-                return `<button type="button" class="btn btn-sm btn-cancel-event" onclick="cancelEvent('${e.event_id}')">撤销</button>`;
+                return `<button type="button" class="btn btn-sm btn-cancel-event" data-event-id="${escapeHtml(e.event_id)}">撤销</button>`;
             }
             return '<button type="button" class="btn btn-sm" disabled title="已超过可撤销时限">已执行</button>';
         }
@@ -713,10 +713,16 @@
             cancelTickTimer = setInterval(() => {
                 const events = window.userEvents || [];
                 events.forEach(e => {
-                    const row = document.querySelector(`#listContainer tr[data-event-id="${e.event_id}"]`);
+                    const row = document.querySelector(`#listContainer tr[data-event-id="${CSS.escape(e.event_id)}"]`);
                     if (!row) return;
                     const td = row.querySelector('td[data-label="操作"]');
-                    if (td) td.innerHTML = renderActionCell(e);
+                    if (td) {
+                        td.innerHTML = renderActionCell(e);
+                        const btn = td.querySelector('.btn-cancel-event');
+                        if (btn) {
+                            btn.addEventListener('click', () => cancelEvent(btn.dataset.eventId));
+                        }
+                    }
                 });
             }, 30000);
         }
@@ -766,18 +772,18 @@
                 const statusCell = e => {
                     if (e.status === '已完成' && (e.reply || (e.replies && e.replies.length > 0))) {
                         const unreadBadge = e.has_new_reply ? '<span class="unread-badge">●</span>' : '';
-                        return `<span class="reply-link" onclick="handleReplyClick('${e.event_id}')">请点击查看人工的回复${unreadBadge}</span>`;
+                        return `<span class="reply-link" data-event-id="${escapeHtml(e.event_id)}">请点击查看人工的回复${unreadBadge}</span>`;
                     }
-                    return `<span class="tag ${statusClass(e.status)}">${e.status || '-'}</span>`;
+                    return `<span class="tag ${statusClass(e.status)}">${escapeHtml(e.status || '-')}</span>`;
                 };
                 const rows = events.map(e => `
-                    <tr data-event-id="${e.event_id}">
-                        <td data-label="创建时间">${e.created_at || '-'}</td>
-                        <td data-label="描述">${e.description || '-'}</td>
-                        <td data-label="类型">${e.event_type || '-'}</td>
-                        <td data-label="紧急程度"><span class="tag ${urgencyClass(e.urgency)}">${e.urgency || '-'}</span></td>
-                        <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${e.scene_tag || '-'}</span></td>
-                        <td data-label="处理部门">${e.handler || '-'}</td>
+                    <tr data-event-id="${escapeHtml(e.event_id)}">
+                        <td data-label="创建时间">${escapeHtml(e.created_at || '-')}</td>
+                        <td data-label="描述">${escapeHtml(e.description || '-')}</td>
+                        <td data-label="类型">${escapeHtml(e.event_type || '-')}</td>
+                        <td data-label="紧急程度"><span class="tag ${urgencyClass(e.urgency)}">${escapeHtml(e.urgency || '-')}</span></td>
+                        <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${escapeHtml(e.scene_tag || '-')}</span></td>
+                        <td data-label="处理部门">${escapeHtml(e.handler || '-')}</td>
                         <td data-label="状态">${statusCell(e)}</td>
                         <td data-label="操作">${renderActionCell(e)}</td>
                     </tr>
@@ -799,6 +805,14 @@
                         <tbody>${rows}</tbody>
                     </table>
                 `;
+                // 绑定回复查看事件（使用 data-event-id，避免内联 onclick 的引号逃逸问题）
+                container.querySelectorAll('.reply-link').forEach(el => {
+                    el.addEventListener('click', () => handleReplyClick(el.dataset.eventId));
+                });
+                // 绑定撤销事件
+                container.querySelectorAll('.btn-cancel-event').forEach(el => {
+                    el.addEventListener('click', () => cancelEvent(el.dataset.eventId));
+                });
                 startCancelTick();
             } catch (e) {
                 if (quiet) {

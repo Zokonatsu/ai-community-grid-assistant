@@ -202,7 +202,7 @@ def test_suite():
     
     # 注册管理员 (不指定role=admin，因为注册接口禁止，改用已有的默认管理员)
     # 先检查默认管理员账号是否存在
-    admin_login = login("admin", "admin123456")
+    admin_login = login("admin", "GridAdmin2025!@#")
     if admin_login.get("success"):
         print(f"  管理员登录: 使用默认管理员 admin")
     else:
@@ -226,7 +226,7 @@ def test_suite():
     # 注册即生效，无需管理员审核即可提交事件
     
     # 登录管理员
-    login_admin = login("admin", "admin123456")
+    login_admin = login("admin", "GridAdmin2025!@#")
     token_admin = login_admin.get("data", {}).get("token") if login_admin.get("success") else None
     user_admin = login_admin.get("data", {}).get("user") if login_admin.get("success") else None
     print(f"  管理员 登录: success={login_admin.get('success')}, token={'***' if token_admin else 'None'}")

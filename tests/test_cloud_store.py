@@ -279,7 +279,7 @@ def test_cloud_session_write_read_delete():
     fake = _install_fake()
     auth_module = _reload_auth_cloudbase(fake)
 
-    ok, msg, data = auth_module.login_user("admin", "admin123456")
+    ok, msg, data = auth_module.login_user("admin", "GridAdmin2025!@#")
     assert ok, f"admin 登录应成功：{msg}"
     token = data["token"]
     sessions = secure_store.decrypt("sessions", fake.objects[cloud_store.SESSIONS_OBJECT_KEY])

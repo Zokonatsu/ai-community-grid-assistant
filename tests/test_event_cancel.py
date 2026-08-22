@@ -187,7 +187,7 @@ def run_all():
     print("事件 5 分钟内可撤销测试（T20260819-003 v2）")
     print("=" * 70)
 
-    admin_login = client.post("/api/auth/login", json={"username": "admin", "password": "admin123456"}).json()
+    admin_login = client.post("/api/auth/login", json={"username": "admin", "password": "GridAdmin2025!@#"}).json()
     admin_token = admin_login.get("data", {}).get("token")
     check("0.1 内置管理员可登录", bool(admin_token), str(admin_login.get("error")))
 

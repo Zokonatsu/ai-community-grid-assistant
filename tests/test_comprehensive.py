@@ -642,7 +642,7 @@ def test_suite():
     
     # 5d: Default admin
     report.section("  5d: Default admin account")
-    ok_a, _, res_a = auth_module.login_user("admin", "admin123456")
+    ok_a, _, res_a = auth_module.login_user("admin", "GridAdmin2025!@#")
     if ok_a:
         report.ok("Default admin works", "role=%s" % res_a["user"]["role"])
     else:

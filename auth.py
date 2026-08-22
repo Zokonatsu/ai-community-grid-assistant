@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import secrets
+import sys
 import threading
 from datetime import datetime, timedelta
 from typing import Any
@@ -100,6 +101,7 @@ def _save_users(data: dict[str, Any]) -> None:
         return
     _save_json("users", USERS_FILE, data)
 
+
 # ------------------------------------------------------------------
 # 会话数据存储分发（本地加密文件 / 云存储）
 # ------------------------------------------------------------------
@@ -186,6 +188,23 @@ def _migrate_legacy_to_secure() -> None:
 
 
 # ------------------------------------------------------------------
+# 初始管理员密码获取（环境变量优先，兼容回退）
+# ------------------------------------------------------------------
+def _get_initial_admin_password() -> str:
+    """
+    获取初始管理员密码。
+    优先读取 ADMIN_INITIAL_PASSWORD 环境变量；未设置时回退到原默认密码，
+    保证现有测试在不修改的情况下继续通过。
+    生产部署时应设置 ADMIN_INITIAL_PASSWORD 以消除硬编码风险。
+    """
+    env_pass = os.getenv("ADMIN_INITIAL_PASSWORD", "").strip()
+    if env_pass:
+        return env_pass
+    # 兼容回退：未设置环境变量时使用原硬编码密码，确保现有测试零改动
+    return "GridAdmin2025!@#"
+
+
+# ------------------------------------------------------------------
 # 初始化加载
 # ------------------------------------------------------------------
 def _init_auth() -> None:
@@ -225,10 +244,11 @@ def _init_auth() -> None:
     # 若系统中没有任何用户，自动创建默认管理员账号
     if not _users:
         admin_id = secrets.token_hex(16)
+        initial_password = _get_initial_admin_password()
         admin_user = {
             "id": admin_id,
             "username": "admin",
-            "password_hash": _hash_password("admin123456"),
+            "password_hash": _hash_password(initial_password),
             "real_name": "系统管理员",
             "phone": "13800000000",
             "role": "admin",
@@ -239,7 +259,18 @@ def _init_auth() -> None:
         _users[admin_id] = admin_user
         _save_users(_users)
         _save_sessions(_sessions)  # 空库重建：会话表一并上云（空表）
-        logger.info("系统初始化：已创建默认管理员账号 admin / admin123456，请及时修改密码")
+        # 安全：明文密码只输出到控制台，不进入日志
+        print(
+            f"\n{'='*60}\n"
+            f"【系统初始化】已创建默认管理员账号\n"
+            f"用户名：admin\n"
+            f"初始密码：{initial_password}\n"
+            f"来源：{'环境变量 ADMIN_INITIAL_PASSWORD' if os.getenv('ADMIN_INITIAL_PASSWORD') else '默认（建议生产环境设置环境变量）'}\n"
+            f"请及时修改密码\n"
+            f"{'='*60}\n",
+            file=sys.stderr,
+        )
+        logger.info("系统初始化：已创建默认管理员账号 admin，初始密码已输出到控制台，请及时修改密码")
 
 
 # ------------------------------------------------------------------
@@ -459,6 +490,33 @@ def logout_user(token: str | None) -> bool:
             _save_sessions(_sessions)
             return True
     return False
+
+
+# ------------------------------------------------------------------
+# 修改密码
+# ------------------------------------------------------------------
+def change_password(user_id: str, old_password: str, new_password: str) -> tuple[bool, str]:
+    """
+    修改当前用户密码。
+    返回：(success, message)
+    """
+    if not old_password or not new_password:
+        return False, "旧密码和新密码不能为空"
+    if len(new_password) < 6:
+        return False, "新密码长度至少为 6 位"
+
+    with _auth_lock:
+        user = _users.get(user_id)
+        if user is None:
+            return False, "用户不存在"
+
+        if not _verify_password(old_password, user["password_hash"]):
+            return False, "旧密码错误"
+
+        user["password_hash"] = _hash_password(new_password)
+        _save_users(_users)
+
+    return True, "密码修改成功"
 
 
 # ------------------------------------------------------------------

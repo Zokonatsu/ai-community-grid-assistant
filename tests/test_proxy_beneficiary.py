@@ -121,7 +121,7 @@ def test_suite():
     tok_self = login("res_self").get("data", {}).get("token")
     check("0.1 本人居民登录成功", bool(tok_self), "")
     
-    admin_token = login("admin", "admin123456").get("data", {}).get("token")
+    admin_token = login("admin", "GridAdmin2025!@#").get("data", {}).get("token")
     check("0.2 管理员登录成功", bool(admin_token), "")
     
     # ---------------------------------------------------------------

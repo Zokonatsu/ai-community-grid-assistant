@@ -187,7 +187,7 @@ def test_suite():
     
     # 测试 3b：验证默认管理员可以登录
     print("  3b. 验证默认管理员登录...")
-    success, message, result = auth.login_user("admin", "admin123456")
+    success, message, result = auth.login_user("admin", "GridAdmin2025!@#")
     print(f"    返回: success={success}, message='{message}'")
     if success and result and result.get("token"):
         print("  ✅ 通过：默认管理员可以正常登录")

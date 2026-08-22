@@ -50,6 +50,7 @@ from secure_store import (
     TASK_NUMERIC_FIELDS,
     encrypt_record_fields,
     decrypt_record_fields,
+    atomic_write,
 )
 
 logger = logging.getLogger("main")
@@ -106,8 +107,8 @@ def _save_tasks(tasks: dict[str, dict[str, Any]]) -> None:
             task_id: encrypt_record_fields(task, TASK_ENCRYPT_FIELDS, TASK_NUMERIC_FIELDS)
             for task_id, task in tasks.items()
         }
-        with open(TASKS_FILE, "w", encoding="utf-8") as f:
-            json.dump(disk_tasks, f, ensure_ascii=False, indent=2)
+        blob = json.dumps(disk_tasks, ensure_ascii=False, indent=2).encode("utf-8")
+        atomic_write(TASKS_FILE, blob)
     except (OSError, TypeError, ValueError) as exc:
         logger.error("持久化任务状态失败，文件='%s'，异常=%s", TASKS_FILE, exc)
 
@@ -554,6 +555,26 @@ async def get_optional_user(authorization: str | None = Header(None)) -> dict[st
 
 
 # ------------------------------------------------------------------
+# 真实客户端 IP 获取（支持反向代理）
+# ------------------------------------------------------------------
+def _real_client_ip(request: Request) -> str:
+    """
+    获取真实客户端 IP：优先解析反向代理传递的 X-Forwarded-For，
+    其次 X-Real-IP，最后回退到直接连接的远程地址。
+    """
+    x_forwarded_for = request.headers.get("x-forwarded-for")
+    if x_forwarded_for:
+        # X-Forwarded-For 可能包含多个 IP，取第一个（最原始的客户端 IP）
+        first_ip = x_forwarded_for.split(",")[0].strip()
+        if first_ip:
+            return first_ip
+    x_real_ip = request.headers.get("x-real-ip")
+    if x_real_ip:
+        return x_real_ip.strip()
+    return get_remote_address(request)
+
+
+# ------------------------------------------------------------------
 # API 端点：GET /health
 # ------------------------------------------------------------------
 @app.get("/health")
@@ -568,7 +589,7 @@ async def health_check() -> dict[str, str]:
 # API 端点：认证相关
 # ------------------------------------------------------------------
 @app.post("/api/auth/register", response_model=AuthResponse)
-@limiter.limit(config.RATE_LIMIT_LOGIN)
+@limiter.limit(config.RATE_LIMIT_LOGIN, key_func=_real_client_ip)
 async def register(request: Request, body: RegisterRequest) -> AuthResponse:
     """
     用户注册，仅支持居民角色。
@@ -595,7 +616,7 @@ async def register(request: Request, body: RegisterRequest) -> AuthResponse:
 
 
 @app.post("/api/auth/login", response_model=AuthResponse)
-@limiter.limit(config.RATE_LIMIT_LOGIN)
+@limiter.limit(config.RATE_LIMIT_LOGIN, key_func=_real_client_ip)
 async def login(request: Request, body: LoginRequest) -> AuthResponse:
     """
     用户登录，返回 Token 和用户信息。

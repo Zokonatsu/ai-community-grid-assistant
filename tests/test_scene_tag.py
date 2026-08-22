@@ -322,6 +322,13 @@ def test_suite():
     import auth
     import importlib
     importlib.reload(auth)
+    # 刷新 config，确保 RATE_LIMIT_ENABLED 读取当前环境变量（避免被前面测试污染）
+    import config
+    importlib.reload(config)
+    # 删除 main 模块缓存，强制重新导入，使 main.receive_node 绑定到 patch 后的 mock
+    if "main" in sys.modules:
+        del sys.modules["main"]
+
     with patch("receive_agent.OpenAI"), \
          patch("receive_agent.receive_node", side_effect=mock_receive_node), \
          patch("workflow.receive_node", side_effect=mock_receive_node), \

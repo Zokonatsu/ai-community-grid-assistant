@@ -147,7 +147,7 @@ def test_suite():
             print("\n  -> 尝试使用默认管理员账号登录...")
             admin_login = {
                 "username": "admin",
-                "password": "admin123456",
+                "password": "GridAdmin2025!@#",
             }
             resp2 = requests.post(
                 f"{BASE_URL}/api/auth/login",
