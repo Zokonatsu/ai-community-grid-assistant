@@ -639,7 +639,11 @@
                         clearInterval(pollTimer);
                         pollTimer = null;
                         document.getElementById('polling').classList.add('hidden');
-                        document.getElementById('error').textContent = d.error || (d.status === '已拒绝' ? '输入内容无效，非社区公共事务' : '处理超时，请稍后刷新或重新提交');
+                        let errMsg = d.error || '处理超时，请稍后刷新或重新提交';
+                        if (d.status === '已拒绝') {
+                            errMsg = d.rejected_reason ? `事件已被拒绝：${d.rejected_reason}` : '事件已被拒绝';
+                        }
+                        document.getElementById('error').textContent = errMsg;
                         loadList();
                     } else if (pollCount >= maxPolls) {
                         // 兜底：超过最大轮询次数，强制结束并提示刷新
@@ -665,7 +669,7 @@
         //           已撤销除外；超过 5 分钟 -> 灰色「已执行」）
         // ------------------------------------------------------------------
         let cancelTickTimer = null;
-        const CANCEL_WINDOW_MS = 300 * 1000;
+        const CANCEL_WINDOW_MS = 180 * 1000;
 
         function eventExpired(createdAt) {
             if (!createdAt) return true;
@@ -763,6 +767,9 @@
                     return '';
                 };
                 const statusCell = e => {
+                if (e.status === '已拒绝' && e.rejected_reason) {
+                    return `<span class="tag ${statusClass(e.status)}" title="拒绝理由：${escapeHtml(e.rejected_reason)}">${e.status || '-'}</span>`;
+                }
                     if (e.status === '已完成' && (e.reply || (e.replies && e.replies.length > 0))) {
                         const unreadBadge = e.has_new_reply ? '<span class="unread-badge">●</span>' : '';
                         return `<span class="reply-link" onclick="handleReplyClick('${e.event_id}')">请点击查看人工的回复${unreadBadge}</span>`;

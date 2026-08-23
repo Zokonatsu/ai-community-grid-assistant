@@ -248,6 +248,8 @@
             border: 1px solid var(--border-strong);
         }
         .btn-sm.btn-refresh:hover { background: var(--surface-2); color: var(--text-1); }
+    .btn-sm.btn-reject { background: var(--danger); }
+    .btn-sm.btn-reject:hover { filter: brightness(0.92); }
 
         /* ---- 回复输入区 ---- */
         .reply-box { margin-top: 12px; display: none; }
@@ -1273,7 +1275,13 @@
                     <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${e.scene_tag || '-'}</span></td>
                     <td data-label="处理部门">${e.handler || '-'}</td>
                     <td data-label="位置">${locationCell(e)}</td>
-                    <td data-label="状态"><span class="tag ${statusClass(e.status)}">${e.status || '-'}</span></td>
+        <td data-label="status">${
+          e.status === '已撤销'
+            ? `<span class="tag ${statusClass('已撤销')}" title="撤回时间：${e.withdrawn_at || '-'}">用户已撤回</span>`
+            : e.status === '已拒绝'
+            ? `<span class="tag ${statusClass('已拒绝')}" title="拒绝理由：${e.rejected_reason || '-'}">${e.status}</span>`
+            : `<span class="tag ${statusClass(e.status)}">${e.status || '-'}</span>`
+        }</td>
                 </tr>
             `).join('');
 

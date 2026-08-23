@@ -636,6 +636,10 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
                 "reply": task.get("reply", ""),
                 "replies": replies,
                 "has_new_reply": has_new_reply,
+                "rejected_reason": task.get("rejected_reason", ""),
+                "rejected_at": task.get("rejected_at", ""),
+                "rejected_by": task.get("rejected_by", ""),
+                "withdrawn_at": task.get("withdrawn_at", ""),
                 "user_name": task.get("user_name", ""),
                 "user_phone": task.get("user_phone", ""),
                 "user_id_card": task.get("user_id_card", ""),
@@ -1312,9 +1316,10 @@ async def cancel_event(
             created = datetime.strptime(task.get("created_at", ""), "%Y-%m-%d %H:%M:%S")
         except (TypeError, ValueError):
             created = None
-        if created is None or (datetime.now() - created).total_seconds() > 300:
-            raise HTTPException(status_code=400, detail="已超过5分钟，无法撤销")
+        if created is None or (datetime.now() - created).total_seconds() > 180:
+            raise HTTPException(status_code=400, detail="已超过3分钟，无法撤销")
         task["status"] = "已撤销"
+        task["withdrawn_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         _save_tasks(_tasks)
 
     return {
@@ -1376,8 +1381,46 @@ async def accept_event(
 
 
 # ------------------------------------------------------------------
+# API 端点：POST /api/events/{event_id}/reject
+# ------------------------------------------------------------------
+@app.post("/api/events/{event_id}/reject")
+async def reject_event(
+    event_id: str,
+    request: RejectRequest,
+    current_user: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    """
+    管理员拒绝待审核事件，将状态更新为"已拒绝"并记录理由。
+    """
+    async with _task_lock:
+        task = _tasks.get(event_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="事件不存在")
+        if task.get("status") != "待审核":
+            raise HTTPException(status_code=400, detail="仅待审核事件可拒绝")
+        task["status"] = "已拒绝"
+        task["rejected_reason"] = request.reason
+        task["rejected_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        task["rejected_by"] = current_user.get("id", "")
+        _save_tasks(_tasks)
+
+    return {
+        "success": True,
+        "data": {
+            "event_id": task["event_id"],
+            "status": task["status"],
+            "reason": task["rejected_reason"],
+        },
+    }
+
+
+# ------------------------------------------------------------------
 # API 端点：POST /api/events/{event_id}/reply
 # ------------------------------------------------------------------
+class RejectRequest(BaseModel):
+reason: str = Field(..., min_length=1, max_length=500, description="拒绝理由")
+
+
 class ReplyRequest(BaseModel):
     reply: str = Field(..., min_length=1, description="后台回复内容")
 
