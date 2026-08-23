@@ -1,0 +1,38 @@
+# ============================================================
+# 云端集成验证：仅手动触发（workflow_dispatch），注入 GitHub Secrets。
+# 任务书：docs/coordination/tasks/T20260820-001-TC.md（3.2 冻结契约）
+# 使用前请在仓库 Settings -> Secrets and variables -> Actions 配置：
+#   COS_REGION / COS_BUCKET / COS_SECRET_ID / COS_SECRET_KEY / DATA_ENCRYPTION_KEY
+# 本 workflow 不做任何数据迁移，仅对临时对象 _ci_verify_<uuid>.enc 做
+# 上传(加密)->下载+解密比对->删除 冒烟验证。
+# ============================================================
+name: Cloud Integration Verification
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify-cloud:
+    name: 云端集成验证
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify cloud integration
+        env:
+          AUTH_STORE: cloudbase
+          COS_REGION: ${{ secrets.COS_REGION }}
+          COS_BUCKET: ${{ secrets.COS_BUCKET }}
+          COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
+          COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
+          DATA_ENCRYPTION_KEY: ${{ secrets.DATA_ENCRYPTION_KEY }}
+        run: python scripts/verify_cloud_integration.py
