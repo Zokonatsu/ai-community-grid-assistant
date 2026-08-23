@@ -1,0 +1,14 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "8080:8000"
+    env_file:
+      - ../.env
+    volumes:
+      - ../data:/app/data
+      - ../secure:/app/secure
+      - ../static:/app/static
+    restart: unless-stopped

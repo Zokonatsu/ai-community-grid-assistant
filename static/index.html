@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>知·社区网格</title>
+    <link rel="stylesheet" href="/common.css">
+</head>
+<body>
+    <!-- 顶部栏：左标题 + 右用户区 -->
+    <div class="topbar">
+        <div class="topbar-title" id="comm-title">
+            知·社区网格
+            <span class="topbar-sub">社区事件提交与派单</span>
+        </div>
+
+        <div class="userbar" id="userbar" style="display:none;">
+            <div class="user-info">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-3.9 3.6-6.5 8-6.5s8 2.6 8 6.5"/></svg>
+                欢迎，<strong id="user-name">-</strong>
+                <span class="role-tag" id="user-role">-</span>
+            </div>
+            <div class="user-actions">
+                <a onclick="logout()">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
+                    <span>退出登录</span>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="card">
+            <h2>事件提交</h2>
+            <!-- 提交方式：本人 / 代人办 -->
+            <div class="tabs" id="beneficiary-tabs">
+                <div class="tab active" id="tab-self" onclick="setBeneficiaryType('self')">本人</div>
+                <div class="tab" id="tab-proxy" onclick="setBeneficiaryType('proxy')">代人办</div>
+            </div>
+            <div class="beneficiary-proxy hidden" id="beneficiary-proxy">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="proxy-name">被帮助人姓名</label>
+                        <input type="text" id="proxy-name" placeholder="请输入真实姓名">
+                    </div>
+                    <div class="form-group">
+                        <label for="proxy-phone">手机号</label>
+                        <input type="tel" id="proxy-phone" placeholder="请输入11位手机号">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="proxy-building">楼栋</label>
+                        <input type="text" id="proxy-building" placeholder="如：2栋">
+                    </div>
+                    <div class="form-group">
+                        <label for="proxy-unit">单元</label>
+                        <input type="text" id="proxy-unit" placeholder="如：3单元">
+                    </div>
+                    <div class="form-group">
+                        <label for="proxy-room">房间号</label>
+                        <input type="text" id="proxy-room" placeholder="如：401">
+                    </div>
+                </div>
+            </div>
+            <textarea id="description" placeholder="请输入居民问题描述，例如：我家楼下下水道堵了"></textarea>
+            <button class="btn" id="submitBtn" onclick="submitEvent()">提交处理</button>
+            <div class="locate-hint" id="locateHint"></div>
+            <div class="loading" id="loading" style="display:none;"><span class="dot"></span>正在处理，请稍候</div>
+            <div class="error" id="error"></div>
+
+            <!-- 异步轮询状态提示 -->
+            <div class="polling hidden" id="polling">
+                <div><span class="spinner"></span>事件已提交，正在处理中</div>
+                <div class="polling-id">事件 ID：<span id="polling-id"></span></div>
+            </div>
+
+            <div class="result hidden" id="result">
+                <div>处理结果</div>
+                <div class="result-grid">
+                    <div class="result-item">
+                        <div class="label">事件类型</div>
+                        <div class="value" id="r-event_type"></div>
+                    </div>
+                    <div class="result-item">
+                        <div class="label">紧急程度</div>
+                        <div class="value" id="r-urgency"></div>
+                    </div>
+                    <div class="result-item">
+                        <div class="label">处理部门</div>
+                        <div class="value" id="r-handler"></div>
+                    </div>
+                    <div class="result-item">
+                        <div class="label">状态</div>
+                        <div class="value" id="r-status"></div>
+                    </div>
+                    <div class="result-item">
+                        <div class="label">场景标签</div>
+                        <div class="value" id="r-scene_tag"></div>
+                    </div>
+                    <div class="result-item">
+                        <div class="label">创建时间</div>
+                        <div class="value" id="r-created_at"></div>
+                    </div>
+                    <div class="result-item">
+                        <div class="label">地址</div>
+                        <div class="value" id="r-address"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>事件列表</h2>
+            <div id="listContainer">
+                <div class="empty">加载中</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 急救确认弹窗 -->
+    <div class="overlay hidden" id="confirmOverlay">
+        <div class="modal">
+            <div class="modal-title is-danger" id="confirmTitle">急救确认</div>
+            <div class="modal-text" id="confirmText"></div>
+            <div class="modal-countdown" id="confirmCountdown">5 秒后自动确认</div>
+            <div class="modal-legal" id="confirmLegal"></div>
+            <div class="modal-buttons">
+                <button class="btn btn-cancel" id="confirmCancel">取消</button>
+                <button class="btn btn-danger" id="confirmAgree">同意</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 提交确认弹窗 -->
+    <div class="overlay hidden" id="submitConfirmOverlay">
+        <div class="modal">
+            <div class="modal-title">确认提交信息</div>
+            <div class="modal-content" id="submitConfirmContent"></div>
+            <div class="modal-buttons">
+                <button class="btn btn-cancel" onclick="closeSubmitConfirm()">取消</button>
+                <button class="btn" onclick="confirmAndSubmit()">确认提交</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 回复查看弹窗 -->
+    <div class="overlay hidden" id="replyOverlay">
+        <div class="modal">
+            <div class="modal-close" onclick="closeReplyDialog()" aria-label="关闭">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </div>
+            <div class="modal-title" style="padding-left:32px;">人工回复</div>
+            <div class="modal-content" id="replyText"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';
+
+        // 社区名称动态化：标题/页头随后台设置更新
+        (function () {
+            fetch(API_BASE + '/api/community')
+                .then(r => (r.ok ? r.json() : null))
+                .then(cfg => {
+                    if (cfg && cfg.name) {
+                        var t = cfg.name + '网格';
+                        document.title = t;
+                        var el = document.getElementById('comm-title');
+                        if (el) el.textContent = t;
+                    }
+                })
+                .catch(function () {});
+        })();
+        let pollTimer = null;
+        let confirmTimer = null;
+        let confirmSeconds = 5;
+        let currentDesc = '';
+        let currentEmergencyType = '';
+        let listPollTimer = null;
+        const POLL_LIST_MS = 15000;
+
+        // ------------------------------------------------------------------
+        // 认证相关
+        // ------------------------------------------------------------------
+        function getAuthHeaders(contentType = true) {
+            const headers = {};
+            if (contentType) headers['Content-Type'] = 'application/json';
+            const token = localStorage.getItem('token');
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+            return headers;
+        }
+
+        // 浏览器定位封装：成功返回 {lat,lng}，失败/拒绝返回 null（不阻塞提交）
+        function getPosition() {
+            return new Promise(resolve => {
+                if (!navigator.geolocation) {
+                    resolve(null);
+                    return;
+                }
+                let done = false;
+                const finish = v => { if (!done) { done = true; resolve(v); } };
+                try {
+                    navigator.geolocation.getCurrentPosition(
+                        pos => finish({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+                        () => finish(null),
+                        { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+                    );
+                } catch (e) {
+                    // 非安全上下文/部分浏览器会同步抛异常：兜底为不可用，避免提交流程卡死
+                    finish(null);
+                }
+            });
+        }
+
+        function checkUnauthorized(res) {
+            if (res.status === 401) {
+                localStorage.removeItem('token');
+                localStorage.removeItem('user');
+                window.location.href = '/login.html';
+                return true;
+            }
+            return false;
+        }
+
+        // ------------------------------------------------------------------
+        // 提交方式：本人 / 代人办
+        // ------------------------------------------------------------------
+        function setBeneficiaryType(type) {
+            const isProxy = type === 'proxy';
+            document.getElementById('tab-self').classList.toggle('active', !isProxy);
+            document.getElementById('tab-proxy').classList.toggle('active', isProxy);
+            document.getElementById('beneficiary-proxy').classList.toggle('hidden', !isProxy);
+        }
+
+        function collectBeneficiary() {
+            const isProxy = document.getElementById('tab-proxy').classList.contains('active');
+            if (!isProxy) return { beneficiary_type: 'self' };
+            const fields = {
+                beneficiary_type: 'proxy',
+                beneficiary_name: document.getElementById('proxy-name').value.trim(),
+                beneficiary_phone: document.getElementById('proxy-phone').value.trim(),
+                beneficiary_building: document.getElementById('proxy-building').value.trim(),
+                beneficiary_unit: document.getElementById('proxy-unit').value.trim(),
+                beneficiary_room: document.getElementById('proxy-room').value.trim()
+            };
+            const missing = [];
+            if (!fields.beneficiary_name) missing.push('姓名');
+            if (!fields.beneficiary_phone) missing.push('手机号');
+            if (!fields.beneficiary_building) missing.push('楼栋');
+            if (!fields.beneficiary_unit) missing.push('单元');
+            if (!fields.beneficiary_room) missing.push('房间号');
+            if (missing.length) {
+                return { error: '代人办请填写被帮助人的' + missing.join('、') };
+            }
+            return fields;
+        }
+
+        function clearBeneficiary() {
+            ['proxy-name', 'proxy-phone', 'proxy-building', 'proxy-unit', 'proxy-room'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.value = '';
+            });
+        }
+
+        async function initAuth() {
+            const token = localStorage.getItem('token');
+            if (!token) {
+                window.location.href = '/login.html';
+                return false;
+            }
+            try {
+                const res = await fetch(`${API_BASE}/api/auth/me`, {
+                    headers: getAuthHeaders(false)
+                });
+                if (checkUnauthorized(res)) return false;
+                if (!res.ok) {
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('user');
+                    window.location.href = '/login.html';
+                    return false;
+                }
+                const user = await res.json();
+                window.currentUser = user;
+                // 管理员不进入事件提交页，直接进入管理后台
+                if (user.role === 'admin') {
+                    window.location.href = '/admin.html';
+                    return false;
+                }
+                // 显示用户栏
+                document.getElementById('userbar').style.display = 'flex';
+                document.getElementById('user-name').textContent = user.real_name || user.username;
+                const roleEl = document.getElementById('user-role');
+                roleEl.textContent = '居民';
+                roleEl.className = 'role-tag resident';
+                return true;
+            } catch (e) {
+                // 网络异常时暂不跳转，允许离线查看已缓存内容
+                return true;
+            }
+        }
+
+        async function logout() {
+            const token = localStorage.getItem('token');
+            if (token) {
+                try {
+                    await fetch(`${API_BASE}/api/auth/logout`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                } catch (e) {
+                    // 网络异常不影响本地登出
+                }
+            }
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            window.location.href = '/login.html';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        let currentReplyEventId = null;
+
+        function handleReplyClick(eventId) {
+            const event = window.userEvents && window.userEvents.find(e => e.event_id === eventId);
+            if (!event) return;
+            currentReplyEventId = eventId;
+
+            const replies = event.replies || [];
+            let html = '';
+            if (replies.length === 0 && event.reply) {
+                html = `<div class="reply-item"><div class="reply-content">${escapeHtml(event.reply)}</div></div>`;
+            } else if (replies.length > 0) {
+                html = replies.map(r => `
+                    <div class="reply-item">
+                        <div class="reply-meta">${r.reviewer_name || '管理员'} · ${r.created_at}</div>
+                        <div class="reply-content">${escapeHtml(r.content)}</div>
+                    </div>
+                `).join('');
+            } else {
+                html = '<div class="reply-content">暂无回复</div>';
+            }
+            document.getElementById('replyText').innerHTML = html;
+            document.getElementById('replyOverlay').classList.remove('hidden');
+        }
+
+        function closeReplyDialog() {
+            document.getElementById('replyOverlay').classList.add('hidden');
+            if (currentReplyEventId) {
+                markRead(currentReplyEventId);
+                currentReplyEventId = null;
+            }
+        }
+
+        async function markRead(eventId) {
+            try {
+                const res = await fetch(`${API_BASE}/api/events/${eventId}/mark_read`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(false)
+                });
+                if (res.ok) {
+                    await loadList();
+                }
+            } catch (e) {
+                console.error('标记已读失败', e);
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // 事件提交与轮询（原有逻辑，仅增加认证头）
+        // ------------------------------------------------------------------
+        let pendingSubmit = null;
+
+        // ------------------------------------------------------------------
+        // 提交确认弹窗：本人/代人办提交前先确认信息
+        // ------------------------------------------------------------------
+        async function submitEvent() {
+            const desc = document.getElementById('description').value.trim();
+            const error = document.getElementById('error');
+            error.textContent = '';
+            if (!desc) { error.textContent = '请输入居民描述'; return; }
+
+            const beneficiary = collectBeneficiary();
+            if (beneficiary.error) { error.textContent = beneficiary.error; return; }
+
+            pendingSubmit = { desc, beneficiary };
+            showSubmitConfirm(desc, beneficiary);
+        }
+
+        function showSubmitConfirm(desc, beneficiary) {
+            const rows = [];
+            rows.push(`<div class="confirm-row"><span class="confirm-label">事件描述</span><span class="confirm-value">${escapeHtml(desc)}</span></div>`);
+            if (beneficiary.beneficiary_type === 'proxy') {
+                rows.push('<div class="confirm-row"><span class="confirm-label">提交方式</span><span class="confirm-value">代人办</span></div>');
+                rows.push(`<div class="confirm-row"><span class="confirm-label">被帮助人</span><span class="confirm-value">${escapeHtml(beneficiary.beneficiary_name)} · ${escapeHtml(beneficiary.beneficiary_phone)} · ${escapeHtml(beneficiary.beneficiary_building)}${escapeHtml(beneficiary.beneficiary_unit)}${escapeHtml(beneficiary.beneficiary_room)}</span></div>`);
+            } else {
+                const u = window.currentUser || {};
+                const addr = [u.building, u.unit, u.room].filter(Boolean).join('');
+                const who = escapeHtml(u.real_name || u.username || '本人') + (addr ? ' · ' + escapeHtml(addr) : '');
+                rows.push(`<div class="confirm-row"><span class="confirm-label">提交人</span><span class="confirm-value">${who}</span></div>`);
+            }
+            document.getElementById('submitConfirmContent').innerHTML = rows.join('');
+            document.getElementById('submitConfirmOverlay').classList.remove('hidden');
+        }
+
+        function closeSubmitConfirm() {
+            document.getElementById('submitConfirmOverlay').classList.add('hidden');
+            pendingSubmit = null;
+        }
+
+        async function confirmAndSubmit() {
+            if (!pendingSubmit) return;
+            const { desc, beneficiary } = pendingSubmit;
+            pendingSubmit = null;
+            document.getElementById('submitConfirmOverlay').classList.add('hidden');
+            await doSubmit(desc, beneficiary);
+        }
+
+        // 实际提交：获取定位 + POST + 处理响应（本人/代人办共用；急救确认后再调用带 extra）
+        async function doSubmit(desc, beneficiary, extra) {
+            const btn = document.getElementById('submitBtn');
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+            const result = document.getElementById('result');
+            const polling = document.getElementById('polling');
+
+            error.textContent = '';
+            btn.disabled = true;
+            loading.style.display = 'block';
+            result.classList.add('hidden');
+            polling.classList.add('hidden');
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+
+            try {
+                // 提交时获取实时定位（失败/拒绝不阻塞提交）
+                const pos = await getPosition();
+                const hint = document.getElementById('locateHint');
+                if (pos) {
+                    hint.textContent = `已获取实时定位（${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}）`;
+                } else {
+                    hint.textContent = '定位不可用，事件仍可提交';
+                }
+                const res = await fetch(`${API_BASE}/api/events`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({
+                        description: desc,
+                        lat: pos ? pos.lat : null,
+                        lng: pos ? pos.lng : null,
+                        ...(extra || {}),
+                        ...beneficiary
+                    })
+                });
+                if (checkUnauthorized(res)) return;
+                const data = await res.json();
+                if (!data.success) {
+                    error.textContent = data.error || '处理失败';
+                    btn.disabled = false;
+                    loading.style.display = 'none';
+                    return;
+                }
+                const d = data.data;
+                // 模糊急救确认
+                if (d.confirmation_required) {
+                    btn.disabled = false;
+                    loading.style.display = 'none';
+                    showConfirmDialog(desc, d.emergency_type);
+                    return;
+                }
+                // 终态判断：若后端已直接返回最终结果，立即展示，无需轮询
+                const terminalStatuses = ['已完成', '已派单', '待审核', '处理超时', '处理失败', '已拒绝'];
+                if (terminalStatuses.includes(d.status)) {
+                    document.getElementById('r-event_type').textContent = d.event_type || '-';
+                    document.getElementById('r-urgency').textContent = d.urgency || '-';
+                    document.getElementById('r-handler').textContent = d.handler || '-';
+                    document.getElementById('r-status').textContent = d.status || '-';
+                    document.getElementById('r-scene_tag').textContent = d.scene_tag || '-';
+                    document.getElementById('r-created_at').textContent = d.created_at || '-';
+                    document.getElementById('r-address').textContent = d.address || '-';
+                    document.getElementById('result').classList.remove('hidden');
+                    document.getElementById('description').value = '';
+                    clearBeneficiary();
+                    loadList();
+                    btn.disabled = false;
+                    loading.style.display = 'none';
+                    return;
+                }
+                // 异步处理中：展示轮询状态并启动轮询
+                document.getElementById('polling-id').textContent = d.event_id;
+                polling.classList.remove('hidden');
+                document.getElementById('description').value = '';
+                clearBeneficiary();
+                loadList();
+                startPolling(d.event_id);
+            } catch (e) {
+                error.textContent = '网络请求失败，请检查服务是否启动';
+            } finally {
+                btn.disabled = false;
+                loading.style.display = 'none';
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // 模糊急救确认弹窗
+        // ------------------------------------------------------------------
+        function showConfirmDialog(desc, emergencyType) {
+            currentDesc = desc;
+            currentEmergencyType = emergencyType;
+            confirmSeconds = 5;
+
+            const titleEl = document.getElementById('confirmTitle');
+            const textEl = document.getElementById('confirmText');
+            const countdownEl = document.getElementById('confirmCountdown');
+            const legalEl = document.getElementById('confirmLegal');
+
+            let text = '';
+            if (emergencyType === 'medical') {
+                text = '您反映的情况属于生命医疗急救，系统将在5秒后向120医疗急救中心求助，是否同意？';
+            } else if (emergencyType === 'police') {
+                text = '您反映的情况属于公安急救，系统将在5秒后向110公安急救中心求助，是否同意？';
+            } else if (emergencyType === 'fire') {
+                text = '您反映的情况属于消防急救，系统将在5秒后向119消防急救中心求助，是否同意？';
+            } else {
+                text = '您反映的情况属于急救事件，系统将在5秒后向相关部门求助，是否同意？';
+            }
+            titleEl.textContent = '急救确认';
+            textEl.textContent = text;
+            countdownEl.textContent = confirmSeconds + ' 秒后自动确认';
+            legalEl.textContent = '注意：恶意虚报、滥用急救资源将承担相应法律责任。';
+
+            const agreeBtn = document.getElementById('confirmAgree');
+            const cancelBtn = document.getElementById('confirmCancel');
+
+            // 移除旧监听，避免重复绑定
+            const newAgreeBtn = agreeBtn.cloneNode(true);
+            const newCancelBtn = cancelBtn.cloneNode(true);
+            agreeBtn.parentNode.replaceChild(newAgreeBtn, agreeBtn);
+            cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+
+            newAgreeBtn.addEventListener('click', onConfirmAgree);
+            newCancelBtn.addEventListener('click', onConfirmCancel);
+
+            document.getElementById('confirmOverlay').classList.remove('hidden');
+
+            if (confirmTimer) clearInterval(confirmTimer);
+            confirmTimer = setInterval(() => {
+                confirmSeconds--;
+                document.getElementById('confirmCountdown').textContent = confirmSeconds + ' 秒后自动确认';
+                if (confirmSeconds <= 0) {
+                    clearInterval(confirmTimer);
+                    confirmTimer = null;
+                    onConfirmAgree();
+                }
+            }, 1000);
+        }
+
+        function closeConfirmDialog() {
+            if (confirmTimer) {
+                clearInterval(confirmTimer);
+                confirmTimer = null;
+            }
+            document.getElementById('confirmOverlay').classList.add('hidden');
+        }
+
+        function onConfirmAgree() {
+            closeConfirmDialog();
+            const beneficiary = collectBeneficiary();
+            if (beneficiary.error) {
+                document.getElementById('error').textContent = beneficiary.error;
+                return;
+            }
+            doSubmit(currentDesc, beneficiary, { confirmed: true, emergency_type: currentEmergencyType });
+        }
+
+        function onConfirmCancel() {
+            closeConfirmDialog();
+            document.getElementById('error').textContent = '已取消';
+        }
+
+        function startPolling(eventId) {
+            if (pollTimer) clearInterval(pollTimer);
+            let pollCount = 0;
+            const maxPolls = 20; // 最多轮询20次（约60秒），防止无限轮询
+
+            const check = async () => {
+                pollCount++;
+                try {
+                    const res = await fetch(`${API_BASE}/api/events/${eventId}`, {
+                        headers: getAuthHeaders(false)
+                    });
+                    if (checkUnauthorized(res)) return;
+                    if (!res.ok) {
+                        if (res.status === 404) {
+                            clearInterval(pollTimer);
+                            pollTimer = null;
+                            document.getElementById('polling').classList.add('hidden');
+                            document.getElementById('error').textContent = '事件不存在或已被移除';
+                            loadList();
+                        }
+                        return;
+                    }
+                    const d = await res.json();
+
+                    // 调试输出：便于排查 status 字段实际值
+                    console.log(`[轮询 ${pollCount}] event_id=${eventId}, status="${d.status}"`);
+
+                    if (d.status === '已完成' || d.status === '已派单') {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                        // 隐藏轮询提示，展示结果
+                        document.getElementById('polling').classList.add('hidden');
+                        document.getElementById('r-event_type').textContent = d.event_type || '-';
+                        document.getElementById('r-urgency').textContent = d.urgency || '-';
+                        document.getElementById('r-handler').textContent = d.handler || '-';
+                        document.getElementById('r-status').textContent = d.status || '-';
+                        document.getElementById('r-scene_tag').textContent = d.scene_tag || '-';
+                        document.getElementById('r-created_at').textContent = d.created_at || '-';
+                        document.getElementById('r-address').textContent = d.address || '-';
+                        document.getElementById('result').classList.remove('hidden');
+                        loadList();
+                    } else if (d.status === '待审核') {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                        document.getElementById('polling').classList.add('hidden');
+                        document.getElementById('r-event_type').textContent = d.event_type || '-';
+                        document.getElementById('r-urgency').textContent = d.urgency || '-';
+                        document.getElementById('r-handler').textContent = d.handler || '-';
+                        document.getElementById('r-status').textContent = d.status || '-';
+                        document.getElementById('r-scene_tag').textContent = d.scene_tag || '-';
+                        document.getElementById('r-created_at').textContent = d.created_at || '-';
+                        document.getElementById('r-address').textContent = d.address || '-';
+                        document.getElementById('result').classList.remove('hidden');
+                        loadList();
+                    } else if (d.status === '处理超时' || d.status === '处理失败' || d.status === '已拒绝') {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                        document.getElementById('polling').classList.add('hidden');
+                        document.getElementById('error').textContent = d.error || (d.status === '已拒绝' ? '输入内容无效，非社区公共事务' : '处理超时，请稍后刷新或重新提交');
+                        loadList();
+                    } else if (pollCount >= maxPolls) {
+                        // 兜底：超过最大轮询次数，强制结束并提示刷新
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                        document.getElementById('polling').classList.add('hidden');
+                        document.getElementById('error').textContent = '轮询超时，事件可能已完成，请刷新页面查看最新状态';
+                        loadList();
+                    } else {
+                        // 未知状态（如"处理中"）继续轮询，直到达到最大次数
+                    }
+                } catch (e) {
+                    // 轮询出错不中断，继续等待下次
+                }
+            };
+
+            check(); // 立即查一次
+            pollTimer = setInterval(check, 3000);
+        }
+
+        // ------------------------------------------------------------------
+        // 事件撤销：操作列（提交后 5 分钟内可撤销，不看事件状态，
+        //           已撤销除外；超过 5 分钟 -> 灰色「已执行」）
+        // ------------------------------------------------------------------
+        let cancelTickTimer = null;
+        const CANCEL_WINDOW_MS = 300 * 1000;
+
+        function eventExpired(createdAt) {
+            if (!createdAt) return true;
+            const t = new Date(String(createdAt).replace(' ', 'T'));
+            if (isNaN(t.getTime())) return true;
+            return (Date.now() - t.getTime()) > CANCEL_WINDOW_MS;
+        }
+
+        function renderActionCell(e) {
+            if (e.status === '已撤销') {
+                return '<span class="tag tag-cancelled">已撤销</span>';
+            }
+            if (!eventExpired(e.created_at)) {
+                return `<button type="button" class="btn btn-sm btn-cancel-event" onclick="cancelEvent('${e.event_id}')">撤销</button>`;
+            }
+            return '<button type="button" class="btn btn-sm" disabled title="已超过可撤销时限">已执行</button>';
+        }
+
+        async function cancelEvent(eventId) {
+            try {
+                const res = await fetch(`${API_BASE}/api/events/${eventId}/cancel`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(false)
+                });
+                if (checkUnauthorized(res)) return;
+                let detail = '';
+                try {
+                    const data = await res.json();
+                    detail = data.detail || data.error || '';
+                } catch (e) { /* 非 JSON 响应时忽略 */ }
+                if (res.ok) {
+                    loadList();
+                } else {
+                    alert(detail || `撤销失败（HTTP ${res.status}）`);
+                    loadList();
+                }
+            } catch (e) {
+                alert('网络请求失败，请稍后重试');
+            }
+        }
+
+        // 5 分钟边界自动变灰：本地定时器按 created_at 周期重算操作列（≤60 秒）
+        function startCancelTick() {
+            if (cancelTickTimer) clearInterval(cancelTickTimer);
+            cancelTickTimer = setInterval(() => {
+                const events = window.userEvents || [];
+                events.forEach(e => {
+                    const row = document.querySelector(`#listContainer tr[data-event-id="${e.event_id}"]`);
+                    if (!row) return;
+                    const td = row.querySelector('td[data-label="操作"]');
+                    if (td) td.innerHTML = renderActionCell(e);
+                });
+            }, 30000);
+        }
+
+        async function loadList(quiet = false) {
+            const container = document.getElementById('listContainer');
+            try {
+                const res = await fetch(`${API_BASE}/api/events`, {
+                    headers: getAuthHeaders(false)
+                });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) {
+                    // 轮询失败（非 401）：保留现有列表内容，不覆盖
+                    if (quiet) {
+                        console.warn(`列表轮询失败（HTTP ${res.status}），保留当前列表`);
+                        return;
+                    }
+                    // 非轮询路径保持原有行为（交由下方 json 解析决定空态/失败态）
+                }
+                const events = await res.json();
+                window.userEvents = Array.isArray(events) ? events : [];
+                if (!Array.isArray(events) || events.length === 0) {
+                    container.innerHTML = '<div class="empty">暂无事件记录</div>';
+                    return;
+                }
+                const urgencyClass = u => {
+                    if (u === '高') return 'tag-high';
+                    if (u === '中') return 'tag-medium';
+                    return 'tag-low';
+                };
+                const sceneClass = s => {
+                    if (s === '生命急救') return 'tag-scene-life';
+                    if (s === '紧急救援') return 'tag-scene-rescue';
+                    if (s === '常规') return 'tag-scene-normal';
+                    return '';
+                };
+                const statusClass = s => {
+                    if (s === '已撤销') return 'tag-cancelled';
+                    if (s === '处理中') return 'tag-processing';
+                    if (s === '处理超时' || s === '处理失败' || s === '已拒绝') return 'tag-failed';
+                    if (s === '已完成' || s === '已派单') return 'tag-success';
+                    if (s === '待审核') return 'tag-pending';
+                    if (s === '已受理') return 'tag-accepted';
+                    return '';
+                };
+                const statusCell = e => {
+                    if (e.status === '已完成' && (e.reply || (e.replies && e.replies.length > 0))) {
+                        const unreadBadge = e.has_new_reply ? '<span class="unread-badge">●</span>' : '';
+                        return `<span class="reply-link" onclick="handleReplyClick('${e.event_id}')">请点击查看人工的回复${unreadBadge}</span>`;
+                    }
+                    return `<span class="tag ${statusClass(e.status)}">${e.status || '-'}</span>`;
+                };
+                const rows = events.map(e => `
+                    <tr data-event-id="${e.event_id}">
+                        <td data-label="创建时间">${e.created_at || '-'}</td>
+                        <td data-label="描述">${e.description || '-'}</td>
+                        <td data-label="类型">${e.event_type || '-'}</td>
+                        <td data-label="紧急程度"><span class="tag ${urgencyClass(e.urgency)}">${e.urgency || '-'}</span></td>
+                        <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${e.scene_tag || '-'}</span></td>
+                        <td data-label="处理部门">${e.handler || '-'}</td>
+                        <td data-label="状态">${statusCell(e)}</td>
+                        <td data-label="操作">${renderActionCell(e)}</td>
+                    </tr>
+                `).join('');
+                container.innerHTML = `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>创建时间</th>
+                                <th>描述</th>
+                                <th>类型</th>
+                                <th>紧急程度</th>
+                                <th>场景标签</th>
+                                <th>处理部门</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                `;
+                startCancelTick();
+            } catch (e) {
+                if (quiet) {
+                    console.warn('列表轮询异常，保留当前列表', e);
+                    return;
+                }
+                container.innerHTML = '<div class="empty">加载失败</div>';
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // 列表轮询：管理员回复后红点自动出现（15 秒自动刷新，复用 loadList，
+        //           不改渲染逻辑；与 30 秒撤销按钮重算定时器并存）
+        // ------------------------------------------------------------------
+        function startListPolling() {
+            if (listPollTimer) clearInterval(listPollTimer);
+            listPollTimer = setInterval(() => {
+                // 回复弹窗打开期间不触发刷新；页面不可见时暂停（可选）
+                const overlay = document.getElementById('replyOverlay');
+                if (overlay && !overlay.classList.contains('hidden')) return;
+                if (document.hidden) return;
+                loadList(true);
+            }, POLL_LIST_MS);
+        }
+
+        // 页面卸载时清理轮询定时器
+        window.addEventListener('beforeunload', () => {
+            if (listPollTimer) clearInterval(listPollTimer);
+        });
+
+        // 页面初始化：先认证，再加载数据；加载成功后启动 15 秒列表轮询
+        initAuth().then(ok => {
+            if (ok) {
+                loadList();
+                startListPolling();
+            }
+        });
+    </script>
+</body>
+</html>
