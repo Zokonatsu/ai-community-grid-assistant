@@ -19,7 +19,8 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Depends, Header, JSONResponse
+from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -1418,7 +1419,7 @@ async def reject_event(
 # API 端点：POST /api/events/{event_id}/reply
 # ------------------------------------------------------------------
 class RejectRequest(BaseModel):
-reason: str = Field(..., min_length=1, max_length=500, description="拒绝理由")
+    reason: str = Field(..., min_length=1, max_length=500, description="拒绝理由")
 
 
 class ReplyRequest(BaseModel):
