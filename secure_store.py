@@ -12,6 +12,7 @@ secure_store.py
   绝不静默返回空字典（否则上层会误判"无用户"并重建 admin 覆盖真实数据）。
 """
 
+import base64
 import json
 import logging
 import os
@@ -34,6 +35,20 @@ NONCE_LEN = 12  # GCM 标准 nonce 长度
 KEY_ENV = "DATA_ENCRYPTION_KEY"
 _KEY_BYTES = 32  # AES-256
 _KEY_HEX_LEN = _KEY_BYTES * 2  # 64
+FIELD_PREFIX: str = "enc:v1:"
+_FIELD_AAD = b"field:v1"
+
+# ------------------------------------------------------------------
+# 迁移脚本专用字段列表（tests/test_field_encryption.py 验收）
+# ------------------------------------------------------------------
+EVENT_ENCRYPT_FIELDS = ("description", "address", "reply", "user_id", "lat", "lng")
+TASK_ENCRYPT_FIELDS = (
+    "description", "address", "user_name", "user_phone", "user_id_card",
+    "reply", "beneficiary_name", "beneficiary_phone",
+    "beneficiary_building", "beneficiary_unit", "beneficiary_room",
+    "user_building", "user_unit", "user_room",
+)
+TASK_NUMERIC_FIELDS = ("event_lat", "event_lng")
 
 
 # ------------------------------------------------------------------
@@ -109,6 +124,49 @@ def decrypt(kind: str, blob: bytes, key: bytes | None = None) -> dict:
     if not isinstance(data, dict):
         raise SecureStoreError("解密内容结构异常（应为对象）。")
     return data
+
+
+# ------------------------------------------------------------------
+# 字段级加解密
+# ------------------------------------------------------------------
+def encrypt_field(value: str | None) -> str | None:
+    """对单个字段值进行 AES-256-GCM 加密，返回 enc:v1: 前缀的 base64 密文。
+
+    空字符串与 None 原样返回，避免无谓密文。
+    """
+    if value is None or value == "":
+        return value
+    key = get_key()
+    nonce = secrets.token_bytes(NONCE_LEN)
+    plaintext = value.encode("utf-8")
+    ct_tag = AESGCM(key).encrypt(nonce, plaintext, _FIELD_AAD)
+    return FIELD_PREFIX + base64.b64encode(nonce + ct_tag).decode("ascii")
+
+
+def decrypt_field(value: str | None) -> str | None:
+    """解密单个字段值；空值/None 原样返回，无 enc:v1: 前缀的存量明文也原样返回。
+
+    密文损坏或密钥不匹配时 raise SecureStoreError（fail-fast）。
+    """
+    if value is None or value == "":
+        return value
+    if not isinstance(value, str) or not value.startswith(FIELD_PREFIX):
+        return value  # 存量明文兼容
+    key = get_key()
+    try:
+        raw = base64.b64decode(value[len(FIELD_PREFIX):], validate=True)
+    except Exception as exc:
+        raise SecureStoreError("字段密文不是合法的 base64") from exc
+    if len(raw) <= NONCE_LEN:
+        raise SecureStoreError("字段密文过短，已损坏。")
+    nonce, ct_tag = raw[:NONCE_LEN], raw[NONCE_LEN:]
+    try:
+        plaintext = AESGCM(key).decrypt(nonce, ct_tag, _FIELD_AAD)
+    except Exception as exc:
+        raise SecureStoreError(
+            "字段解密失败（密钥不匹配或密文被篡改/损坏）。"
+        ) from exc
+    return plaintext.decode("utf-8")
 
 
 # ------------------------------------------------------------------

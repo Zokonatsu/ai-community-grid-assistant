@@ -68,6 +68,7 @@ os.environ["LLM_API_KEY"] = "test-key"
 os.environ["LLM_BASE_URL"] = "http://test"
 os.environ["DATA_ENCRYPTION_KEY"] = "1" * 64
 os.environ["AUTH_STORE"] = "file"
+os.environ["ADMIN_INITIAL_PASSWORD"] = "admin123456"
 
 
 
@@ -177,6 +178,9 @@ def test_suite():
         import main as main_module
         from fastapi.testclient import TestClient
     client = TestClient(app)
+    if hasattr(app.state, "limiter"):
+        app.state.limiter.enabled = False
+        app.state.limiter.reset()
     code = run_all()
     assert code == 0, f"run_all 返回 {code}，存在失败项"
 def run_all():
@@ -217,7 +221,7 @@ def run_all():
 
     r1b = client.post(f"/api/events/{eid1}/cancel", headers=auth_header(token_a))
     check("1.3 已撤销事件再撤 -> 400「事件已撤销」",
-          r1b.status_code == 400 and r1b.json().get("detail") == "事件已撤销",
+          r1b.status_code == 400 and r1b.json().get("error") == "事件已撤销",
           f"status={r1b.status_code} body={r1b.text}")
 
     # ==================================================================
@@ -237,7 +241,7 @@ def run_all():
     seed_task(eid3, "处理中", now_str(-301), user_a_id)
     r3 = client.post(f"/api/events/{eid3}/cancel", headers=auth_header(token_a))
     check("3.1 超 5 分钟拒绝",
-          r3.status_code == 400 and r3.json().get("detail") == "已超过5分钟，无法撤销",
+          r3.status_code == 400 and r3.json().get("error") == "已超过5分钟，无法撤销",
           f"status={r3.status_code} body={r3.text}")
     item3 = next((x for x in client.get("/api/events", headers=auth_header(token_a)).json()
                   if x["event_id"] == eid3), None)
@@ -250,7 +254,7 @@ def run_all():
     seed_task(eid4, "待审核", "not-a-date", user_a_id)
     r4 = client.post(f"/api/events/{eid4}/cancel", headers=auth_header(token_a))
     check("4.1 created_at 解析失败拒绝（按超时）",
-          r4.status_code == 400 and r4.json().get("detail") == "已超过5分钟，无法撤销",
+          r4.status_code == 400 and r4.json().get("error") == "已超过5分钟，无法撤销",
           f"status={r4.status_code} body={r4.text}")
 
     # ==================================================================
@@ -273,11 +277,11 @@ def run_all():
     seed_task(eid6, "处理中", now_str(-30), user_a_id)
     r6 = client.post(f"/api/events/{eid6}/cancel", headers=auth_header(token_b))
     check("6.1 非本人撤销 403",
-          r6.status_code == 403 and r6.json().get("detail") == "无权操作该事件",
+          r6.status_code == 403 and r6.json().get("error") == "无权操作该事件",
           f"status={r6.status_code} body={r6.text}")
     r7 = client.post(f"/api/events/{eid6}/cancel", headers=auth_header(admin_token))
     check("7.1 管理员代撤销 403",
-          r7.status_code == 403 and r7.json().get("detail") == "无权操作该事件",
+          r7.status_code == 403 and r7.json().get("error") == "无权操作该事件",
           f"status={r7.status_code} body={r7.text}")
 
     # ==================================================================
@@ -285,7 +289,7 @@ def run_all():
     # ==================================================================
     r8 = client.post("/api/events/no-such-event-id/cancel", headers=auth_header(token_a))
     check("8.1 事件不存在 404",
-          r8.status_code == 404 and r8.json().get("detail") == "事件不存在",
+          r8.status_code == 404 and r8.json().get("error") == "事件不存在",
           f"status={r8.status_code} body={r8.text}")
     r9 = client.post(f"/api/events/{eid1}/cancel")
     check("9.1 无 token 401", r9.status_code == 401, f"status={r9.status_code}")

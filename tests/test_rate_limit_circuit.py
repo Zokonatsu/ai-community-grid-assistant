@@ -106,9 +106,13 @@ def rl_ctx(monkeypatch):
 
     import config
     importlib.reload(config)  # 确保 RATE_LIMIT_ENABLED=true 生效
+    # 清理 main 模块缓存，确保重新导入时装饰器绑定新的 config 限流规则
     if "main" in sys.modules:
-        import main
-        main.app.state.limiter.enabled = True
+        del sys.modules["main"]
+        # 清理 prometheus 默认注册表，避免 Instrumentator 重复注册导致计数失效
+        from prometheus_client import REGISTRY
+        for collector in list(REGISTRY._collector_to_names.keys()):
+            REGISTRY.unregister(collector)
     import auth
     importlib.reload(auth)
 
@@ -129,6 +133,8 @@ def rl_ctx(monkeypatch):
         client = TestClient(app)
         yield {"client": client, "app": app, "limiter": limiter, "main": main_module}
     finally:
+        main_module.app.state.limiter.enabled = False
+        main_module.app.state.limiter.reset()
         p2.stop()
         p1.stop()
 
@@ -144,7 +150,7 @@ def test_login_rate_limit_429(rl_ctx):
         assert r.status_code == 200, f"第 {i + 1} 次登录不应被限流: {r.status_code} {r.text}"
     r6 = client.post("/api/auth/login", json={"username": "nobody", "password": "wrong"})
     assert r6.status_code == 429, f"第 6 次登录应 429: {r6.status_code} {r6.text}"
-    assert r6.json() == {"detail": "请求过于频繁，请稍后再试"}, r6.text
+    assert r6.json() == {"success": False, "error": "请求过于频繁，请稍后再试"}, r6.text
 
 
 def test_register_rate_limit_429(rl_ctx):
@@ -170,7 +176,7 @@ def test_register_rate_limit_429(rl_ctx):
     p6 = dict(payload, username="rl_reg_user_6", phone="13900000007")
     r6 = client.post("/api/auth/register", json=p6)
     assert r6.status_code == 429, f"第 6 次注册应 429: {r6.status_code} {r6.text}"
-    assert r6.json() == {"detail": "请求过于频繁，请稍后再试"}, r6.text
+    assert r6.json() == {"success": False, "error": "请求过于频繁，请稍后再试"}, r6.text
 
 
 # ----------------------------------------------------------------------
@@ -207,7 +213,7 @@ def test_events_rate_limit_per_user(rl_ctx):
         )
     r11 = client.post("/api/events", json={"description": "小区楼下下水道堵了"}, headers=headers_a)
     assert r11.status_code == 429, f"第 11 次事件提交应 429: {r11.status_code} {r11.text}"
-    assert r11.json() == {"detail": "请求过于频繁，请稍后再试"}, r11.text
+    assert r11.json() == {"success": False, "error": "请求过于频繁，请稍后再试"}, r11.text
 
     # keyfunc=user_id：用户 B 不受用户 A 限流影响
     headers_b = _register_login("rl_ev_user_b", "13900000012")

@@ -11,6 +11,7 @@ main.py
 import config  # noqa: F401  最先加载，确保环境变量在后续导入前就绪
 
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -19,11 +20,15 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from prometheus_fastapi_instrumentator import Instrumentator, metrics
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 # 复用已有工作流与持久化配置
 from workflow import workflow, WorkflowState, dispatch_record_workflow
@@ -34,6 +39,7 @@ import dispatch_agent
 import auth
 import geo
 import community_store
+from secure_store import encrypt_field, decrypt_field
 
 logger = logging.getLogger("main")
 
@@ -52,9 +58,46 @@ def _ensure_data_dir() -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
 
 
+# ------------------------------------------------------------------
+# 任务字段级加解密 helper
+# ------------------------------------------------------------------
+_TASK_SENSITIVE_FIELDS = {
+    "description", "address", "user_name", "user_phone", "user_id_card",
+    "reply", "beneficiary_name", "beneficiary_phone",
+    "beneficiary_building", "beneficiary_unit", "beneficiary_room",
+    "user_building", "user_unit", "user_room",
+}
+
+
+def _encrypt_task_fields(task: dict) -> dict:
+    """加密任务中的敏感字段，返回副本（不修改原 dict）。"""
+    t = copy.deepcopy(task)
+    for fld in _TASK_SENSITIVE_FIELDS:
+        if fld in t and t[fld]:
+            t[fld] = encrypt_field(t[fld])
+    if "replies" in t and isinstance(t["replies"], list):
+        for r in t["replies"]:
+            if isinstance(r, dict) and r.get("content"):
+                r["content"] = encrypt_field(r["content"])
+    return t
+
+
+def _decrypt_task_fields(task: dict) -> dict:
+    """解密任务中的敏感字段，原地修改。"""
+    for fld in _TASK_SENSITIVE_FIELDS:
+        if fld in task:
+            task[fld] = decrypt_field(task[fld])
+    if "replies" in task and isinstance(task["replies"], list):
+        for r in task["replies"]:
+            if isinstance(r, dict):
+                r["content"] = decrypt_field(r.get("content"))
+    return task
+
+
 def _load_tasks() -> dict[str, dict[str, Any]]:
     """
     从磁盘加载任务状态。文件不存在或损坏时返回空字典。
+    敏感字段自动透明解密。
     """
     if not os.path.exists(TASKS_FILE):
         return {}
@@ -62,7 +105,7 @@ def _load_tasks() -> dict[str, dict[str, Any]]:
         with open(TASKS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
             if isinstance(data, dict):
-                return data
+                return {k: _decrypt_task_fields(v) for k, v in data.items()}
             return {}
     except (json.JSONDecodeError, OSError, TypeError) as exc:
         logger.error("加载任务状态文件失败，将使用空状态。异常=%s", exc)
@@ -72,11 +115,13 @@ def _load_tasks() -> dict[str, dict[str, Any]]:
 def _save_tasks(tasks: dict[str, dict[str, Any]]) -> None:
     """
     将全量任务状态写入磁盘。调用方需自行保证并发安全（在外层锁内调用）。
+    敏感字段加密后落盘，内存 dict 保持明文。
     """
     _ensure_data_dir()
     try:
+        encrypted_tasks = {k: _encrypt_task_fields(v) for k, v in tasks.items()}
         with open(TASKS_FILE, "w", encoding="utf-8") as f:
-            json.dump(tasks, f, ensure_ascii=False, indent=2)
+            json.dump(encrypted_tasks, f, ensure_ascii=False, indent=2)
     except (OSError, TypeError, ValueError) as exc:
         logger.error("持久化任务状态失败，文件='%s'，异常=%s", TASKS_FILE, exc)
 
@@ -304,14 +349,55 @@ app = FastAPI(
     version="1.1.0",
 )
 
-# 注册 CORS 中间件，允许前端跨域调用
+# 注册 CORS 中间件，允许前端跨域调用（白名单取自环境变量，默认含本机与生产前端）
+_cors_origins = config.CORS_ALLOW_ORIGINS
+_cors_allow_credentials = "*" not in _cors_origins
+if "*" in _cors_origins:
+    logger.warning(
+        "CORS_ALLOW_ORIGINS 包含通配符 '*', allow_credentials 已自动置为 False"
+    )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ------------------------------------------------------------------
+# Prometheus 指标端点
+# ------------------------------------------------------------------
+Instrumentator().instrument(app).add(metrics.default()).expose(
+    app, endpoint="/metrics", include_in_schema=False
+)
+
+# ------------------------------------------------------------------
+# slowapi 限流器
+# ------------------------------------------------------------------
+limiter = Limiter(key_func=get_remote_address, enabled=config.RATE_LIMIT_ENABLED)
+app.state.limiter = limiter
+
+
+async def _custom_rate_limit_handler(request, exc):
+    """自定义限流响应格式，与项目统一格式一致。"""
+    return JSONResponse(
+        status_code=429,
+        content={"success": False, "error": "请求过于频繁，请稍后再试"},
+    )
+
+
+app.add_exception_handler(RateLimitExceeded, _custom_rate_limit_handler)
+
+
+def _rate_limit_key_user(request: Request) -> str:
+    """从请求头提取 Bearer Token 对应的 user_id，用于事件提交 per-user 限流。"""
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        user = auth.get_current_user(token)
+        if user:
+            return user.get("id", "anonymous")
+    return "anonymous"
 
 
 # ------------------------------------------------------------------
@@ -482,25 +568,26 @@ async def health_check() -> dict[str, str]:
 # API 端点：认证相关
 # ------------------------------------------------------------------
 @app.post("/api/auth/register", response_model=AuthResponse)
-async def register(request: RegisterRequest) -> AuthResponse:
+@limiter.limit(config.RATE_LIMIT_LOGIN)
+async def register(request: Request, body: RegisterRequest) -> AuthResponse:
     """
     用户注册，仅支持居民角色。
     注册时收集真实姓名和手机号作为实名信息。
     """
-    if request.role == "admin":
+    if body.role == "admin":
         return AuthResponse(success=False, error="禁止通过注册创建管理员账号")
     success, message, user = auth.register_user(
-        username=request.username,
-        password=request.password,
-        real_name=request.real_name,
-        phone=request.phone,
-        id_card=request.id_card,
-        role=request.role,
-        building=request.building,
-        unit=request.unit,
-        room=request.room,
-        register_lat=request.register_lat,
-        register_lng=request.register_lng,
+        username=body.username,
+        password=body.password,
+        real_name=body.real_name,
+        phone=body.phone,
+        id_card=body.id_card,
+        role=body.role,
+        building=body.building,
+        unit=body.unit,
+        room=body.room,
+        register_lat=body.register_lat,
+        register_lng=body.register_lng,
     )
     if not success:
         return AuthResponse(success=False, error=message)
@@ -508,13 +595,14 @@ async def register(request: RegisterRequest) -> AuthResponse:
 
 
 @app.post("/api/auth/login", response_model=AuthResponse)
-async def login(request: LoginRequest) -> AuthResponse:
+@limiter.limit(config.RATE_LIMIT_LOGIN)
+async def login(request: Request, body: LoginRequest) -> AuthResponse:
     """
     用户登录，返回 Token 和用户信息。
     """
     success, message, result = auth.login_user(
-        username=request.username,
-        password=request.password,
+        username=body.username,
+        password=body.password,
     )
     if not success:
         return AuthResponse(success=False, error=message)
@@ -671,8 +759,10 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
 # API 端点：POST /api/events
 # ------------------------------------------------------------------
 @app.post("/api/events", response_model=EventResponse)
+@limiter.limit(config.RATE_LIMIT_EVENTS, key_func=_rate_limit_key_user)
 async def create_event(
-    request: EventRequest,
+    request: Request,
+    body: EventRequest,
     current_user: dict[str, Any] = Depends(get_current_user_dependency),
 ) -> EventResponse:
     """
@@ -684,19 +774,19 @@ async def create_event(
         # ------------------------------------------------------------------
         # 提交方式校验：本人（self）/ 代人办（proxy）
         # ------------------------------------------------------------------
-        if request.beneficiary_type not in ("self", "proxy"):
+        if body.beneficiary_type not in ("self", "proxy"):
             return EventResponse(
                 success=False,
                 error="提交方式不合法，仅支持本人（self）或代人办（proxy）",
             )
-        if request.beneficiary_type == "proxy":
+        if body.beneficiary_type == "proxy":
             missing = []
             for label, val in (
-                ("被帮助人姓名", request.beneficiary_name),
-                ("手机号", request.beneficiary_phone),
-                ("楼栋", request.beneficiary_building),
-                ("单元", request.beneficiary_unit),
-                ("房间号", request.beneficiary_room),
+                ("被帮助人姓名", body.beneficiary_name),
+                ("手机号", body.beneficiary_phone),
+                ("楼栋", body.beneficiary_building),
+                ("单元", body.beneficiary_unit),
+                ("房间号", body.beneficiary_room),
             ):
                 if not (val or "").strip():
                     missing.append(label)
@@ -705,17 +795,17 @@ async def create_event(
                     success=False,
                     error="代人办需填写：" + "、".join(missing),
                 )
-        beneficiary = _resolve_beneficiary(request, current_user)
+        beneficiary = _resolve_beneficiary(body, current_user)
         # ------------------------------------------------------------------
         # 前置硬规则检查（生命安全优先）：命中则跳过所有LLM调用
         # ------------------------------------------------------------------
-        hard_rule_result = _check_hard_rules_first(request.description)
+        hard_rule_result = _check_hard_rules_first(body.description)
         if hard_rule_result is not None:
-            if not request.confirmed:
+            if not body.confirmed:
                 # 未确认：返回弹窗确认，不创建任务
                 return EventResponse(
                     success=True,
-                    error=f"检测到高风险描述「{request.description.strip()}」，请确认是否向外部急救资源求助",
+                    error=f"检测到高风险描述「{body.description.strip()}」，请确认是否向外部急救资源求助",
                     data=EventResponseData(
                         event_id="",
                         address="",
@@ -735,7 +825,7 @@ async def create_event(
             async with _task_lock:
                 _tasks[event_id] = _build_task(
                     event_id=event_id,
-                    description=request.description,
+                    description=body.description,
                     created_at=created_at,
                     status="处理中",
                     address="",
@@ -743,14 +833,14 @@ async def create_event(
                     urgency=hard_rule_result["urgency"],
                     scene_tag=hard_rule_result["scene_tag"],
                     user=current_user,
-                    lat=request.lat,
-                    lng=request.lng,
+                    lat=body.lat,
+                    lng=body.lng,
                     beneficiary=beneficiary,
                 )
                 _save_tasks(_tasks)
             # 启动后台异步任务
             bg_task = asyncio.create_task(
-                _process_event(event_id, hard_rule_result, current_user["id"], request.lat, request.lng)
+                _process_event(event_id, hard_rule_result, current_user["id"], body.lat, body.lng)
             )
             _background_tasks.add(bg_task)
             bg_task.add_done_callback(_background_tasks.discard)
@@ -771,17 +861,17 @@ async def create_event(
         # ------------------------------------------------------------------
         # 前置模糊急救检查：高风险短词且用户未确认时，返回确认提示，不创建任务
         # ------------------------------------------------------------------
-        if not request.confirmed:
-            fuzzy_emergency = _check_fuzzy_emergency(request.description)
+        if not body.confirmed:
+            fuzzy_emergency = _check_fuzzy_emergency(body.description)
             if fuzzy_emergency is not None:
                 logger.warning(
                     "前置模糊急救命中（%s），返回确认提示：description='%s'",
                     fuzzy_emergency["emergency_type"],
-                    request.description,
+                    body.description,
                 )
                 return EventResponse(
                     success=True,
-                    error=f"检测到高风险关键词「{request.description.strip()}」，请补充具体地址和详细描述后重新提交",
+                    error=f"检测到高风险关键词「{body.description.strip()}」，请补充具体地址和详细描述后重新提交",
                     data=EventResponseData(
                         event_id="",
                         address="",
@@ -802,7 +892,7 @@ async def create_event(
         semantic_result: dict[str, str] | None = None
         try:
             check_state = {
-                "description": request.description,
+                "description": body.description,
                 "address": "",
                 "event_type": "",
                 "urgency": "",
@@ -810,22 +900,22 @@ async def create_event(
                 "handler": "",
                 "confidence": "",
                 "confirmation_required": False,
-                "emergency_type": request.emergency_type or "",
-                "confirmed": request.confirmed,
+                "emergency_type": body.emergency_type or "",
+                "confirmed": body.confirmed,
             }
             semantic_result = await asyncio.wait_for(
                 asyncio.to_thread(receive_node, check_state),
                 timeout=50.0,  # 3轮并行×15秒，留足余量
             )
         except asyncio.TimeoutError:
-            logger.warning("语义校验超时，创建待审核事件：description='%s'", request.description)
+            logger.warning("语义校验超时，创建待审核事件：description='%s'", body.description)
             # 超时无法判断语义，创建待审核事件转人工部处理
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
                 _tasks[event_id] = _build_task(
                     event_id=event_id,
-                    description=request.description,
+                    description=body.description,
                     created_at=created_at,
                     status="待审核",
                     address="",
@@ -834,14 +924,14 @@ async def create_event(
                     scene_tag="常规",
                     user=current_user,
                     error="语义校验超时，已转人工审核",
-                    lat=request.lat,
-                    lng=request.lng,
+                    lat=body.lat,
+                    lng=body.lng,
                     beneficiary=beneficiary,
                 )
                 _save_tasks(_tasks)
             # 启动后台让 dispatch_agent 设置 handler="人工部"
             timeout_state = {
-                "description": request.description,
+                "description": body.description,
                 "address": "",
                 "event_type": "待审核",
                 "urgency": "中",
@@ -854,7 +944,7 @@ async def create_event(
                 "status": "待审核",
             }
             bg_task = asyncio.create_task(
-                _process_event(event_id, timeout_state, current_user["id"], request.lat, request.lng)
+                _process_event(event_id, timeout_state, current_user["id"], body.lat, body.lng)
             )
             _background_tasks.add(bg_task)
             bg_task.add_done_callback(_background_tasks.discard)
@@ -872,14 +962,14 @@ async def create_event(
                 ),
             )
         except Exception as exc:
-            logger.error("语义校验异常：description='%s'，异常=%s", request.description, exc)
+            logger.error("语义校验异常：description='%s'，异常=%s", body.description, exc)
             # 异常时fallback到待审核，不丢弃消息
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
                 _tasks[event_id] = _build_task(
                     event_id=event_id,
-                    description=request.description,
+                    description=body.description,
                     created_at=created_at,
                     status="待审核",
                     address="",
@@ -888,14 +978,14 @@ async def create_event(
                     scene_tag="常规",
                     user=current_user,
                     error=f"语义校验异常，已转人工审核：{type(exc).__name__}",
-                    lat=request.lat,
-                    lng=request.lng,
+                    lat=body.lat,
+                    lng=body.lng,
                     beneficiary=beneficiary,
                 )
                 _save_tasks(_tasks)
             # 启动后台让 dispatch_agent 设置 handler="人工部"
             exc_state = {
-                "description": request.description,
+                "description": body.description,
                 "address": "",
                 "event_type": "待审核",
                 "urgency": "中",
@@ -908,7 +998,7 @@ async def create_event(
                 "status": "待审核",
             }
             bg_task = asyncio.create_task(
-                _process_event(event_id, exc_state, current_user["id"], request.lat, request.lng)
+                _process_event(event_id, exc_state, current_user["id"], body.lat, body.lng)
             )
             _background_tasks.add(bg_task)
             bg_task.add_done_callback(_background_tasks.discard)
@@ -931,7 +1021,7 @@ async def create_event(
         # 复用「API异常」降级路径转待审核，避免对 None 调用 .get() 抛内部异常
         # ------------------------------------------------------------------
         if semantic_result is None or not isinstance(semantic_result, dict):
-            logger.error("语义校验返回无效结果：description='%s'，result=%r", request.description, semantic_result)
+            logger.error("语义校验返回无效结果：description='%s'，result=%r", body.description, semantic_result)
             # 复用「API异常」降级路径：建待审核任务（error="语义校验服务异常，已转人工审核"）、
             # 启动 _process_event（emergency_type="人工部"、status="待审核"）、
             # 返回 EventResponse(success=True, data.status="待审核", error=None)
@@ -940,7 +1030,7 @@ async def create_event(
             async with _task_lock:
                 _tasks[event_id] = _build_task(
                     event_id=event_id,
-                    description=request.description,
+                    description=body.description,
                     created_at=created_at,
                     status="待审核",
                     address="",
@@ -949,14 +1039,14 @@ async def create_event(
                     scene_tag="常规",
                     user=current_user,
                     error="语义校验服务异常，已转人工审核",
-                    lat=request.lat,
-                    lng=request.lng,
+                    lat=body.lat,
+                    lng=body.lng,
                     beneficiary=beneficiary,
                 )
                 _save_tasks(_tasks)
             # 启动后台让 dispatch_agent 设置 handler="人工部"
             invalid_state = {
-                "description": request.description,
+                "description": body.description,
                 "address": "",
                 "event_type": "待审核",
                 "urgency": "中",
@@ -969,7 +1059,7 @@ async def create_event(
                 "status": "待审核",
             }
             bg_task = asyncio.create_task(
-                _process_event(event_id, invalid_state, current_user["id"], request.lat, request.lng)
+                _process_event(event_id, invalid_state, current_user["id"], body.lat, body.lng)
             )
             _background_tasks.add(bg_task)
             bg_task.add_done_callback(_background_tasks.discard)
@@ -994,7 +1084,7 @@ async def create_event(
         if semantic_result.get("confirmation_required"):
             return EventResponse(
                 success=True,
-                error=f"检测到高风险关键词「{request.description.strip()}」，请补充具体地址和详细描述后重新提交",
+                error=f"检测到高风险关键词「{body.description.strip()}」，请补充具体地址和详细描述后重新提交",
                 data=EventResponseData(
                     event_id="",
                     address="",
@@ -1011,24 +1101,24 @@ async def create_event(
 
         # 外部资源场景：语义校验判定为生命急救或紧急救援，且用户未确认时触发弹窗
         scene_tag = semantic_result.get("scene_tag", "")
-        if scene_tag in ("生命急救", "紧急救援") and not request.confirmed:
+        if scene_tag in ("生命急救", "紧急救援") and not body.confirmed:
             # 优先使用接收模块已推断的 emergency_type，避免二次推断与语义判断不一致
             inferred = semantic_result.get("emergency_type")
             if not inferred:
-                inferred = dispatch_agent._infer_emergency_type(request.description)
+                inferred = dispatch_agent._infer_emergency_type(body.description)
             if not inferred:
                 if scene_tag == "生命急救":
                     inferred = "medical"
                 else:
                     # 紧急救援不默认fire，根据描述进一步区分
-                    desc = request.description
+                    desc = body.description
                     if re.search(r"火灾|起火|着火|燃气泄漏|煤气泄漏|爆炸|坍塌|电梯困人|高空坠物", desc):
                         inferred = "fire"
                     else:
                         inferred = "police"
             return EventResponse(
                 success=True,
-                error=f"检测到高风险描述「{request.description.strip()}」，请确认是否向外部急救资源求助",
+                error=f"检测到高风险描述「{body.description.strip()}」，请确认是否向外部急救资源求助",
                 data=EventResponseData(
                     event_id="",
                     address="",
@@ -1044,21 +1134,21 @@ async def create_event(
             )
 
         if event_type == "无效输入":
-            logger.warning("语义校验拦截：description='%s'", request.description)
+            logger.warning("语义校验拦截：description='%s'", body.description)
             return EventResponse(
                 success=False,
                 error="输入内容无效（如纯问候、闲聊或无实质内容的描述），请提供具体的社区事务描述",
             )
 
         if event_type == "API异常":
-            logger.error("语义校验API异常：description='%s'", request.description)
+            logger.error("语义校验API异常：description='%s'", body.description)
             # API异常时fallback到待审核，不丢弃消息
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
                 _tasks[event_id] = _build_task(
                     event_id=event_id,
-                    description=request.description,
+                    description=body.description,
                     created_at=created_at,
                     status="待审核",
                     address="",
@@ -1067,14 +1157,14 @@ async def create_event(
                     scene_tag="常规",
                     user=current_user,
                     error="语义校验服务异常，已转人工审核",
-                    lat=request.lat,
-                    lng=request.lng,
+                    lat=body.lat,
+                    lng=body.lng,
                     beneficiary=beneficiary,
                 )
                 _save_tasks(_tasks)
             # 启动后台让 dispatch_agent 设置 handler="人工部"
             api_err_state = {
-                "description": request.description,
+                "description": body.description,
                 "address": "",
                 "event_type": "待审核",
                 "urgency": "中",
@@ -1087,7 +1177,7 @@ async def create_event(
                 "status": "待审核",
             }
             bg_task = asyncio.create_task(
-                _process_event(event_id, api_err_state, current_user["id"], request.lat, request.lng)
+                _process_event(event_id, api_err_state, current_user["id"], body.lat, body.lng)
             )
             _background_tasks.add(bg_task)
             bg_task.add_done_callback(_background_tasks.discard)
@@ -1112,7 +1202,7 @@ async def create_event(
             async with _task_lock:
                 _tasks[event_id] = _build_task(
                     event_id=event_id,
-                    description=request.description,
+                    description=body.description,
                     created_at=created_at,
                     status="待审核",
                     address=semantic_result.get("address", ""),
@@ -1120,15 +1210,15 @@ async def create_event(
                     urgency=semantic_result.get("urgency", "中"),
                     scene_tag=semantic_result.get("scene_tag", "常规"),
                     user=current_user,
-                    lat=request.lat,
-                    lng=request.lng,
+                    lat=body.lat,
+                    lng=body.lng,
                     beneficiary=beneficiary,
                 )
                 _save_tasks(_tasks)
             # 启动后台异步任务，让 dispatch_agent 分配 handler="人工部" 并记录
             semantic_result["status"] = "待审核"
             bg_task = asyncio.create_task(
-                _process_event(event_id, semantic_result, current_user["id"], request.lat, request.lng)
+                _process_event(event_id, semantic_result, current_user["id"], body.lat, body.lng)
             )
             _background_tasks.add(bg_task)
             bg_task.add_done_callback(_background_tasks.discard)
@@ -1155,7 +1245,7 @@ async def create_event(
         async with _task_lock:
             _tasks[event_id] = _build_task(
                 event_id=event_id,
-                description=request.description,
+                description=body.description,
                 created_at=created_at,
                 status="处理中",
                 address=semantic_result.get("address", ""),
@@ -1163,15 +1253,15 @@ async def create_event(
                 urgency=semantic_result.get("urgency", ""),
                 scene_tag=semantic_result.get("scene_tag", ""),
                 user=current_user,
-                lat=request.lat,
-                lng=request.lng,
+                lat=body.lat,
+                lng=body.lng,
                 beneficiary=beneficiary,
             )
             _save_tasks(_tasks)
 
         # 启动后台异步任务，传入已校验结果，避免二次调用 LLM API
         bg_task = asyncio.create_task(
-            _process_event(event_id, semantic_result, current_user["id"], request.lat, request.lng)
+            _process_event(event_id, semantic_result, current_user["id"], body.lat, body.lng)
         )
         _background_tasks.add(bg_task)
         bg_task.add_done_callback(_background_tasks.discard)
@@ -1193,14 +1283,14 @@ async def create_event(
 
     except Exception as exc:
         # 最后兜底：生命急救/紧急救援消息绝不丢弃
-        hard = _check_hard_rules_first(request.description)
+        hard = _check_hard_rules_first(body.description)
         if hard is not None:
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
                 _tasks[event_id] = _build_task(
                     event_id=event_id,
-                    description=request.description,
+                    description=body.description,
                     created_at=created_at,
                     status="待审核",
                     address="",
@@ -1209,14 +1299,14 @@ async def create_event(
                     scene_tag=hard["scene_tag"],
                     user=current_user,
                     error=f"处理异常已转人工：{type(exc).__name__}",
-                    lat=request.lat,
-                    lng=request.lng,
+                    lat=body.lat,
+                    lng=body.lng,
                     beneficiary=beneficiary,
                 )
                 _save_tasks(_tasks)
             # 启动后台让 dispatch_agent 设置 handler="人工部"
             hard_state = {
-                "description": request.description,
+                "description": body.description,
                 "address": "",
                 "event_type": "待审核",
                 "urgency": "高",
@@ -1229,7 +1319,7 @@ async def create_event(
                 "status": "待审核",
             }
             bg_task = asyncio.create_task(
-                _process_event(event_id, hard_state, current_user["id"], request.lat, request.lng)
+                _process_event(event_id, hard_state, current_user["id"], body.lat, body.lng)
             )
             _background_tasks.add(bg_task)
             bg_task.add_done_callback(_background_tasks.discard)
@@ -1317,8 +1407,8 @@ async def cancel_event(
             created = datetime.strptime(task.get("created_at", ""), "%Y-%m-%d %H:%M:%S")
         except (TypeError, ValueError):
             created = None
-        if created is None or (datetime.now() - created).total_seconds() > 180:
-            raise HTTPException(status_code=400, detail="已超过3分钟，无法撤销")
+        if created is None or (datetime.now() - created).total_seconds() > 300:
+            raise HTTPException(status_code=400, detail="已超过5分钟，无法撤销")
         task["status"] = "已撤销"
         task["withdrawn_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         _save_tasks(_tasks)

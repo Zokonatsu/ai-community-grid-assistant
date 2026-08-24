@@ -330,6 +330,8 @@ def test_suite():
          patch("record_agent.logger"):
         mock_wf.invoke = MagicMock(side_effect=mock_workflow_invoke)
         from main import app
+        import main as main_module
+        main_module.receive_node = mock_receive_node
         from fastapi.testclient import TestClient
     client = TestClient(app)
     # 手动进入 TestClient 上下文：保持事件循环常驻（persistent portal）

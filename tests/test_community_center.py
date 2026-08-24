@@ -121,6 +121,10 @@ def test_suite():
         from main import app
         from fastapi.testclient import TestClient
     client = TestClient(app)
+    # 禁用限流器，避免被其他测试模块的限流状态污染
+    if hasattr(app.state, "limiter"):
+        app.state.limiter.enabled = False
+        app.state.limiter.reset()
     # 默认中心（env 回退）与将要保存的新中心
     DEFAULT_LAT, DEFAULT_LNG = 30.274150, 120.155150
     NEW_LAT, NEW_LNG = 30.250000, 120.100000

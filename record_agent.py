@@ -24,6 +24,8 @@ from typing import Any, TypedDict
 
 from langgraph.graph import StateGraph, START, END
 
+from secure_store import encrypt_field
+
 # ------------------------------------------------------------------
 # 配置日志记录器
 # ------------------------------------------------------------------
@@ -157,13 +159,22 @@ def record_node(state: RecordState) -> RecordState:
         record["lat"] = lat
         record["lng"] = lng
 
+    # 敏感字段加密后落盘，返回结果保持明文
+    _SENSITIVE_FIELDS = {"description", "address", "reply", "user_id", "lat", "lng"}
+    disk_record = {}
+    for k, v in record.items():
+        if k in _SENSITIVE_FIELDS and v not in (None, ""):
+            disk_record[k] = encrypt_field(str(v))
+        else:
+            disk_record[k] = v
+
     # 持久化到 JSONL 文件：锁保护 + 异常降级
     # 无论文件写入成功或失败，均返回完整状态，确保上游链路不中断
     try:
         _ensure_data_dir()
         with _write_lock:
             with open(EVENTS_FILE, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                f.write(json.dumps(disk_record, ensure_ascii=False) + "\n")
     except (OSError, IOError, TypeError, ValueError) as exc:
         # OSError/IOError: 磁盘满、权限不足、路径不可写等
         # TypeError/ValueError: json.dumps 序列化异常（理论上不会发生，防御性捕获）

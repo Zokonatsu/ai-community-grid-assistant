@@ -24,6 +24,10 @@ load_dotenv(override=False)
 LLM_API_KEY: str | None = os.getenv("LLM_API_KEY")
 LLM_BASE_URL: str | None = os.getenv("LLM_BASE_URL")
 
+# LLM 请求重试配置
+LLM_RETRY_ATTEMPTS: int = int(os.getenv("LLM_RETRY_ATTEMPTS", "3"))
+LLM_RETRY_BASE_DELAY: float = float(os.getenv("LLM_RETRY_BASE_DELAY", "1.0"))
+
 # 启动时主动校验必填配置，避免延迟到首次 API 请求时才失败
 if not LLM_API_KEY:
     raise RuntimeError(
@@ -74,3 +78,35 @@ if AUTH_STORE == "cloudbase":
             + "。请按 DEPLOY.md 在 .env 中配置腾讯云 COS 存储桶信息，"
             + "或改回 AUTH_STORE=file 使用本地存储。"
         )
+
+# ------------------------------------------------------------------
+# CORS 白名单配置
+# ------------------------------------------------------------------
+# 允许跨域请求的来源列表，逗号分隔。空字符串表示允许所有（开发环境慎用）。
+_cors_raw: str = os.getenv("CORS_ALLOW_ORIGINS", "")
+if _cors_raw.strip():
+    CORS_ALLOW_ORIGINS: list[str] = [origin.strip() for origin in _cors_raw.split(",") if origin.strip()]
+else:
+    CORS_ALLOW_ORIGINS: list[str] = [
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+        "http://118.31.58.191:8000",
+        "http://aiwanggeyuan.cn",
+        "https://aiwanggeyuan.cn",
+    ]
+
+# ------------------------------------------------------------------
+# 限流配置
+# ------------------------------------------------------------------
+# true/1/yes/on  -> 启用限流中间件
+# false/0/no/off -> 关闭限流（测试或本地开发可临时关闭）
+RATE_LIMIT_ENABLED: bool = os.getenv("RATE_LIMIT_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+RATE_LIMIT_LOGIN: str = os.getenv("RATE_LIMIT_LOGIN", "5/minute")
+RATE_LIMIT_EVENTS: str = os.getenv("RATE_LIMIT_EVENTS", "60/minute")
+
+# ------------------------------------------------------------------
+# 日志脱敏配置
+# ------------------------------------------------------------------
+# true/1/yes/on  -> 启用日志脱敏（手机号、身份证号等敏感字段打码）
+# false/0/no/off -> 关闭脱敏（仅调试时临时使用）
+LOG_REDACT: bool = os.getenv("LOG_REDACT", "true").strip().lower() in ("1", "true", "yes", "on")

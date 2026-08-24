@@ -345,7 +345,7 @@ def test_migrate_missing_key_exits_nonzero():
 def test_http_contract_unchanged_after_encryption():
     import auth as auth_mod
     main = _import_main()
-    ok, msg, data = auth_mod.login_user("admin", "GridAdmin2025!@#")
+    ok, msg, data = auth_mod.login_user("admin", "admin123456")
     assert ok and data and data.get("token"), msg
     token = data["token"]
     headers = {"Authorization": f"Bearer {token}"}

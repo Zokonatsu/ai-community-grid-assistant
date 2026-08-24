@@ -96,6 +96,10 @@ def _get_client():
     patch("dispatch_agent.logger").start()
     patch("record_agent.logger").start()
     _STATE["client"] = TestClient(app)
+    # 禁用限流器，避免被其他测试模块的限流状态污染
+    if hasattr(app.state, "limiter"):
+        app.state.limiter.enabled = False
+        app.state.limiter.reset()
     return _STATE["client"], _STATE["main"], _STATE["auth"]
 
 

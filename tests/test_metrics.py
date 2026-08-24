@@ -56,6 +56,7 @@ def metrics_ctx(monkeypatch):
     _patch = patch("receive_agent.OpenAI")
     _patch.start()
     yield client
+    app.state.limiter.enabled = False
     _patch.stop()
 
 

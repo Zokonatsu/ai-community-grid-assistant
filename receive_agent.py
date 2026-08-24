@@ -18,6 +18,8 @@ receive_agent.py
 import json
 import logging
 import re
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import TypedDict
 
@@ -50,6 +52,44 @@ client = OpenAI(
 # 单次 timeout 设为 15 秒，3 轮并行总耗时约 1×15s。
 SEMANTIC_CHECK_ROUNDS: int = 3  # 多轮投票：消除边界输入（如迷信/闲聊）的判定随机性
 _SEMANTIC_SINGLE_TIMEOUT: float = 15.0
+
+
+# ------------------------------------------------------------------
+# LLM 熔断器
+# ------------------------------------------------------------------
+class _LLMCircuitBreaker:
+    """LLM 调用熔断器：连续失败达到阈值后进入 open，冷却到期后半开试探。"""
+
+    def __init__(self, threshold: int = 3, cooldown: float = 30.0):
+        self.threshold = threshold
+        self.cooldown = cooldown
+        self._failures = 0
+        self._last_failure_time = 0.0
+        self._state = "closed"
+        self._lock = threading.Lock()
+
+    def state(self) -> str:
+        with self._lock:
+            if self._state == "open":
+                if time.monotonic() - self._last_failure_time >= self.cooldown:
+                    self._state = "half_open"
+            return self._state
+
+    def record_success(self) -> None:
+        with self._lock:
+            self._failures = 0
+            self._state = "closed"
+
+    def record_failure(self) -> None:
+        with self._lock:
+            self._failures += 1
+            self._last_failure_time = time.monotonic()
+            if self._failures >= self.threshold:
+                self._state = "open"
+
+
+llm_circuit = _LLMCircuitBreaker()
+
 
 # ------------------------------------------------------------------
 # 硬规则辅助：确定性关键词匹配
@@ -186,9 +226,9 @@ def _check_hard_rules_first(description: str) -> dict | None:
 # ------------------------------------------------------------------
 # 单次 LLM API 调用（隔离异常，便于多轮采样）
 # ------------------------------------------------------------------
-def _call_llm_once(description: str) -> dict:
+def _call_llm_once_impl(description: str) -> dict:
     """
-    单次调用 LLM API 进行语义提取。
+    单次调用 LLM API 进行语义提取（实际底层调用，不含重试）。
 
     返回模型解析后的字典；任何异常均向上抛出，由调用方决定是否重试。
     """
@@ -207,6 +247,28 @@ def _call_llm_once(description: str) -> dict:
     if not isinstance(parsed, dict):
         raise ValueError(f"模型返回非字典类型: {type(parsed)}")
     return parsed
+
+
+def _call_llm_once(description: str) -> dict:
+    """
+    带退避重试的单次 LLM 调用。
+
+    瞬时异常（连接/超时/限流/5xx）自动重试；业务解析类异常不重试。
+    """
+    attempts = config.LLM_RETRY_ATTEMPTS
+    base_delay = config.LLM_RETRY_BASE_DELAY
+    last_exc = None
+    for attempt in range(attempts + 1):
+        try:
+            return _call_llm_once_impl(description)
+        except (TimeoutError, ConnectionError, OSError) as exc:
+            last_exc = exc
+            if attempt < attempts:
+                time.sleep(base_delay * (2 ** attempt))
+            continue
+        except Exception:
+            raise
+    raise last_exc
 
 
 # ------------------------------------------------------------------
@@ -576,30 +638,63 @@ def receive_node(state: ReceiveState) -> ReceiveState:
     # ------------------------------------------------------------------
     # 对同一描述并行调用多次 LLM API（ThreadPoolExecutor），投票统计获得稳定结果。
     # 任何一轮调用异常均单独捕获，不影响其他轮次。
+    current_state = llm_circuit.state()
+    if current_state == "open":
+        logger.warning(
+            "LLM 熔断器 open，跳过 API 调用，直接返回 API异常。description='%s'",
+            description,
+        )
+        return {
+            "description": description,
+            "address": "",
+            "event_type": "API异常",
+            "urgency": "低",
+            "scene_tag": "常规",
+            "handler": "",
+            "confidence": "none",
+            "confirmation_required": False,
+            "emergency_type": state.get("emergency_type", ""),
+        }
+
     parsed_results: list[dict] = []
 
     def _call_with_hard_rules(desc: str) -> dict:
         parsed = _call_llm_once(desc)
         return _apply_hard_rules(desc, parsed)
 
-    with ThreadPoolExecutor(max_workers=SEMANTIC_CHECK_ROUNDS) as executor:
-        futures = [
-            executor.submit(_call_with_hard_rules, description)
-            for _ in range(SEMANTIC_CHECK_ROUNDS)
-        ]
-        for future in futures:
-            try:
-                parsed_results.append(future.result())
-            except Exception as exc:
-                logger.warning(
-                    "语义校验某轮 API 异常，继续收集其他轮次结果。描述='%s'，异常=%s",
-                    description,
-                    exc,
-                )
-                continue
+    if current_state == "half_open":
+        # 半开状态：只允许一次试探调用
+        try:
+            parsed_results.append(_call_with_hard_rules(description))
+            llm_circuit.record_success()
+        except Exception as exc:
+            llm_circuit.record_failure()
+            logger.warning(
+                "半开试探失败，API 异常。描述='%s'，异常=%s",
+                description,
+                exc,
+            )
+    else:
+        with ThreadPoolExecutor(max_workers=SEMANTIC_CHECK_ROUNDS) as executor:
+            futures = [
+                executor.submit(_call_with_hard_rules, description)
+                for _ in range(SEMANTIC_CHECK_ROUNDS)
+            ]
+            for future in futures:
+                try:
+                    parsed_results.append(future.result())
+                except Exception as exc:
+                    logger.warning(
+                        "语义校验某轮 API 异常，继续收集其他轮次结果。描述='%s'，异常=%s",
+                        description,
+                        exc,
+                    )
+                    continue
 
     # 所有轮次均失败 -> 明确标记为 API异常
     if not parsed_results:
+        if current_state == "closed":
+            llm_circuit.record_failure()
         logger.error(
             "语义校验全部 %d 轮均失败，标记为 API异常。描述='%s'",
             SEMANTIC_CHECK_ROUNDS,
@@ -619,6 +714,10 @@ def receive_node(state: ReceiveState) -> ReceiveState:
 
     # 投票：取多数结果并计算置信度
     merged, confidence = _vote_on_results(parsed_results)
+
+    # 半开试探成功：直接视为 high，避免单轮结果被降级为待审核
+    if current_state == "half_open" and parsed_results:
+        confidence = "high"
 
     if confidence != "high":
         merged["event_type"] = "待审核"

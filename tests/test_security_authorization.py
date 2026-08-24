@@ -198,17 +198,17 @@ def test_bola_horizontal_privilege_escalation():
         # B 访问 A 的事件详情 -> 403 精确文案
         r = client.get(f"/api/events/{event_id}", headers=_auth_header(token_b))
         assert r.status_code == 403, f"B 访问 A 事件详情应 403，实际 {r.status_code}"
-        assert r.json().get("detail") == "无权访问该事件", r.json()
+        assert r.json().get("error") == "无权访问该事件", r.json()
 
         # B 撤销 A 的事件 -> 403 精确文案
         r = client.post(f"/api/events/{event_id}/cancel", headers=_auth_header(token_b))
         assert r.status_code == 403, f"B 撤销 A 事件应 403，实际 {r.status_code}"
-        assert r.json().get("detail") == "无权操作该事件", r.json()
+        assert r.json().get("error") == "无权操作该事件", r.json()
 
         # B 标记 A 的事件已读 -> 403 精确文案
         r = client.post(f"/api/events/{event_id}/mark_read", headers=_auth_header(token_b))
         assert r.status_code == 403, f"B 标记 A 事件已读应 403，实际 {r.status_code}"
-        assert r.json().get("detail") == "无权访问此事件", r.json()
+        assert r.json().get("error") == "无权访问此事件", r.json()
 
         # 无副作用：B 的越权操作后，A 事件状态/已读时间不变，事件仍存在
         task_after = main_module._tasks.get(event_id)
@@ -221,7 +221,7 @@ def test_bola_horizontal_privilege_escalation():
 
         # B 访问不存在的随机 id -> 404（语义清晰，不泄露存在性之外的细节）
         r = client.get("/api/events/no-such-event-xyz", headers=_auth_header(token_b))
-        assert r.status_code == 404 and r.json().get("detail") == "事件不存在", r.text[:200]
+        assert r.status_code == 404 and r.json().get("error") == "事件不存在", r.text[:200]
         print("  [PASS] BOLA 水平越权：GET/cancel/mark_read 均 403，无副作用")
     finally:
         restore()
@@ -249,14 +249,14 @@ def test_bfia_vertical_privilege_escalation():
                 kwargs["json"] = body
             r = getattr(client, method)(path, **kwargs)
             assert r.status_code == 403, f"居民 {method.upper()} {path} 应 403，实际 {r.status_code}"
-            assert r.json().get("detail") == "权限不足，仅管理员可访问", r.json()
+            assert r.json().get("error") == "权限不足，仅管理员可访问", r.json()
 
         # 居民调用受理/回复 -> 403（依赖先于事件状态校验）
         r = client.post(f"/api/events/{event_id}/accept", headers=_auth_header(token_res))
-        assert r.status_code == 403 and r.json().get("detail") == "权限不足，仅管理员可访问", r.text[:200]
+        assert r.status_code == 403 and r.json().get("error") == "权限不足，仅管理员可访问", r.text[:200]
         r = client.post(f"/api/events/{event_id}/reply", json={"reply": "越权回复"},
                         headers=_auth_header(token_res))
-        assert r.status_code == 403 and r.json().get("detail") == "权限不足，仅管理员可访问", r.text[:200]
+        assert r.status_code == 403 and r.json().get("error") == "权限不足，仅管理员可访问", r.text[:200]
 
         # 无 token 访问管理员接口 -> 401
         r = client.get("/api/admin/users")
@@ -284,7 +284,7 @@ def test_auth_session_failures():
         # 3.1 无 token -> 401
         r = client.get("/api/auth/me")
         assert r.status_code == 401, f"无 token 应 401，实际 {r.status_code}"
-        assert r.json().get("detail") == "未登录或登录已过期，请重新登录", r.json()
+        assert r.json().get("error") == "未登录或登录已过期，请重新登录", r.json()
         # 3.2 伪造 token -> 401
         r = client.get("/api/auth/me", headers=_auth_header("forged-token-12345"))
         assert r.status_code == 401, f"伪造 token 应 401，实际 {r.status_code}"
@@ -421,7 +421,7 @@ def test_security_config():
                       "DATA_ENCRYPTION_KEY", "COS_SECRET", "1" * 64)
         # 6.1 404 语义清晰且不含内部细节
         r = client.get("/api/events/no-such-event-abc", headers=_auth_header(token))
-        assert r.status_code == 404 and r.json().get("detail") == "事件不存在", r.text[:200]
+        assert r.status_code == 404 and r.json().get("error") == "事件不存在", r.text[:200]
         for marker in _FORBIDDEN:
             assert marker not in r.text, f"404 响应泄露内部标记: {marker}"
         # 6.2 422 校验错误不含堆栈/路径/密钥
@@ -433,7 +433,7 @@ def test_security_config():
         # 6.3 401 文案精确、不含内部细节
         r = client.get("/api/auth/me", headers=_auth_header("bad-token"))
         assert r.status_code == 401
-        assert r.json().get("detail") == "未登录或登录已过期，请重新登录", r.json()
+        assert r.json().get("error") == "未登录或登录已过期，请重新登录", r.json()
         for marker in _FORBIDDEN:
             assert marker not in r.text, f"401 响应泄露内部标记: {marker}"
         # 6.4 默认凭据风险基线：admin/admin123456 存在且可登录（显式断言，标注待改密）

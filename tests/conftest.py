@@ -37,6 +37,8 @@ os.environ["AUTH_STORE"] = "file"
 os.environ["DATA_ENCRYPTION_KEY"] = "1" * 64
 os.environ["LLM_API_KEY"] = "test-key"
 os.environ["LLM_BASE_URL"] = "http://test"
+os.environ["ADMIN_INITIAL_PASSWORD"] = "admin123456"
+os.environ["RATE_LIMIT_ENABLED"] = "false"
 
 
 # ------------------------------------------------------------------

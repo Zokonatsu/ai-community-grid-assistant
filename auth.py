@@ -225,10 +225,17 @@ def _init_auth() -> None:
     # 若系统中没有任何用户，自动创建默认管理员账号
     if not _users:
         admin_id = secrets.token_hex(16)
+        _admin_initial_password = os.environ.get("ADMIN_INITIAL_PASSWORD")
+        if not _admin_initial_password:
+            _admin_initial_password = secrets.token_urlsafe(16)
+            logger.warning(
+                "未设置 ADMIN_INITIAL_PASSWORD 环境变量，已生成随机强密码。"
+                "请使用日志中的密码首次登录，并立即修改密码。"
+            )
         admin_user = {
             "id": admin_id,
             "username": "admin",
-            "password_hash": _hash_password(os.environ.get("ADMIN_INITIAL_PASSWORD", "admin123456")),
+            "password_hash": _hash_password(_admin_initial_password),
             "real_name": "系统管理员",
             "phone": "13800000000",
             "role": "admin",
@@ -239,7 +246,10 @@ def _init_auth() -> None:
         _users[admin_id] = admin_user
         _save_users(_users)
         _save_sessions(_sessions)  # 空库重建：会话表一并上云（空表）
-        logger.info("系统初始化：已创建默认管理员账号 admin / admin123456，请及时修改密码")
+        logger.info(
+            "系统初始化：已创建默认管理员账号 admin / %s，请及时修改密码",
+            _admin_initial_password,
+        )
 
 
 # ------------------------------------------------------------------
