@@ -146,12 +146,8 @@ def dispatch_node(state: DispatchState) -> DispatchState:
         handler = "119消防急救中心（外部资源）"
     # 场景标签优先：生命急救和紧急救援直接分配外部资源处理方
     elif scene_tag == "生命急救":
-        inferred = _infer_emergency_type(state.get("description", "")) or "medical"
-        handler = (
-            "120医疗急救中心（外部资源）" if inferred == "medical"
-            else "110公安急救中心（外部资源）" if inferred == "police"
-            else "119消防急救中心（外部资源）"
-        )
+        # 生命急救语义核心始终是医疗急救，固定 fallback 为 medical，不允许推断为 fire
+        handler = "120医疗急救中心（外部资源）"
     elif scene_tag == "紧急救援":
         inferred = _infer_emergency_type(state.get("description", ""))
         if not inferred:
@@ -160,14 +156,17 @@ def dispatch_node(state: DispatchState) -> DispatchState:
             if re.search(r"火灾|起火|着火|燃气泄漏|煤气泄漏|煤气味|燃气味|煤气|燃气|爆炸|坍塌|电梯困人|高空坠物", desc):
                 inferred = "fire"
             else:
-                # 无法明确推断的紧急救援，默认消防（119）：紧急救援即救援类场景，
-                # 与生命急救默认医疗（120）对称；治安类（110）由明确的police关键词触发。
-                inferred = "fire"
-        handler = (
-            "119消防急救中心（外部资源）" if inferred == "fire"
-            else "110公安急救中心（外部资源）" if inferred == "police"
-            else "120医疗急救中心（外部资源）"
-        )
+                # 无法明确推断的紧急救援，不再硬编码默认消防（119），
+                # 降级为待审核走人工紧急审核流程
+                inferred = None
+        if inferred is None:
+            handler = "人工部"
+        else:
+            handler = (
+                "119消防急救中心（外部资源）" if inferred == "fire"
+                else "110公安急救中心（外部资源）" if inferred == "police"
+                else "120医疗急救中心（外部资源）"
+            )
     else:
         # 常规场景：根据事件类型匹配处理部门，未命中时回退到"综合部"
         handler = EVENT_TYPE_TO_HANDLER.get(event_type, "综合部")
