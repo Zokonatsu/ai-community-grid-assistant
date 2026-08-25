@@ -24,6 +24,7 @@ from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from prometheus_fastapi_instrumentator import Instrumentator, metrics
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -475,6 +476,14 @@ class EventStatusResponse(BaseModel):
     reply: str | None = None
 
 
+class RejectRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500, description="拒绝理由")
+
+
+class ReplyRequest(BaseModel):
+    reply: str = Field(..., min_length=1, description="后台回复内容")
+
+
 # ------------------------------------------------------------------
 # 认证相关 Pydantic 请求/响应模型
 # ------------------------------------------------------------------
@@ -520,6 +529,9 @@ class UserInfo(BaseModel):
 # ------------------------------------------------------------------
 # 认证依赖
 # ------------------------------------------------------------------
+security = HTTPBearer(auto_error=False, description="请输入 Bearer Token")
+
+
 def _extract_token(authorization: str | None) -> str | None:
     if not authorization:
         return None
@@ -529,16 +541,20 @@ def _extract_token(authorization: str | None) -> str | None:
     return None
 
 
-async def get_current_user_dependency(authorization: str | None = Header(None)) -> dict[str, Any]:
-    token = _extract_token(authorization)
+async def get_current_user_dependency(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> dict[str, Any]:
+    token = credentials.credentials if credentials else None
     user = auth.get_current_user(token)
     if user is None:
         raise HTTPException(status_code=401, detail="未登录或登录已过期，请重新登录")
     return user
 
 
-async def get_admin_dependency(authorization: str | None = Header(None)) -> dict[str, Any]:
-    token = _extract_token(authorization)
+async def get_admin_dependency(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> dict[str, Any]:
+    token = credentials.credentials if credentials else None
     user = auth.get_current_user(token)
     if user is None:
         raise HTTPException(status_code=401, detail="未登录或登录已过期，请重新登录")
@@ -548,8 +564,10 @@ async def get_admin_dependency(authorization: str | None = Header(None)) -> dict
 
 
 # 可选认证（用于兼容场景，未登录也允许但可获取用户信息）
-async def get_optional_user(authorization: str | None = Header(None)) -> dict[str, Any] | None:
-    token = _extract_token(authorization)
+async def get_optional_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> dict[str, Any] | None:
+    token = credentials.credentials if credentials else None
     return auth.get_current_user(token)
 
 
@@ -610,11 +628,13 @@ async def login(request: Request, body: LoginRequest) -> AuthResponse:
 
 
 @app.post("/api/auth/logout")
-async def logout(authorization: str | None = Header(None)) -> dict[str, str]:
+async def logout(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> dict[str, str]:
     """
     用户登出：使当前 Token 在服务端立即失效。
     """
-    token = _extract_token(authorization)
+    token = credentials.credentials if credentials else None
     auth.logout_user(token)
     return {"message": "登出成功"}
 
@@ -1508,14 +1528,6 @@ async def reject_event(
 # ------------------------------------------------------------------
 # API 端点：POST /api/events/{event_id}/reply
 # ------------------------------------------------------------------
-class RejectRequest(BaseModel):
-    reason: str = Field(..., min_length=1, max_length=500, description="拒绝理由")
-
-
-class ReplyRequest(BaseModel):
-    reply: str = Field(..., min_length=1, description="后台回复内容")
-
-
 @app.post("/api/events/{event_id}/reply")
 async def reply_event(
     event_id: str,
