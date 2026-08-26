@@ -275,6 +275,7 @@ def _build_task(
     lat: float | None = None,
     lng: float | None = None,
     beneficiary: dict[str, Any] | None = None,
+    emergency_type: str | None = None,
 ) -> dict[str, Any]:
     """
     统一构造事件任务字典。
@@ -315,6 +316,7 @@ def _build_task(
         "event_lng": lng,
         "event_location_status": location_status,
         "event_distance_m": event_distance_m,
+        "emergency_type": emergency_type or "",
         "beneficiary_type": bf.get("beneficiary_type", "self"),
         "beneficiary_name": bf.get("beneficiary_name", user.get("real_name", "")),
         "beneficiary_phone": bf.get("beneficiary_phone", user.get("phone", "")),
@@ -469,6 +471,7 @@ class EventStatusResponse(BaseModel):
     event_type: str | None = None
     urgency: str | None = None
     scene_tag: str | None = None
+    emergency_type: str | None = None
     handler: str | None = None
     created_at: str
     completed_at: str | None = None
@@ -739,6 +742,7 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
                 "event_type": task.get("event_type", ""),
                 "urgency": task.get("urgency", ""),
                 "scene_tag": task.get("scene_tag", ""),
+                "emergency_type": task.get("emergency_type", ""),
                 "handler": task.get("handler", ""),
                 "status": task["status"],
                 "created_at": task["created_at"],
@@ -852,6 +856,7 @@ async def create_event(
                     event_type=hard_rule_result["event_type"],
                     urgency=hard_rule_result["urgency"],
                     scene_tag=hard_rule_result["scene_tag"],
+                    emergency_type=hard_rule_result.get("emergency_type", ""),
                     user=current_user,
                     lat=body.lat,
                     lng=body.lng,
@@ -942,6 +947,7 @@ async def create_event(
                     event_type="待审核",
                     urgency="中",
                     scene_tag="常规",
+                    emergency_type="",
                     user=current_user,
                     error="语义校验超时，已转人工审核",
                     lat=body.lat,
@@ -996,6 +1002,7 @@ async def create_event(
                     event_type="待审核",
                     urgency="中",
                     scene_tag="常规",
+                    emergency_type="",
                     user=current_user,
                     error=f"语义校验异常，已转人工审核：{type(exc).__name__}",
                     lat=body.lat,
@@ -1057,6 +1064,7 @@ async def create_event(
                     event_type="待审核",
                     urgency="中",
                     scene_tag="常规",
+                    emergency_type="",
                     user=current_user,
                     error="语义校验服务异常，已转人工审核",
                     lat=body.lat,
@@ -1175,6 +1183,7 @@ async def create_event(
                     event_type="待审核",
                     urgency="中",
                     scene_tag="常规",
+                    emergency_type="",
                     user=current_user,
                     error="语义校验服务异常，已转人工审核",
                     lat=body.lat,
@@ -1229,6 +1238,7 @@ async def create_event(
                     event_type="待审核",
                     urgency=semantic_result.get("urgency", "中"),
                     scene_tag=semantic_result.get("scene_tag", "常规"),
+                    emergency_type=semantic_result.get("emergency_type", ""),
                     user=current_user,
                     lat=body.lat,
                     lng=body.lng,
@@ -1272,6 +1282,7 @@ async def create_event(
                 event_type=semantic_result.get("event_type", ""),
                 urgency=semantic_result.get("urgency", ""),
                 scene_tag=semantic_result.get("scene_tag", ""),
+                emergency_type=semantic_result.get("emergency_type", ""),
                 user=current_user,
                 lat=body.lat,
                 lng=body.lng,
@@ -1317,6 +1328,7 @@ async def create_event(
                     event_type="待审核",
                     urgency="高",
                     scene_tag=hard["scene_tag"],
+                    emergency_type="",
                     user=current_user,
                     error=f"处理异常已转人工：{type(exc).__name__}",
                     lat=body.lat,
@@ -1390,6 +1402,7 @@ async def get_event(
         event_type=task.get("event_type") or None,
         urgency=task.get("urgency") or None,
         scene_tag=task.get("scene_tag") or None,
+        emergency_type=task.get("emergency_type") or None,
         handler=task.get("handler") or None,
         created_at=task["created_at"],
         completed_at=task.get("completed_at"),
