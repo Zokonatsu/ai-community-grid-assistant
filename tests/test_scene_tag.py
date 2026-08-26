@@ -355,12 +355,12 @@ def test_suite():
     print("=" * 70)
     
     
-    def case_dispatch_directly(scene_tag, event_type, urgency, expected_handler, test_name):
+    def case_dispatch_directly(scene_tag, event_type, urgency, expected_handler, test_name, description="测试"):
         """直接测试 dispatch_node 的派单逻辑"""
         import dispatch_agent
-    
+
         state = {
-            "description": "测试",
+            "description": description,
             "address": "",
             "event_type": event_type,
             "urgency": urgency,
@@ -381,7 +381,8 @@ def test_suite():
                            "A1 生命急救场景 → 派单给急救中心")
     # A2: 紧急救援 → 119消防急救中心（外部资源）
     case_dispatch_directly("紧急救援", "安全隐患", "高", "119消防急救中心（外部资源）",
-                           "A2 紧急救援场景 → 派单给应急救援队")
+                           "A2 紧急救援场景 → 派单给应急救援队",
+                           description="3号楼道起火了，浓烟很大")
     # A3: 常规 + 中紧急 + 物业维修 → 物业部
     case_dispatch_directly("常规", "物业维修", "中", "物业部",
                            "A3 常规/物业维修/中紧急 → 派单给物业部")
@@ -405,7 +406,8 @@ def test_suite():
                            "A9 生命急救不论紧急程度 → 始终派单给急救中心")
     # A10: 紧急救援场景不受 event_type 影响
     case_dispatch_directly("紧急救援", "物业维修", "中", "119消防急救中心（外部资源）",
-                           "A10 紧急救援不论事件类型 → 始终派单给应急救援队")
+                           "A10 紧急救援不论事件类型 → 始终派单给应急救援队",
+                           description="闻到很重的煤气味，可能泄漏了")
     
     
     # ==================================================================
