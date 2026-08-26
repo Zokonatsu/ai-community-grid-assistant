@@ -21,7 +21,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import TypedDict
+from typing import TypedDict, NotRequired
 
 from openai import OpenAI
 from langgraph.graph import StateGraph, START, END
@@ -364,6 +364,7 @@ class ReceiveState(TypedDict):
     confirmation_required: bool
     emergency_type: str
     confirmed: bool
+    address_missing: NotRequired[bool]
 
 
 # ------------------------------------------------------------------
@@ -786,21 +787,24 @@ def receive_node(state: ReceiveState) -> ReceiveState:
     if not is_valid:
         # 安全兜底：涉及生命安全/紧急救援的输入，即使模型判断无效，也不直接拒绝
         if _LIFE_RESCUE_RE.search(description) or _EMERGENCY_RESCUE_RE.search(description):
+            scene_tag_val = "生命急救" if _LIFE_RESCUE_RE.search(description) else "紧急救援"
+            event_type_val = "医疗急救" if scene_tag_val == "生命急救" else "消防事故"
+            emergency_type_val = "medical" if scene_tag_val == "生命急救" else "fire"
             logger.warning(
-                "语义校验安全兜底：模型判定无效，但命中紧急关键词，降级为待审核。description='%s'",
+                "语义校验安全兜底：模型判定无效，但命中紧急关键词，保留紧急分类。description='%s'",
                 description,
             )
-            scene_tag_val = "生命急救" if _LIFE_RESCUE_RE.search(description) else "紧急救援"
             return {
                 "description": description,
                 "address": "",
-                "event_type": "待审核",
+                "event_type": event_type_val,
                 "urgency": "高",
                 "scene_tag": scene_tag_val,
                 "handler": "",
                 "confidence": "medium",
                 "confirmation_required": False,
-                "emergency_type": "人工部",
+                "emergency_type": emergency_type_val,
+                "address_missing": True,
             }
 
         # 短词乱打/闲聊不再转待审核：LLM 判无效即拒绝（真实紧急短词已由前置硬规则/模糊急救拦截）
@@ -846,10 +850,15 @@ def receive_node(state: ReceiveState) -> ReceiveState:
     _validate_address(address, description)
 
     if not address and merged.get("event_type") != "待审核":
-        merged["event_type"] = "待审核"
-        merged["urgency"] = "中" if merged.get("urgency") != "高" else "高"
-        merged["confidence"] = "low"
-        logger.warning("地址为空，标记为待审核。description='%s'", description)
+        scene_tag = merged.get("scene_tag", "")
+        if scene_tag in ("生命急救", "紧急救援"):
+            merged["address_missing"] = True
+            logger.warning("紧急场景地址为空，保留原分类并标记地址缺失。description='%s'", description)
+        else:
+            merged["event_type"] = "待审核"
+            merged["urgency"] = "中" if merged.get("urgency") != "高" else "高"
+            merged["confidence"] = "low"
+            logger.warning("地址为空，标记为待审核。description='%s'", description)
 
     # 置信度低 -> 进入待审核状态，不直接派单
     if confidence != "high":
