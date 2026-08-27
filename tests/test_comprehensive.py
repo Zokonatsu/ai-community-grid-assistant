@@ -213,52 +213,52 @@ def test_suite():
     report.section("  1a: _check_hard_rules_first() unit test - all keywords")
     
     LIFE_KEYWORDS = [
-        ("割腕", "生命急救"),
-        ("煤气中毒", "生命急救"),
-        ("心脏骤停", "生命急救"),
-        ("有人跳楼了", "生命急救"),
-        ("溺水了", "生命急救"),
-        ("大出血", "生命急救"),
-        ("触电了", "生命急救"),
-        ("窒息了", "生命急救"),
-        ("自残", "生命急救"),
-        ("轻生", "生命急救"),
-        ("猝死", "生命急救"),
-        ("脑溢血", "生命急救"),
-        ("心梗", "生命急救"),
-        ("中风", "生命急救"),
-        ("心肺复苏", "生命急救"),
-        ("心跳停止", "生命急救"),
-        ("电击伤", "生命急救"),
-        ("突发重病", "生命急救"),
-        ("心肌梗死", "生命急救"),
-        ("人死了", "生命急救"),
-        ("有人死", "生命急救"),
-        ("死人", "生命急救"),
-        ("去世", "生命急救"),
-        ("身亡", "生命急救"),
-        ("自杀", "生命急救"),
-        ("昏迷", "生命急救"),
+        ("割腕", "生命急救", "医疗急救"),
+        ("煤气中毒", "生命急救", "医疗急救"),
+        ("心脏骤停", "生命急救", "医疗急救"),
+        ("有人跳楼了", "生命急救", "医疗急救"),
+        ("溺水了", "生命急救", "医疗急救"),
+        ("大出血", "生命急救", "医疗急救"),
+        ("触电了", "生命急救", "医疗急救"),
+        ("窒息了", "生命急救", "医疗急救"),
+        ("自残", "生命急救", "医疗急救"),
+        ("轻生", "生命急救", "医疗急救"),
+        ("猝死", "生命急救", "医疗急救"),
+        ("脑溢血", "生命急救", "医疗急救"),
+        ("心梗", "生命急救", "医疗急救"),
+        ("中风", "生命急救", "医疗急救"),
+        ("心肺复苏", "生命急救", "医疗急救"),
+        ("心跳停止", "生命急救", "医疗急救"),
+        ("电击伤", "生命急救", "医疗急救"),
+        ("突发重病", "生命急救", "医疗急救"),
+        ("心肌梗死", "生命急救", "医疗急救"),
+        ("人死了", "生命急救", "医疗急救"),
+        ("有人死", "生命急救", "医疗急救"),
+        ("死人", "生命急救", "医疗急救"),
+        ("去世", "生命急救", "医疗急救"),
+        ("身亡", "生命急救", "医疗急救"),
+        ("自杀", "生命急救", "医疗急救"),
+        ("昏迷", "生命急救", "医疗急救"),
     ]
-    
+
     EMERG_KEYWORDS = [
-        ("火灾", "紧急救援"),
-        ("燃气泄漏", "紧急救援"),
-        ("电梯困人", "紧急救援"),
-        ("建筑物坍塌", "紧急救援"),
-        ("高空坠物", "紧急救援"),
-        ("爆炸", "紧急救援"),
-        ("煤气泄漏", "紧急救援"),
-        ("着火", "紧急救援"),
-        ("起火", "紧急救援"),
-        ("坍塌", "紧急救援"),
-        ("严重交通事故", "紧急救援"),
+        ("火灾", "紧急救援", "消防事故"),
+        ("燃气泄漏", "紧急救援", "消防事故"),
+        ("电梯困人", "紧急救援", "消防事故"),
+        ("建筑物坍塌", "紧急救援", "消防事故"),
+        ("高空坠物", "紧急救援", "消防事故"),
+        ("爆炸", "紧急救援", "消防事故"),
+        ("煤气泄漏", "紧急救援", "消防事故"),
+        ("着火", "紧急救援", "消防事故"),
+        ("起火", "紧急救援", "消防事故"),
+        ("坍塌", "紧急救援", "消防事故"),
+        ("严重交通事故", "紧急救援", "公安事件"),
     ]
     
     hit_count = 0
     miss_count = 0
     
-    for desc, expected_tag in LIFE_KEYWORDS + EMERG_KEYWORDS:
+    for desc, expected_tag, expected_event_type in LIFE_KEYWORDS + EMERG_KEYWORDS:
         result = _check_hard_rules_first(desc)
         if result is None:
             miss_count += 1
@@ -271,14 +271,14 @@ def test_suite():
                 issues.append("scene_tag: exp '%s' got '%s'" % (expected_tag, result.get("scene_tag")))
             if result.get("urgency") != "高":
                 issues.append("urgency: exp '高' got '%s'" % result.get("urgency"))
-            if result.get("event_type") != "安全隐患":
-                issues.append("event_type: exp '安全隐患' got '%s'" % result.get("event_type"))
+            if result.get("event_type") != expected_event_type:
+                issues.append("event_type: exp '%s' got '%s'" % (expected_event_type, result.get("event_type")))
             if result.get("confidence") != "high":
                 issues.append("confidence: exp 'high' got '%s'" % result.get("confidence"))
             if issues:
                 report.fail("Fields wrong: '%s'" % desc, "; ".join(issues))
             else:
-                report.ok("Hit: '%s'" % desc, "-> tag=%s, urg=高, type=安全隐患" % expected_tag)
+                report.ok("Hit: '%s'" % desc, "-> tag=%s, urg=高, type=%s" % (expected_tag, expected_event_type))
     
     report.ok("Keyword coverage: %d/%d hit, %d missed" % (hit_count,
               len(LIFE_KEYWORDS) + len(EMERG_KEYWORDS), miss_count))

@@ -210,7 +210,7 @@ def _check_hard_rules_first(description: str) -> dict | None:
         return {
             "description": description,
             "address": "",
-            "event_type": "安全隐患",
+            "event_type": "医疗急救",
             "urgency": "高",
             "scene_tag": "生命急救",
             "handler": "",
@@ -218,15 +218,23 @@ def _check_hard_rules_first(description: str) -> dict | None:
             "emergency_type": "medical",
         }
     if _EMERGENCY_RESCUE_RE.search(description):
+        scene_tag = "紧急救援"
+        emergency_type = _resolve_emergency_type(description, scene_tag)
+        event_type_map = {
+            "medical": "医疗急救",
+            "fire": "消防事故",
+            "police": "公安事件",
+        }
+        event_type = event_type_map.get(emergency_type, "紧急救援")
         return {
             "description": description,
             "address": "",
-            "event_type": "安全隐患",
+            "event_type": event_type,
             "urgency": "高",
-            "scene_tag": "紧急救援",
+            "scene_tag": scene_tag,
             "handler": "",
             "confidence": "high",
-            "emergency_type": "fire",
+            "emergency_type": emergency_type,
         }
     return None
 

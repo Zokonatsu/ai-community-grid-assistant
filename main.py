@@ -835,7 +835,7 @@ async def create_event(
                         address="",
                         event_type=hard_rule_result["event_type"],
                         urgency=hard_rule_result["urgency"],
-                        scene_tag="",
+                        scene_tag=hard_rule_result["scene_tag"],
                         handler="",
                         status="",
                         created_at="",
@@ -902,7 +902,11 @@ async def create_event(
                         address="",
                         event_type="安全隐患",
                         urgency="高",
-                        scene_tag="",
+                        scene_tag=(
+                            "生命急救"
+                            if fuzzy_emergency["emergency_type"] == "medical"
+                            else "紧急救援"
+                        ),
                         handler="",
                         status="",
                         created_at="",
@@ -1118,7 +1122,7 @@ async def create_event(
                     address="",
                     event_type="安全隐患",
                     urgency="高",
-                    scene_tag="",
+                    scene_tag=semantic_result.get("scene_tag", ""),
                     handler="",
                     status="",
                     created_at="",
@@ -1152,7 +1156,7 @@ async def create_event(
                     address="",
                     event_type=event_type,
                     urgency=semantic_result.get("urgency", "高"),
-                    scene_tag="",
+                    scene_tag=semantic_result.get("scene_tag", ""),
                     handler="",
                     status="",
                     created_at="",

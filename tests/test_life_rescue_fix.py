@@ -149,11 +149,11 @@ def _run_module_a():
         else:
             results.add_fail(f"A-{keyword} urgency=高", "高", result.get("urgency"))
     
-        # 验证4: event_type 应为 安全隐患
-        if result.get("event_type") == "安全隐患":
-            results.add_pass(f"A-{keyword} event_type=安全隐患", f"输入'{desc}'")
+        # 验证4: event_type 应为 医疗急救
+        if result.get("event_type") == "医疗急救":
+            results.add_pass(f"A-{keyword} event_type=医疗急救", f"输入'{desc}'")
         else:
-            results.add_fail(f"A-{keyword} event_type=安全隐患", "安全隐患",
+            results.add_fail(f"A-{keyword} event_type=医疗急救", "医疗急救",
                              result.get("event_type"))
     
     # A-7: 普通输入不应命中硬规则
@@ -308,12 +308,12 @@ def run_api_tests():
             else:
                 results.add_fail(f"B-{keyword} status≠处理失败", "非'处理失败'", actual_status)
 
-            # 验证6: event_type=安全隐患
+            # 验证6: event_type=医疗急救
             actual_et = data.get("data", {}).get("event_type", "")
-            if actual_et == "安全隐患":
-                results.add_pass(f"B-{keyword} event_type=安全隐患")
+            if actual_et == "医疗急救":
+                results.add_pass(f"B-{keyword} event_type=医疗急救")
             else:
-                results.add_fail(f"B-{keyword} event_type=安全隐患", "安全隐患", actual_et)
+                results.add_fail(f"B-{keyword} event_type=医疗急救", "医疗急救", actual_et)
 
         # ----------------------------------------------------------
         # B7: "楼下垃圾很多" → 不走硬规则，正常语义校验
