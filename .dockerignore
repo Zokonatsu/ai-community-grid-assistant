@@ -5,9 +5,11 @@
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
 
 # Git 仓库
 .git/
+.github/
 
 # 虚拟环境
 .venv/
@@ -19,7 +21,30 @@ secure/
 
 # Docker 构建文件（构建无关）
 Dockerfile
-docker-compose.yml
+deploy/Dockerfile*
+deploy/docker-compose.yml
+deploy/nginx.conf*
+deploy/DEPLOY.md
 
 # 项目文档（构建无关）
 README.md
+docs/
+
+# 测试代码与覆盖率报告（不应进入生产镜像）
+tests/
+test/
+*.bak
+.coverage
+htmlcov/
+
+# 开发脚本（构建无关）
+scripts/
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude 项目配置（构建无关）
+.claude/

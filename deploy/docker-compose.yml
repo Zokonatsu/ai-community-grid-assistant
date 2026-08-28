@@ -3,6 +3,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+    container_name: ai-grid-assistant
     ports:
       - "8080:8000"
     env_file:
@@ -10,5 +11,7 @@ services:
     volumes:
       - ../data:/app/data
       - ../secure:/app/secure
-      - ../static:/app/static
     restart: unless-stopped
+    # 静态文件 static/ 已内置于镜像，不再挂载为 volume，
+    # 防止宿主机空目录覆盖镜像中的前端资源。
+    # 如需更新前端，请修改代码后重新构建镜像：docker compose up -d --build
