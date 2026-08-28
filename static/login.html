@@ -183,7 +183,7 @@
         async function handleLogin(e) {
             e.preventDefault();
             const username = document.getElementById('login-username').value.trim();
-            const password = document.getElementById('login-password').value;
+            const password = document.getElementById('login-password').value.trim();
             const btn = document.getElementById('login-btn');
             const errorEl = document.getElementById('login-error');
 
@@ -222,8 +222,8 @@
         async function handleRegister(e) {
             e.preventDefault();
             const username = document.getElementById('reg-username').value.trim();
-            const password = document.getElementById('reg-password').value;
-            const confirm = document.getElementById('reg-confirm').value;
+            const password = document.getElementById('reg-password').value.trim();
+            const confirm = document.getElementById('reg-confirm').value.trim();
             const real_name = document.getElementById('reg-realname').value.trim();
             const phone = document.getElementById('reg-phone').value.trim();
             const id_card = document.getElementById('reg-idcard').value.trim().toUpperCase();
@@ -276,9 +276,13 @@
                     errorEl.classList.remove('hidden');
                     return;
                 }
-                successEl.textContent = '注册成功，请登录';
-                successEl.classList.remove('hidden');
-                document.getElementById('register-form').reset();
+                localStorage.setItem('token', data.data.token);
+                localStorage.setItem('user', JSON.stringify(data.data.user));
+                if (data.data.user.role === 'admin') {
+                    window.location.href = '/admin.html';
+                } else {
+                    window.location.href = '/';
+                }
             } catch (err) {
                 errorEl.textContent = '网络请求失败，请检查服务是否启动';
                 errorEl.classList.remove('hidden');

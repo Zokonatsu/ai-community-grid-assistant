@@ -275,6 +275,7 @@ def _verify_password(password: str, stored: str) -> bool:
         ).hex()
         return secrets.compare_digest(computed, pwd_hash)
     except ValueError:
+        logger.error("密码哈希格式异常（缺少$分隔符或结构损坏），stored长度=%d", len(stored))
         return False
 
 
@@ -437,10 +438,10 @@ def login_user(username: str, password: str) -> tuple[bool, str, dict[str, Any] 
                 break
 
         if user is None:
-            return False, "用户名或密码错误", None
+            return False, "用户名不存在", None
 
         if not _verify_password(password, user["password_hash"]):
-            return False, "用户名或密码错误", None
+            return False, "密码错误", None
 
         token = _generate_token()
         _sessions[token] = {

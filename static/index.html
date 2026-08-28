@@ -822,10 +822,13 @@
         function startListPolling() {
             if (listPollTimer) clearInterval(listPollTimer);
             listPollTimer = setInterval(() => {
-                // 回复弹窗打开期间不触发刷新；页面不可见时暂停（可选）
+                // 回复弹窗打开期间不触发刷新；页面不可见时暂停
                 const overlay = document.getElementById('replyOverlay');
                 if (overlay && !overlay.classList.contains('hidden')) return;
                 if (document.hidden) return;
+                // 用户正在输入时跳过刷新，避免打断输入
+                const active = document.activeElement;
+                if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
                 loadList(true);
             }, POLL_LIST_MS);
         }

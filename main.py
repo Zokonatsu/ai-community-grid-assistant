@@ -612,6 +612,10 @@ async def register(request: Request, body: RegisterRequest) -> AuthResponse:
     )
     if not success:
         return AuthResponse(success=False, error=message)
+    # 注册成功后自动登录，返回 token
+    login_ok, login_msg, login_data = auth.login_user(body.username, body.password)
+    if login_ok and login_data:
+        return AuthResponse(success=True, data=login_data, error="注册成功")
     return AuthResponse(success=True, data={"user": user}, error=message)
 
 
