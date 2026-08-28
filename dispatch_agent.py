@@ -72,7 +72,7 @@ EVENT_TYPE_TO_HANDLER: dict[str, str] = {
 # 模糊急救关键词推断（兜底：二次提交时 emergency_type 被清空后的恢复）
 # ------------------------------------------------------------------
 _FUZZY_MEDICAL_RE = re.compile(
-    r"吐血|上吊|晕倒|猝死|窒息|中毒",
+    r"吐血|上吊|晕倒|猝死|窒息|中毒|心脏病发作|心脏骤停|心梗|胸痛|呼吸困难",
     re.IGNORECASE,
 )
 _FUZZY_POLICE_RE = re.compile(

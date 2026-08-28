@@ -880,6 +880,7 @@ async def create_event(
                     handler="",
                     status="处理中",
                     created_at=created_at,
+                    emergency_type=hard_rule_result.get("emergency_type", ""),
                 ),
             )
 
@@ -1313,6 +1314,7 @@ async def create_event(
                 handler="",
                 status="处理中",
                 created_at=created_at,
+                emergency_type=semantic_result.get("emergency_type", ""),
             ),
         )
 
