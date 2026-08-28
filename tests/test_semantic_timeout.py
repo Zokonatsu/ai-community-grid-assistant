@@ -492,7 +492,7 @@ async def case_normal_flow():
             start_time = time.time()
             response = client.post(
                 "/api/events",
-                json={"description": "我家楼下下水道堵了"},
+                json={"description": "我家楼下下水道堵了", "confirmed": True},
                 headers={"Authorization": "Bearer test-token-xxx"},
             )
             elapsed = time.time() - start_time

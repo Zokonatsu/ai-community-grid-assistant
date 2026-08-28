@@ -365,7 +365,7 @@ def test_bola_list_isolation_and_bopla():
         eid_inject = data["data"]["event_id"]
         task = main_module._tasks[eid_inject]
         assert task["user_id"] == user_a["id"], "user_id 越权字段未被忽略"
-        assert task["status"] == "处理中", "status 越权字段未被忽略"
+        assert task["status"] == "待审核", "status 越权字段未被忽略"
         assert task.get("reviewer_id") != "伪造管理员", "reviewer 越权字段未被忽略"
         print("  [PASS] BOPLA/列表隔离：只见自己、他人敏感字段零泄露、越权字段被忽略")
     finally:

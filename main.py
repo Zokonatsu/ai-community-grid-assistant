@@ -1282,7 +1282,7 @@ async def create_event(
                 event_id=event_id,
                 description=body.description,
                 created_at=created_at,
-                status="处理中",
+                status="处理中" if body.confirmed else "待审核",
                 address=semantic_result.get("address", ""),
                 event_type=semantic_result.get("event_type", ""),
                 urgency=semantic_result.get("urgency", ""),
@@ -1296,6 +1296,8 @@ async def create_event(
             _save_tasks(_tasks)
 
         # 启动后台异步任务，传入已校验结果，避免二次调用 LLM API
+        semantic_result["confirmed"] = body.confirmed
+        semantic_result["status"] = "处理中" if body.confirmed else "待审核"
         bg_task = asyncio.create_task(
             _process_event(event_id, semantic_result, current_user["id"], body.lat, body.lng)
         )
@@ -1312,7 +1314,7 @@ async def create_event(
                 urgency=semantic_result.get("urgency", ""),
                 scene_tag=semantic_result.get("scene_tag", ""),
                 handler="",
-                status="处理中",
+                status="处理中" if body.confirmed else "待审核",
                 created_at=created_at,
                 emergency_type=semantic_result.get("emergency_type", ""),
             ),
