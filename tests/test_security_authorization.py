@@ -251,12 +251,13 @@ def test_bfia_vertical_privilege_escalation():
             assert r.status_code == 403, f"居民 {method.upper()} {path} 应 403，实际 {r.status_code}"
             assert r.json().get("error") == "权限不足，仅管理员可访问", r.json()
 
-        # 居民调用受理/回复 -> 403（依赖先于事件状态校验）
+        # 居民调用受理 -> 403（依赖先于事件状态校验）
         r = client.post(f"/api/events/{event_id}/accept", headers=_auth_header(token_res))
         assert r.status_code == 403 and r.json().get("error") == "权限不足，仅管理员可访问", r.text[:200]
+        # 居民调用自己未受理的事件 reply -> 400（状态不允许；reply 已开放给事件所有者）
         r = client.post(f"/api/events/{event_id}/reply", json={"reply": "越权回复"},
                         headers=_auth_header(token_res))
-        assert r.status_code == 403 and r.json().get("error") == "权限不足，仅管理员可访问", r.text[:200]
+        assert r.status_code == 400, r.text[:200]
 
         # 无 token 访问管理员接口 -> 401
         r = client.get("/api/admin/users")
@@ -268,7 +269,7 @@ def test_bfia_vertical_privilege_escalation():
         task = main_module._tasks[event_id]
         assert task.get("status") != "已受理", "居民不应能受理事件"
         assert task.get("replies", []) == [], "居民不应能添加回复"
-        print("  [PASS] BFLA 垂直越权：admin 接口/accept/reply 均 403，无副作用")
+        print("  [PASS] BFLA 垂直越权：admin 接口/accept 均 403，reply 已开放给事件所有者（未受理时 400），无副作用")
     finally:
         restore()
 
@@ -397,8 +398,10 @@ def test_resource_limits():
         assert r.status_code == 422, f"2 字用户名应 422，实际 {r.status_code}"
         # 5.3 超长回复（ReplyRequest 无 max_length，现状放行）-> 不 500（基线记录：回复无长度上限）
         eid = _submit_event_pending(client, token, "资源限制-回复基线")
+        admin_token = _auth_header(_login(client, "admin", "admin123456"))
+        client.post(f"/api/events/{eid}/accept", headers=admin_token)
         r = client.post(f"/api/events/{eid}/reply", json={"reply": "回" * 10000},
-                        headers=_auth_header(_login(client, "admin", "admin123456")))
+                        headers=admin_token)
         # 现状：回复无长度上限，应放行（200）而非 500；如未来收紧为 422 也算合规（不 500）
         assert r.status_code in (200, 422), f"超长回复应不 500，实际 {r.status_code}"
         assert r.status_code != 500, "超长回复导致 500"
@@ -464,9 +467,10 @@ def test_injection_and_unsafe_consumption():
         # 7.1 服务端原样存储（不执行、不净化）：后端职责是存储，转义在渲染层
         assert main_module._tasks[eid]["description"] == payload, "描述应原样存储"
         # 7.2 回复原样存储（不执行）
-        admin_token = _login(client, "admin", "admin123456")
+        admin_token = _auth_header(_login(client, "admin", "admin123456"))
+        client.post(f"/api/events/{eid}/accept", headers=admin_token)
         r = client.post(f"/api/events/{eid}/reply", json={"reply": payload},
-                        headers=_auth_header(admin_token))
+                        headers=admin_token)
         assert r.status_code == 200, r.text[:200]
         assert main_module._tasks[eid]["reply"] == payload, "回复应原样存储"
         # 7.3 渲染层转义在 test_mutation_effectiveness 中做守卫变体校验（防 XSS）

@@ -1553,17 +1553,29 @@ async def reject_event(
 async def reply_event(
     event_id: str,
     request: ReplyRequest,
-    current_user: dict[str, Any] = Depends(get_admin_dependency),
+    current_user: dict[str, Any] = Depends(get_current_user_dependency),
 ) -> dict[str, Any]:
     """
-    后台人员提交回复，将状态更新为"已完成"。
+    后台人员或居民提交回复，将状态更新为"已完成"。
     """
     async with _task_lock:
         task = _tasks.get(event_id)
         if task is None:
             raise HTTPException(status_code=404, detail="事件不存在")
-        if task.get("status") not in ("已受理", "待审核", "已完成"):
-            raise HTTPException(status_code=400, detail="仅已受理、待审核或已完成事件可提交回复")
+
+        # 权限判断：admin 需匹配 reviewer_id；resident 只能回复自己的事件
+        is_admin = current_user.get("role") == "admin"
+        is_owner = task.get("user_id") == current_user.get("id")
+        if is_admin:
+            if task.get("reviewer_id") and task.get("reviewer_id") != current_user.get("id"):
+                raise HTTPException(status_code=403, detail="仅受理该事件的管理员可回复")
+        elif is_owner:
+            pass
+        else:
+            raise HTTPException(status_code=403, detail="无权操作该事件")
+
+        if task.get("status") not in ("已受理", "已完成"):
+            raise HTTPException(status_code=400, detail="仅已受理或已完成事件可提交回复")
         # 首次回复时才将状态设为已完成；如果已经是已完成，保持不动
         if task.get("status") != "已完成":
             task["status"] = "已完成"
