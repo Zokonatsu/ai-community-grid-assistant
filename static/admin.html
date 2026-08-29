@@ -642,8 +642,11 @@
                 document.getElementById('user-name').textContent = user.real_name || user.username;
                 return true;
             } catch (e) {
-                // 网络异常时暂不跳转，允许离线查看
-                return true;
+                alert('网络异常，请重新登录');
+                localStorage.removeItem('token');
+                localStorage.removeItem('user');
+                window.location.href = '/login.html';
+                return false;
             }
         }
 
@@ -714,7 +717,7 @@
                 const color = colorClassMap && colorClassMap[label] ? colorClassMap[label] : colors[idx % colors.length];
                 return `
                     <div class="bar-item">
-                        <div class="bar-label" title="${label}">${label}</div>
+                        <div class="bar-label" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
                         <div class="bar-track">
                             <div class="bar-fill ${color}" style="width: ${pct}%"></div>
                         </div>
@@ -834,13 +837,13 @@
                         <div class="review-card" id="card-${first.created_at}">
                             <div class="review-header">
                                 <div class="review-user">
-                                    <strong>${first.user_name || '-'}</strong>
-                                    <span class="user-meta">${ICON.phone}${first.user_phone || '-'}</span>
-                                    <span class="user-meta">${ICON.idcard}${first.user_id_card || '-'}</span>
+                                    <strong>${escapeHtml(first.user_name || '-')}</strong>
+                                    <span class="user-meta">${ICON.phone}${escapeHtml(first.user_phone || '-')}</span>
+                                    <span class="user-meta">${ICON.idcard}${escapeHtml(first.user_id_card || '-')}</span>
                                 </div>
-                                <div><span class="tag ${statusClass(first.status)}">${first.status}</span></div>
+                                <div><span class="tag ${statusClass(first.status)}">${escapeHtml(first.status)}</span></div>
                             </div>
-                            <div class="review-desc">${first.description || '-'}</div>
+                            <div class="review-desc">${escapeHtml(first.description || '-')}</div>
                             ${beneficiaryLine(first)}
                             <div class="review-actions">
                                 <button class="btn-sm btn-accept" onclick="acceptEvent('${first.created_at}')">受理</button>
@@ -860,13 +863,13 @@
                                 <div class="collapsed-card" id="card-${e.created_at}">
                                     <div class="review-header">
                                         <div class="review-user">
-                                            <strong>${e.user_name || '-'}</strong>
-                                            <span class="user-meta">${ICON.phone}${e.user_phone || '-'}</span>
-                                            <span class="user-meta">${ICON.idcard}${e.user_id_card || '-'}</span>
+                                            <strong>${escapeHtml(e.user_name || '-')}</strong>
+                                            <span class="user-meta">${ICON.phone}${escapeHtml(e.user_phone || '-')}</span>
+                                            <span class="user-meta">${ICON.idcard}${escapeHtml(e.user_id_card || '-')}</span>
                                         </div>
-                                        <div><span class="tag ${statusClass(e.status)}">${e.status}</span></div>
+                                        <div><span class="tag ${statusClass(e.status)}">${escapeHtml(e.status)}</span></div>
                                     </div>
-                                    <div class="review-desc">${e.description || '-'}</div>
+                                    <div class="review-desc">${escapeHtml(e.description || '-')}</div>
                                     ${beneficiaryLine(e)}
                                     <div class="review-actions">
                                         <button class="btn-sm btn-accept" onclick="acceptEvent('${e.created_at}')">受理</button>
@@ -892,19 +895,19 @@
                     <div class="review-card accepted" id="card-${e.created_at}">
                         <div class="review-header">
                             <div class="review-user">
-                                <strong>${e.user_name || '-'}</strong>
-                                <span class="user-meta">${ICON.phone}${e.user_phone || '-'}</span>
-                                <span class="user-meta">${ICON.idcard}${e.user_id_card || '-'}</span>
+                                <strong>${escapeHtml(e.user_name || '-')}</strong>
+                                <span class="user-meta">${ICON.phone}${escapeHtml(e.user_phone || '-')}</span>
+                                <span class="user-meta">${ICON.idcard}${escapeHtml(e.user_id_card || '-')}</span>
                             </div>
-                            <div><span class="tag ${statusClass(e.status)}">${e.status}</span></div>
+                            <div><span class="tag ${statusClass(e.status)}">${escapeHtml(e.status)}</span></div>
                         </div>
-                        <div class="review-desc">${e.description || '-'}</div>
+                        <div class="review-desc">${escapeHtml(e.description || '-')}</div>
                         ${beneficiaryLine(e)}
                         ${(e.replies && e.replies.length > 0) ? `
                             <div class="reply-history">
                                 ${e.replies.map(r => `
                                     <div class="reply-history-item">
-                                        <div class="reply-history-meta">${r.reviewer_name || '管理员'} · ${r.created_at}</div>
+                                        <div class="reply-history-meta">${escapeHtml(r.reviewer_name || '管理员')} · ${escapeHtml(r.created_at)}</div>
                                         <div class="reply-history-content">${escapeHtml(r.content)}</div>
                                     </div>
                                 `).join('')}
@@ -1268,19 +1271,19 @@
 
             const rows = sorted.map(e => `
                 <tr>
-                    <td data-label="创建时间">${e.created_at || '-'}</td>
-                    <td data-label="描述">${beneficiaryTag(e)}${e.description || '-'}</td>
-                    <td data-label="类型">${e.event_type || '-'}</td>
-                    <td data-label="紧急程度"><span class="tag ${urgencyClass(e.urgency)}">${e.urgency || '-'}</span></td>
-                    <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${e.scene_tag || '-'}</span></td>
-                    <td data-label="处理部门">${e.handler || '-'}</td>
+                    <td data-label="创建时间">${escapeHtml(e.created_at || '-')}</td>
+                    <td data-label="描述">${beneficiaryTag(e)}${escapeHtml(e.description || '-')}</td>
+                    <td data-label="类型">${escapeHtml(e.event_type || '-')}</td>
+                    <td data-label="紧急程度"><span class="tag ${urgencyClass(e.urgency)}">${escapeHtml(e.urgency || '-')}</span></td>
+                    <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${escapeHtml(e.scene_tag || '-')}</span></td>
+                    <td data-label="处理部门">${escapeHtml(e.handler || '-')}</td>
                     <td data-label="位置">${locationCell(e)}</td>
         <td data-label="status">${
           e.status === '已撤销'
-            ? `<span class="tag ${statusClass('已撤销')}" title="撤回时间：${e.withdrawn_at || '-'}">用户已撤回</span>`
+            ? `<span class="tag ${statusClass('已撤销')}" title="撤回时间：${escapeHtml(e.withdrawn_at || '-')}">用户已撤回</span>`
             : e.status === '已拒绝'
-            ? `<span class="tag ${statusClass('已拒绝')}" title="拒绝理由：${e.rejected_reason || '-'}">${e.status}</span>`
-            : `<span class="tag ${statusClass(e.status)}">${e.status || '-'}</span>`
+            ? `<span class="tag ${statusClass('已拒绝')}" title="拒绝理由：${escapeHtml(e.rejected_reason || '-')}">${escapeHtml(e.status)}</span>`
+            : `<span class="tag ${statusClass(e.status)}">${escapeHtml(e.status || '-')}</span>`
         }</td>
                 </tr>
             `).join('');
@@ -1320,12 +1323,12 @@
 
         // 提交方式标签：显示提交者姓名 + 代办标识，带悬停提示
         function beneficiaryTag(e) {
-            var subTip = submitterTooltip(e);
+            var subTip = escapeHtml(submitterTooltip(e));
             if (e.beneficiary_type === 'proxy') {
-                var proTip = proxyTooltip(e);
-                return '<span class="tag tag-info" title="' + subTip.replace(/"/g, "&quot;") + '">' + (e.user_name || "未知") + '</span> <span class="tag tag-warning" title="' + proTip.replace(/"/g, "&quot;") + '">代办</span> ';
+                var proTip = escapeHtml(proxyTooltip(e));
+                return '<span class="tag tag-info" title="' + subTip + '">' + escapeHtml(e.user_name || "未知") + '</span> <span class="tag tag-warning" title="' + proTip + '">代办</span> ';
             }
-            return '<span class="tag tag-info" title="' + subTip.replace(/"/g, "&quot;") + '">' + (e.user_name || "未知") + '</span> ';
+            return '<span class="tag tag-info" title="' + subTip + '">' + escapeHtml(e.user_name || "未知") + '</span> ';
         }
 
         // 事件位置单元格：坐标 + 距中心米数 + 高德地图链接 + 定位状态徽章（仅管理员可见该数据）

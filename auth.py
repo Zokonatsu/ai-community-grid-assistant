@@ -250,8 +250,7 @@ def _init_auth() -> None:
         _save_users(_users)
         _save_sessions(_sessions)  # 空库重建：会话表一并上云（空表）
         logger.info(
-            "系统初始化：已创建默认管理员账号 admin / %s，请及时修改密码",
-            _admin_initial_password,
+            "系统初始化：已创建默认管理员账号，请及时修改密码",
         )
 
 
@@ -259,7 +258,7 @@ def _init_auth() -> None:
 # 密码哈希
 # ------------------------------------------------------------------
 _SALT_LEN = 32
-_ITERATIONS = 100_000
+_ITERATIONS = 600_000
 
 
 def _hash_password(password: str) -> str:
@@ -276,7 +275,13 @@ def _verify_password(password: str, stored: str) -> bool:
         computed = hashlib.pbkdf2_hmac(
             "sha256", password.encode("utf-8"), salt.encode("utf-8"), _ITERATIONS
         ).hex()
-        return secrets.compare_digest(computed, pwd_hash)
+        if secrets.compare_digest(computed, pwd_hash):
+            return True
+        # 兼容旧哈希（100000 次迭代）
+        computed_legacy = hashlib.pbkdf2_hmac(
+            "sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000
+        ).hex()
+        return secrets.compare_digest(computed_legacy, pwd_hash)
     except ValueError:
         logger.error("密码哈希格式异常（缺少$分隔符或结构损坏），stored长度=%d", len(stored))
         return False
@@ -370,23 +375,23 @@ def register_user(
 
     # 基本校验
     if not username or len(username) < 3 or len(username) > 20:
-        return False, "用户名长度需在 3-20 个字符之间", None
+        return False, "注册失败，请检查输入信息", None
     if not re.match(r"^[a-zA-Z0-9_一-龥]+$", username):
-        return False, "用户名只能包含中文、字母、数字和下划线", None
+        return False, "注册失败，请检查输入信息", None
     if not password or len(password) < 6:
-        return False, "密码长度至少为 6 位", None
+        return False, "注册失败，请检查输入信息", None
     if not real_name or len(real_name) < 1 or len(real_name) > 20:
-        return False, "真实姓名不能为空且不能超过 20 个字符", None
+        return False, "注册失败，请检查输入信息", None
     if not re.match(r"^1[3-9]\d{9}$", phone):
-        return False, "手机号格式不正确", None
-    if id_card and not re.match(r"^[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dX]$", id_card):
-        return False, "身份证号格式不正确", None
+        return False, "注册失败，请检查输入信息", None
+    if not id_card or not re.match(r"^[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dX]$", id_card):
+        return False, "注册失败，请检查输入信息", None
     if role not in ("resident", "admin"):
-        return False, "角色类型无效", None
+        return False, "注册失败，请检查输入信息", None
     if role == "admin":
-        return False, "禁止通过注册创建管理员账号", None
+        return False, "注册失败，请检查输入信息", None
     if role == "resident" and not (building and unit and room):
-        return False, "请填写楼栋、单元和房间号", None
+        return False, "注册失败，请检查输入信息", None
 
     with _auth_lock:
         global _users
@@ -394,9 +399,9 @@ def register_user(
         # 检查用户名是否已存在
         for user in _users.values():
             if user.get("username") == username:
-                return False, "用户名已被注册", None
+                return False, "注册失败，请检查输入信息", None
             if user.get("phone") == phone:
-                return False, "手机号已被注册", None
+                return False, "注册失败，请检查输入信息", None
 
         user_id = secrets.token_hex(16)
         register_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -405,10 +410,10 @@ def register_user(
         # 关闭：允许无定位注册（暂无 HTTPS 的环境临时开放注册用）
         if config.COMMUNITY_REQUIRE_LOCATION:
             if register_lat is None or register_lng is None:
-                return False, "注册需先获取定位，请允许浏览器定位权限后重试", None
+                return False, "注册失败，请检查输入信息", None
             within, _dist = geo.is_within_community(register_lat, register_lng)
             if not within:
-                return False, "当前定位不在小区范围内，无法注册", None
+                return False, "注册失败，请检查输入信息", None
             location_status = "verified"
         else:
             location_status = "unverified"
@@ -456,10 +461,10 @@ def login_user(username: str, password: str) -> tuple[bool, str, dict[str, Any] 
                 break
 
         if user is None:
-            return False, "用户名不存在", None
+            return False, "用户名或密码错误", None
 
         if not _verify_password(password, user["password_hash"]):
-            return False, "密码错误", None
+            return False, "用户名或密码错误", None
 
         token = _generate_token()
         _sessions[token] = {

@@ -264,6 +264,7 @@ async def _process_event(
                     "scene_tag": result["scene_tag"],
                     "handler": result["handler"],
                     "completed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "emergency_type": task.get("emergency_type", pre_checked_state.get("emergency_type", "")),
                 })
                 _save_tasks(_tasks)
     except asyncio.TimeoutError:
@@ -512,7 +513,7 @@ class RejectRequest(BaseModel):
 
 
 class ReplyRequest(BaseModel):
-    reply: str = Field(..., min_length=1, description="后台回复内容")
+    reply: str = Field(..., min_length=1, max_length=5000, description="后台回复内容")
 
 
 # ------------------------------------------------------------------

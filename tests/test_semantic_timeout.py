@@ -589,9 +589,9 @@ def case_code_structure():
         results.add_fail("6.2 TimeoutError 单独捕获", "存在", "未找到")
 
     print("  [测试6.3] 超时/异常处理器内部创建待审核任务（消息不丢失）")
-    # 消息不丢失设计：超时/异常处理器内部创建 _tasks[event_id]（status=待审核）。
-    # （旧设计的"异常处理在任务创建之前"线性排序已不成立：硬规则分支先建任务，
-    #   语义校验失败时改为在处理器内兜底建待审核任务。）
+    # 消息不丢失设计：超时/异常处理器内部查找并更新已有 _tasks[event_id]。
+    # 当前设计：处理器捕获异常后，将现有任务状态改为「处理超时」或「处理失败」，
+    #   并记录 error 字段，确保事件不丢失且状态可追踪。
     timeout_pos = source.find("except asyncio.TimeoutError")
     exc_pos = source.find("except Exception")
     task_in_timeout = source.find("_tasks[event_id]", timeout_pos)

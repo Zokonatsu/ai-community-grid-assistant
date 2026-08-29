@@ -337,7 +337,7 @@
             } else if (replies.length > 0) {
                 html = replies.map(r => `
                     <div class="reply-item">
-                        <div class="reply-meta">${r.reviewer_name || '管理员'} · ${r.created_at}</div>
+                        <div class="reply-meta">${escapeHtml(r.reviewer_name || '管理员')} · ${escapeHtml(r.created_at)}</div>
                         <div class="reply-content">${escapeHtml(r.content)}</div>
                     </div>
                 `).join('');
@@ -669,7 +669,7 @@
         //           已撤销除外；超过 5 分钟 -> 灰色「已执行」）
         // ------------------------------------------------------------------
         let cancelTickTimer = null;
-        const CANCEL_WINDOW_MS = 180 * 1000;
+        const CANCEL_WINDOW_MS = 300 * 1000;
 
         function eventExpired(createdAt) {
             if (!createdAt) return true;
@@ -768,22 +768,22 @@
                 };
                 const statusCell = e => {
                 if (e.status === '已拒绝' && e.rejected_reason) {
-                    return `<span class="tag ${statusClass(e.status)}" title="拒绝理由：${escapeHtml(e.rejected_reason)}">${e.status || '-'}</span>`;
+                    return `<span class="tag ${statusClass(e.status)}" title="拒绝理由：${escapeHtml(e.rejected_reason)}">${escapeHtml(e.status || '-')}</span>`;
                 }
                     if (e.status === '已完成' && (e.reply || (e.replies && e.replies.length > 0))) {
                         const unreadBadge = e.has_new_reply ? '<span class="unread-badge">●</span>' : '';
                         return `<span class="reply-link" onclick="handleReplyClick('${e.event_id}')">请点击查看人工的回复${unreadBadge}</span>`;
                     }
-                    return `<span class="tag ${statusClass(e.status)}">${e.status || '-'}</span>`;
+                    return `<span class="tag ${statusClass(e.status)}">${escapeHtml(e.status || '-')}</span>`;
                 };
                 const rows = events.map(e => `
                     <tr data-event-id="${e.event_id}">
-                        <td data-label="创建时间">${e.created_at || '-'}</td>
-                        <td data-label="描述">${e.description || '-'}</td>
-                        <td data-label="类型">${e.event_type || '-'}</td>
-                        <td data-label="紧急程度"><span class="tag ${urgencyClass(e.urgency)}">${e.urgency || '-'}</span></td>
-                        <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${e.scene_tag || '-'}</span></td>
-                        <td data-label="处理部门">${e.handler || '-'}</td>
+                        <td data-label="创建时间">${escapeHtml(e.created_at || '-')}</td>
+                        <td data-label="描述">${escapeHtml(e.description || '-')}</td>
+                        <td data-label="类型">${escapeHtml(e.event_type || '-')}</td>
+                        <td data-label="紧急程度"><span class="tag ${urgencyClass(e.urgency)}">${escapeHtml(e.urgency || '-')}</span></td>
+                        <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${escapeHtml(e.scene_tag || '-')}</span></td>
+                        <td data-label="处理部门">${escapeHtml(e.handler || '-')}</td>
                         <td data-label="状态">${statusCell(e)}</td>
                         <td data-label="操作">${renderActionCell(e)}</td>
                     </tr>
