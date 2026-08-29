@@ -9,3 +9,6 @@ cryptography==46.0.2
 cos-python-sdk-v5==1.9.44
 gunicorn==23.0.0
 filelock==3.16.1
+
+prometheus-fastapi-instrumentator
+slowapi
