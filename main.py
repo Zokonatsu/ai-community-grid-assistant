@@ -616,7 +616,8 @@ async def register(request: Request, body: RegisterRequest) -> AuthResponse:
     login_ok, login_msg, login_data = auth.login_user(body.username, body.password)
     if login_ok and login_data:
         return AuthResponse(success=True, data=login_data, error="注册成功")
-    return AuthResponse(success=True, data={"user": user}, error=message)
+    # 【修改】自动登录失败时返回 success=False，不再返回无 token 的 success=True
+    return AuthResponse(success=False, error="注册成功但自动登录失败，请手动登录")
 
 
 @app.post("/api/auth/login", response_model=AuthResponse)

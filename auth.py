@@ -484,9 +484,18 @@ def get_current_user(token: str | None) -> dict[str, Any] | None:
         return None
 
     with _auth_lock:
+        global _sessions
         session = _sessions.get(token)
+        # 【修改】内存中未找到时，尝试从文件重新加载（应对多进程/进程重启场景）
         if session is None:
-            return None
+            try:
+                _sessions = _load_sessions()
+                session = _sessions.get(token)
+            except Exception:
+                # 文件读取/解密失败时保持当前内存状态，避免崩溃
+                pass
+            if session is None:
+                return None
 
         # 检查是否过期
         created = session.get("created_at", "")

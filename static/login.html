@@ -276,6 +276,12 @@
                     errorEl.classList.remove('hidden');
                     return;
                 }
+                // 【修改1】防御性检查：后端是否真正返回了 token
+                if (!data.data || !data.data.token) {
+                    errorEl.textContent = '注册成功但自动登录失败，请手动登录';
+                    errorEl.classList.remove('hidden');
+                    return;  // 不跳转，让用户留在登录页手动登录
+                }
                 localStorage.setItem('token', data.data.token);
                 localStorage.setItem('user', JSON.stringify(data.data.user));
                 if (data.data.user.role === 'admin') {
@@ -284,6 +290,8 @@
                     window.location.href = '/';
                 }
             } catch (err) {
+                // 【修改2】增加 console.error 输出真实错误，便于调试
+                console.error('注册请求异常:', err);
                 errorEl.textContent = '网络请求失败，请检查服务是否启动';
                 errorEl.classList.remove('hidden');
             } finally {
