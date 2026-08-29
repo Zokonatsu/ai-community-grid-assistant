@@ -108,13 +108,16 @@ def _load_sessions() -> dict[str, Any]:
 
     云存储模式：对象不存在 -> 返回 {}（安全默认，视为空库）；
     其它异常 -> 抛错 fail-fast，防止误判导致数据覆盖。
+    加载后自动清理过期会话。
     """
     if AUTH_STORE == "cloudbase":
         blob = cloud_store.download(cloud_store.SESSIONS_OBJECT_KEY)
         if blob is None:
             return {}
-        return decrypt("sessions", blob)
-    return _load_json("sessions", SESSIONS_FILE)
+        data = decrypt("sessions", blob)
+    else:
+        data = _load_json("sessions", SESSIONS_FILE)
+    return _cleanup_expired_sessions(data)
 
 
 def _save_sessions(data: dict[str, Any]) -> None:
@@ -321,15 +324,26 @@ def _generate_token() -> str:
     return secrets.token_urlsafe(32)
 
 
-def _cleanup_expired_sessions() -> None:
-    """清理过期会话（超过 7 天未活跃）。"""
+def _cleanup_expired_sessions(data: dict[str, Any] | None = None) -> dict[str, Any]:
+    """清理过期会话（超过 7 天未活跃）。
+
+    若传入 data，则清理传入的 dict 并返回；
+    否则清理全局 _sessions 并保存。
+    """
     cutoff = (datetime.now() - timedelta(days=_SESSION_TTL_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    if data is not None:
+        expired = [t for t, s in data.items() if s.get("created_at", "") < cutoff]
+        for t in expired:
+            data.pop(t, None)
+        return data
+
     expired = [t for t, s in _sessions.items() if s.get("created_at", "") < cutoff]
     for t in expired:
         _sessions.pop(t, None)
     if expired:
         _save_sessions(_sessions)
         logger.info("清理 %d 条过期会话", len(expired))
+    return _sessions
 
 
 # ------------------------------------------------------------------
@@ -375,6 +389,8 @@ def register_user(
         return False, "请填写楼栋、单元和房间号", None
 
     with _auth_lock:
+        global _users
+        _users = _load_users()
         # 检查用户名是否已存在
         for user in _users.values():
             if user.get("username") == username:
@@ -431,6 +447,8 @@ def login_user(username: str, password: str) -> tuple[bool, str, dict[str, Any] 
     username = username.strip()
 
     with _auth_lock:
+        global _users
+        _users = _load_users()
         user = None
         for u in _users.values():
             if u.get("username") == username:
@@ -465,6 +483,8 @@ def logout_user(token: str | None) -> bool:
     if not token:
         return False
     with _auth_lock:
+        global _sessions
+        _sessions = _load_sessions()
         if token in _sessions:
             del _sessions[token]
             _save_sessions(_sessions)
@@ -505,9 +525,16 @@ def get_current_user(token: str | None) -> dict[str, Any] | None:
             _save_sessions(_sessions)
             return None
 
+        global _users
         user = _users.get(session.get("user_id"))
         if user is None:
-            return None
+            try:
+                _users = _load_users()
+                user = _users.get(session.get("user_id"))
+            except Exception:
+                pass
+            if user is None:
+                return None
 
     return _public_user(user)
 
@@ -517,6 +544,8 @@ def get_user_by_id(user_id: str) -> dict[str, Any] | None:
     根据用户ID获取完整用户信息（含原始身份证号，供后台审核使用）。
     """
     with _auth_lock:
+        global _users
+        _users = _load_users()
         user = _users.get(user_id)
         if user is None:
             return None
@@ -542,6 +571,8 @@ def list_users() -> list[dict[str, Any]]:
     便于管理员了解本小区住户构成。注册即生效，无需审核操作。
     """
     with _auth_lock:
+        global _users
+        _users = _load_users()
         users = []
         for u in _users.values():
             if u.get("role") != "resident":
