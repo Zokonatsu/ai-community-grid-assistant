@@ -117,14 +117,39 @@ def _save_tasks(tasks: dict[str, dict[str, Any]]) -> None:
     """
     将全量任务状态写入磁盘。调用方需自行保证并发安全（在外层锁内调用）。
     敏感字段加密后落盘，内存 dict 保持明文。
+    使用原子写入（临时文件+os.replace）避免多进程并发导致文件损坏或数据丢失。
     """
     _ensure_data_dir()
     try:
         encrypted_tasks = {k: _encrypt_task_fields(v) for k, v in tasks.items()}
-        with open(TASKS_FILE, "w", encoding="utf-8") as f:
+        tmp_path = TASKS_FILE + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(encrypted_tasks, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, TASKS_FILE)
     except (OSError, TypeError, ValueError) as exc:
         logger.error("持久化任务状态失败，文件='%s'，异常=%s", TASKS_FILE, exc)
+
+
+def _refresh_tasks() -> None:
+    """整体重载任务状态：从文件加载最新全量数据，覆盖内存中的可能过期的缓存。
+    用于查询与写操作，确保看到其他进程持久化的最新状态。
+    采用原地更新（不重新绑定变量），保留所有外部引用的一致性。
+    """
+    loaded = _load_tasks()
+    _tasks.clear()
+    _tasks.update(loaded)
+
+
+def _reload_tasks() -> None:
+    """补充加载任务状态：仅加载内存中不存在的任务，避免覆盖当前进程缓存。
+    用于 _process_event 等后台链路，兼容测试直接种入内存的任务。
+    """
+    loaded = _load_tasks()
+    for k, v in loaded.items():
+        if k not in _tasks:
+            _tasks[k] = v
 
 
 # ------------------------------------------------------------------
@@ -208,6 +233,7 @@ async def _process_event(
             timeout=60.0,
         )
         async with _task_lock:
+            _reload_tasks()
             task = _tasks.get(event_id)
             if task is None:
                 return
@@ -242,6 +268,7 @@ async def _process_event(
                 _save_tasks(_tasks)
     except asyncio.TimeoutError:
         async with _task_lock:
+            _reload_tasks()
             task = _tasks.get(event_id)
             # 状态守卫：仅处理中/待审核可被改写为处理超时，防止覆盖「已撤销」
             if task is not None and task.get("status") in ("处理中", "待审核"):
@@ -251,6 +278,7 @@ async def _process_event(
         logger.warning("事件处理超时，event_id=%s", event_id)
     except Exception as exc:
         async with _task_lock:
+            _reload_tasks()
             task = _tasks.get(event_id)
             # 状态守卫：仅处理中/待审核可被改写为处理失败，防止覆盖「已撤销」
             if task is not None and task.get("status") in ("处理中", "待审核"):
@@ -723,6 +751,7 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
     events: list[dict[str, str]] = []
 
     async with _task_lock:
+        _refresh_tasks()
         for task in _tasks.values():
             if current_user.get("role") != "admin" and task.get("user_id") != current_user.get("id"):
                 continue
@@ -852,6 +881,7 @@ async def create_event(
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
+                _refresh_tasks()
                 _tasks[event_id] = _build_task(
                     event_id=event_id,
                     description=body.description,
@@ -948,6 +978,7 @@ async def create_event(
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
+                _refresh_tasks()
                 _tasks[event_id] = _build_task(
                     event_id=event_id,
                     description=body.description,
@@ -1003,6 +1034,7 @@ async def create_event(
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
+                _refresh_tasks()
                 _tasks[event_id] = _build_task(
                     event_id=event_id,
                     description=body.description,
@@ -1065,6 +1097,7 @@ async def create_event(
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
+                _refresh_tasks()
                 _tasks[event_id] = _build_task(
                     event_id=event_id,
                     description=body.description,
@@ -1184,6 +1217,7 @@ async def create_event(
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
+                _refresh_tasks()
                 _tasks[event_id] = _build_task(
                     event_id=event_id,
                     description=body.description,
@@ -1239,6 +1273,7 @@ async def create_event(
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
+                _refresh_tasks()
                 _tasks[event_id] = _build_task(
                     event_id=event_id,
                     description=body.description,
@@ -1283,6 +1318,7 @@ async def create_event(
         created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         async with _task_lock:
+            _refresh_tasks()
             _tasks[event_id] = _build_task(
                 event_id=event_id,
                 description=body.description,
@@ -1332,6 +1368,7 @@ async def create_event(
             event_id = str(uuid.uuid4())
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             async with _task_lock:
+                _refresh_tasks()
                 _tasks[event_id] = _build_task(
                     event_id=event_id,
                     description=body.description,
@@ -1399,6 +1436,7 @@ async def get_event(
     按事件标识查询处理状态和完整结果。服务重启后仍可通过本接口恢复查询。
     """
     async with _task_lock:
+        _refresh_tasks()
         task = _tasks.get(event_id)
 
     if task is None:
@@ -1440,6 +1478,7 @@ async def cancel_event(
     created_at 解析失败按超时处理。撤销仅标记状态为「已撤销」，保留全部记录字段。
     """
     async with _task_lock:
+        _refresh_tasks()
         task = _tasks.get(event_id)
         if task is None:
             raise HTTPException(status_code=404, detail="事件不存在")
@@ -1480,6 +1519,7 @@ async def accept_event(
     后台人员受理待审核事件，将状态更新为"已受理"。
     """
     async with _task_lock:
+        _refresh_tasks()
         task = _tasks.get(event_id)
         if task is None:
             raise HTTPException(status_code=404, detail="事件不存在")
@@ -1530,6 +1570,7 @@ async def reject_event(
     管理员拒绝待审核事件，将状态更新为"已拒绝"并记录理由。
     """
     async with _task_lock:
+        _refresh_tasks()
         task = _tasks.get(event_id)
         if task is None:
             raise HTTPException(status_code=404, detail="事件不存在")
@@ -1564,6 +1605,7 @@ async def reply_event(
     后台人员或居民提交回复，将状态更新为"已完成"。
     """
     async with _task_lock:
+        _refresh_tasks()
         task = _tasks.get(event_id)
         if task is None:
             raise HTTPException(status_code=404, detail="事件不存在")
@@ -1636,6 +1678,7 @@ async def mark_event_read(
     用户查看回复后标记为已读。
     """
     async with _task_lock:
+        _refresh_tasks()
         task = _tasks.get(event_id)
         if task is None:
             raise HTTPException(status_code=404, detail="事件不存在")

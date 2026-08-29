@@ -17,6 +17,7 @@ receive_agent.py
 
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -58,34 +59,67 @@ _SEMANTIC_SINGLE_TIMEOUT: float = 15.0
 # LLM 熔断器
 # ------------------------------------------------------------------
 class _LLMCircuitBreaker:
-    """LLM 调用熔断器：连续失败达到阈值后进入 open，冷却到期后半开试探。"""
+    """LLM 调用熔断器：连续失败达到阈值后进入 open，冷却到期后半开试探。
+    状态持久化到文件，支持多进程共享。
+    """
 
     def __init__(self, threshold: int = 3, cooldown: float = 30.0):
         self.threshold = threshold
         self.cooldown = cooldown
-        self._failures = 0
-        self._last_failure_time = 0.0
-        self._state = "closed"
         self._lock = threading.Lock()
+        self._file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "llm_circuit.json")
+        os.makedirs(os.path.dirname(self._file), exist_ok=True)
+
+    def _load_state(self) -> dict:
+        if not os.path.exists(self._file):
+            return {"failures": 0, "last_failure_time": 0.0, "state": "closed"}
+        try:
+            with open(self._file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return {
+                        "failures": data.get("failures", 0),
+                        "last_failure_time": data.get("last_failure_time", 0.0),
+                        "state": data.get("state", "closed"),
+                    }
+        except (json.JSONDecodeError, OSError):
+            pass
+        return {"failures": 0, "last_failure_time": 0.0, "state": "closed"}
+
+    def _save_state(self, data: dict) -> None:
+        try:
+            tmp = self._file + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self._file)
+        except OSError:
+            pass
 
     def state(self) -> str:
         with self._lock:
-            if self._state == "open":
-                if time.monotonic() - self._last_failure_time >= self.cooldown:
-                    self._state = "half_open"
-            return self._state
+            data = self._load_state()
+            st = data.get("state", "closed")
+            last = data.get("last_failure_time", 0.0)
+            if st == "open":
+                if time.monotonic() - last >= self.cooldown:
+                    st = "half_open"
+                    data["state"] = st
+                    self._save_state(data)
+            return st
 
     def record_success(self) -> None:
         with self._lock:
-            self._failures = 0
-            self._state = "closed"
+            self._save_state({"failures": 0, "last_failure_time": 0.0, "state": "closed"})
 
     def record_failure(self) -> None:
         with self._lock:
-            self._failures += 1
-            self._last_failure_time = time.monotonic()
-            if self._failures >= self.threshold:
-                self._state = "open"
+            data = self._load_state()
+            failures = data.get("failures", 0) + 1
+            last = time.monotonic()
+            st = "open" if failures >= self.threshold else "closed"
+            self._save_state({"failures": failures, "last_failure_time": last, "state": st})
 
 
 llm_circuit = _LLMCircuitBreaker()

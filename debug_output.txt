@@ -1,0 +1,93 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.5, pytest-8.3.4, pluggy-1.6.0 -- C:\Users\张崇煜\AppData\Local\Programs\Python\Python314\python.exe
+rootdir: C:\Users\张崇煜\Desktop\ai-community-grid-assistant-main
+configfile: pytest.ini
+plugins: anyio-4.13.0, langsmith-0.10.10, cov-6.0.0
+collecting ... collected 1 item
+
+tests/test_event_cancel.py::test_suite ======================================================================
+事件 5 分钟内可撤销测试（T20260819-003 v2）
+======================================================================
+[DEBUG Timeout] event_id=evt-12-timeout-guard task_status='已撤销'
+[DEBUG Exception] event_id=evt-13-exc-guard task_status='已撤销'
+[DEBUG Timeout] event_id=evt-14-timeout-normal task_status='处理中'
+[DEBUG Exception] event_id=evt-15-exc-pending task_status='待审核'
+
+======================================================================
+  [PASS] 0.1 内置管理员可登录  (登录成功)
+  [PASS] 0.2 居民A可登录
+  [PASS] 0.3 居民B可登录
+  [PASS] 0.4 居民A/居民B id 不同  (a=a591e134489e9b88ec19381cd3206e63 b=fd9160d619fd6f382e2060ff2a752ee7)
+  [PASS] 1.1 处理中 5 分钟内撤销成功  (status=200 body={"success":true,"data":{"event_id":"evt-1-processing","status":"已撤销"}})
+  [PASS] 1.2 撤销后居民列表仍可见且状态=已撤销  ({'event_id': 'evt-1-processing', 'description': '测试事件描述', 'address': '小区3号楼', 'event_type': '物业维修', 'urgency': '中', 'scene_tag': '常规', 'emergency_type': '', 'handler': '物业', 'status': '已撤销', 'created_at': '2026-08-29 16:25:59', 'reply': '', 'replies': [], 'has_new_reply': False, 'rejected_reason': '', 'rejected_at': '', 'rejected_by': '', 'withdrawn_at': '2026-08-29 16:26:59', 'user_name': '测试居民', 'user_phone': '13900000000', 'user_id_card': '', 'user_building': '', 'user_unit': '', 'user_room': '', 'beneficiary_type': 'self', 'beneficiary_name': '测试居民', 'beneficiary_phone': '13900000000', 'beneficiary_building': '1栋', 'beneficiary_unit': '1单元', 'beneficiary_room': '101'})
+  [PASS] 1.3 已撤销事件再撤 -> 400「事件已撤销」  (status=400 body={"success":false,"error":"事件已撤销"})
+  [PASS] 2.1 待审核 5 分钟内撤销成功  (status=200 body={"success":true,"data":{"event_id":"evt-2-pending","status":"已撤销"}})
+  [PASS] 3.1 超 5 分钟拒绝  (status=400 body={"success":false,"error":"已超过5分钟，无法撤销"})
+  [PASS] 3.2 超时拒绝后状态不变  ({'event_id': 'evt-3-expired', 'description': '测试事件描述', 'address': '小区3号楼', 'event_type': '物业维修', 'urgency': '中', 'scene_tag': '常规', 'emergency_type': '', 'handler': '物业', 'status': '处理中', 'created_at': '2026-08-29 16:21:58', 'reply': '', 'replies': [], 'has_new_reply': False, 'rejected_reason': '', 'rejected_at': '', 'rejected_by': '', 'withdrawn_at': '', 'user_name': '测试居民', 'user_phone': '13900000000', 'user_id_card': '', 'user_building': '', 'user_unit': '', 'user_room': '', 'beneficiary_type': 'self', 'beneficiary_name': '测试居民', 'beneficiary_phone': '13900000000', 'beneficiary_building': '1栋', 'beneficiary_unit': '1单元', 'beneficiary_room': '101'})
+  [PASS] 4.1 created_at 解析失败拒绝（按超时）  (status=400 body={"success":false,"error":"已超过5分钟，无法撤销"})
+  [PASS] 5.1 终态[已派单] 5 分钟内撤销成功  (status=200 body={"success":true,"data":{"event_id":"evt-5-1","status":"已撤销"}})
+  [PASS] 5.2 终态[已完成] 5 分钟内撤销成功  (status=200 body={"success":true,"data":{"event_id":"evt-5-2","status":"已撤销"}})
+  [PASS] 5.3 终态[已受理] 5 分钟内撤销成功  (status=200 body={"success":true,"data":{"event_id":"evt-5-3","status":"已撤销"}})
+  [PASS] 5.4 终态[处理超时] 5 分钟内撤销成功  (status=200 body={"success":true,"data":{"event_id":"evt-5-4","status":"已撤销"}})
+  [PASS] 5.5 终态[处理失败] 5 分钟内撤销成功  (status=200 body={"success":true,"data":{"event_id":"evt-5-5","status":"已撤销"}})
+  [PASS] 5.6 终态[已拒绝] 5 分钟内撤销成功  (status=200 body={"success":true,"data":{"event_id":"evt-5-6","status":"已撤销"}})
+  [PASS] 6.1 非本人撤销 403  (status=403 body={"success":false,"error":"无权操作该事件"})
+  [PASS] 7.1 管理员代撤销 403  (status=403 body={"success":false,"error":"无权操作该事件"})
+  [PASS] 8.1 事件不存在 404  (status=404 body={"success":false,"error":"事件不存在"})
+  [PASS] 9.1 无 token 401  (status=401)
+  [PASS] 10.1 撤销后记录保留（状态/描述/处理部门/回复）  ({'event_id': 'evt-10-keep', 'description': '保留字段测试事件', 'address': '小区3号楼', 'event_type': '物业维修', 'urgency': '中', 'scene_tag': '常规', 'emergency_type': '', 'handler': '物业', 'status': '已撤销', 'created_at': '2026-08-29 16:26:30', 'reply': '历史回复', 'replies': [{'content': '历史回复', 'created_at': '2026-08-29 16:17:00', 'reviewer_id': 'r1', 'reviewer_name': '后台'}], 'has_new_reply': True, 'rejected_reason': '', 'rejected_at': '', 'rejected_by': '', 'withdrawn_at': '2026-08-29 16:27:00', 'user_name': '测试居民', 'user_phone': '13900000000', 'user_id_card': '', 'user_building': '', 'user_unit': '', 'user_room': '', 'beneficiary_type': 'self', 'beneficiary_name': '测试居民', 'beneficiary_phone': '13900000000', 'beneficiary_building': '1栋', 'beneficiary_unit': '1单元', 'beneficiary_room': '101'})
+  [PASS] 10.2 后台列表可见已撤销事件  ({'event_id': 'evt-10-keep', 'description': '保留字段测试事件', 'address': '小区3号楼', 'event_type': '物业维修', 'urgency': '中', 'scene_tag': '常规', 'emergency_type': '', 'handler': '物业', 'status': '已撤销', 'created_at': '2026-08-29 16:26:30', 'reply': '历史回复', 'replies': [{'content': '历史回复', 'created_at': '2026-08-29 16:17:00', 'reviewer_id': 'r1', 'reviewer_name': '后台'}], 'has_new_reply': True, 'rejected_reason': '', 'rejected_at': '', 'rejected_by': '', 'withdrawn_at': '2026-08-29 16:27:00', 'user_name': '测试居民', 'user_phone': '13900000000', 'user_id_card': '', 'user_building': '', 'user_unit': '', 'user_room': '', 'beneficiary_type': 'self', 'beneficiary_name': '测试居民', 'beneficiary_phone': '13900000000', 'beneficiary_building': '1栋', 'beneficiary_unit': '1单元', 'beneficiary_room': '101', 'event_lat': None, 'event_lng': None, 'event_location_status': 'unverified', 'event_distance_m': None})
+  [PASS] 10.3 详情接口可见已撤销与保留字段  ({'event_id': 'evt-10-keep', 'description': '保留字段测试事件', 'status': '已撤销', 'address': '小区3号楼', 'event_type': '物业维修', 'urgency': '中', 'scene_tag': '常规', 'emergency_type': None, 'handler': '物业', 'created_at': '2026-08-29 16:26:30', 'completed_at': None, 'error': None, 'reply': '历史回复'})
+  [PASS] 11.1 成功分支不覆盖已撤销  (status=已撤销)
+  [PASS] 12.1 超时分支不覆盖已撤销  (status=已撤销)
+  [PASS] 13.1 异常分支不覆盖已撤销  (status=已撤销)
+  [FAIL] 14.1 处理中仍可被改写为处理超时  (status=处理中)
+  [FAIL] 15.1 待审核仍可被改写为处理失败  (status=待审核)
+  [FAIL] 16.1 处理中成功分支仍标记已完成  (status=处理中)
+
+结果：27/30 通过
+FAILED
+
+================================== FAILURES ===================================
+_________________________________ test_suite __________________________________
+
+    def test_suite():
+        # 数据隔离已由 conftest（pytest）或 __main__（直跑）保证；
+        # auth/main 初始化必须在数据隔离生效之后（延迟导入 + reload）。
+        global client, main_module, _tasks, _task_lock, _save_tasks, _process_event
+        import auth
+        import importlib
+        importlib.reload(auth)
+        with patch("receive_agent.OpenAI"), \
+             patch("receive_agent.receive_node", side_effect=_mock_receive_node), \
+             patch("dispatch_agent.logger"), \
+             patch("record_agent.logger"):
+            from main import app, _tasks, _task_lock, _save_tasks, _process_event
+            import main as main_module
+            from fastapi.testclient import TestClient
+        client = TestClient(app)
+        if hasattr(app.state, "limiter"):
+            app.state.limiter.enabled = False
+            app.state.limiter.reset()
+        code = run_all()
+>       assert code == 0, f"run_all 返回 {code}，存在失败项"
+E       AssertionError: run_all 返回 1，存在失败项
+E       assert 1 == 0
+
+tests\test_event_cancel.py:185: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  main:main.py:278 事件处理超时，event_id=evt-12-timeout-guard
+ERROR    main:main.py:290 事件处理失败，event_id=evt-13-exc-guard，异常=boom
+WARNING  main:main.py:278 事件处理超时，event_id=evt-14-timeout-normal
+ERROR    main:main.py:290 事件处理失败，event_id=evt-15-exc-pending，异常=boom
+============================== warnings summary ===============================
+tests/test_event_cancel.py::test_suite
+tests/test_event_cancel.py::test_suite
+tests/test_event_cancel.py::test_suite
+  C:\Users\张崇煜\AppData\Local\Programs\Python\Python314\Lib\site-packages\slowapi\extension.py:717: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    if asyncio.iscoroutinefunction(func):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_event_cancel.py::test_suite - AssertionError: run_all 返回 ...
+======================== 1 failed, 3 warnings in 3.61s ========================
