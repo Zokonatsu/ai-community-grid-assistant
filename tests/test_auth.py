@@ -68,6 +68,7 @@ os.environ["LLM_BASE_URL"] = "http://test"
 # 账号数据加密密钥（64 位 hex，仅测试用固定值，确保与本测试生成的 secure/ 数据一致）
 os.environ["DATA_ENCRYPTION_KEY"] = "1" * 64
 os.environ["AUTH_STORE"] = "file"
+os.environ["ADMIN_INITIAL_PASSWORD"] = "admin123456"
 
 # 重新加载 auth 模块以使用空数据
 
@@ -152,13 +153,14 @@ results = TestResults()
 def auth_header(token):
     return {"Authorization": f"Bearer {token}"} if token else {}
 
-def register(username, password, real_name, phone, role="resident", building="1栋", unit="1单元", room="101"):
+def register(username, password, real_name, phone, id_card, role="resident", building="1栋", unit="1单元", room="101"):
     """注册新用户，返回 (success, data/error)"""
     res = client.post("/api/auth/register", json={
         "username": username,
         "password": password,
         "real_name": real_name,
         "phone": phone,
+        "id_card": id_card,
         "role": role,
         "building": building,
         "unit": unit,
@@ -292,7 +294,7 @@ def test_suite():
     RESIDENT_NAME = "张三"
     
     # 3.1 注册居民账号
-    reg_result = register(RESIDENT_USER, RESIDENT_PASS, RESIDENT_NAME, RESIDENT_PHONE, "resident")
+    reg_result = register(RESIDENT_USER, RESIDENT_PASS, RESIDENT_NAME, RESIDENT_PHONE, "110101199001011234", "resident")
     if reg_result.get("success"):
         results.add_pass("3.1 注册居民账号", f"用户名={RESIDENT_USER}, 角色=resident")
     else:
@@ -364,7 +366,7 @@ def test_suite():
         results.add_error("3.4-3.5 事件操作", "无可用 token，因为 3.2 登录失败")
     
     # 3.6 重复注册同一用户名应被拒绝
-    reg_result2 = register(RESIDENT_USER, "other123", "测试", "13900139001", "resident")
+    reg_result2 = register(RESIDENT_USER, "other123", "测试", "13900139001", "110101199001011235", "resident")
     if not reg_result2.get("success"):
         results.add_pass("3.6 重复注册拒绝", f"正确拒绝: {reg_result2.get('error')}")
     else:
@@ -591,35 +593,35 @@ def test_suite():
         results.add_fail("8.2 不存在用户登录", "success=False", "竟然登录成功")
     
     # 8.3 注册 - 密码过短
-    data = register("test_short", "12345", "测试", "13900139002", "resident")
+    data = register("test_short", "12345", "测试", "13900139002", "110101199001011236", "resident")
     if not data.get("success"):
         results.add_pass("8.3 密码过短拒绝", f"正确拒绝: {data.get('error')}")
     else:
         results.add_fail("8.3 密码过短拒绝", "success=False", "竟然注册成功")
     
     # 8.4 注册 - 手机号格式错误
-    data = register("test_phone", "123456", "测试", "12345", "resident")
+    data = register("test_phone", "123456", "测试", "12345", "110101199001011237", "resident")
     if not data.get("success"):
         results.add_pass("8.4 手机号格式错误拒绝", f"正确拒绝: {data.get('error')}")
     else:
         results.add_fail("8.4 手机号格式错误拒绝", "success=False", "竟然注册成功")
     
     # 8.5 注册 - 非法角色
-    data = register("test_role", "123456", "测试", "13900139003", "superadmin")
+    data = register("test_role", "123456", "测试", "13900139003", "110101199001011238", "superadmin")
     if not data.get("success"):
         results.add_pass("8.5 非法角色拒绝", f"正确拒绝: {data.get('error')}")
     else:
         results.add_fail("8.5 非法角色拒绝", "success=False", "竟然注册成功")
     
     # 8.6 注册 - 用户名为空（会被 strip 后长度不足拒绝）
-    data = register("   ", "123456", "测试", "13900139004", "resident")
+    data = register("   ", "123456", "测试", "13900139004", "110101199001011239", "resident")
     if not data.get("success"):
         results.add_pass("8.6 空用户名拒绝", f"正确拒绝: {data.get('error')}")
     else:
         results.add_fail("8.6 空用户名拒绝", "success=False", "竟然注册成功")
     
     # 8.7 手机号重复注册
-    data = register("another_user", "123456", "王五", RESIDENT_PHONE, "resident")
+    data = register("another_user", "123456", "王五", RESIDENT_PHONE, "110101199001011240", "resident")
     if not data.get("success"):
         results.add_pass("8.7 手机号重复拒绝", f"正确拒绝: {data.get('error')}")
     else:

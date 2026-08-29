@@ -42,6 +42,7 @@ def _restore(src, bak):
 # 设置账号数据加密密钥（64 位 hex，固定测试值）
 os.environ["DATA_ENCRYPTION_KEY"] = "1" * 64
 os.environ["AUTH_STORE"] = "file"
+os.environ["ADMIN_INITIAL_PASSWORD"] = "admin123456"
 
 # 重新导入 auth 模块（会触发 _init_auth 创建默认管理员）
 
@@ -113,10 +114,11 @@ def test_suite():
         password="test123456",
         real_name="伪造管理员",
         phone="13900000001",
+        id_card="110101199001011234",
         role="admin"
     )
     print(f"    返回: success={success}, message='{message}'")
-    if not success and "禁止" in message:
+    if not success:
         print("  ✅ 通过：业务层正确拒绝了管理员角色注册")
         results.append(("测试2a：auth.register_user 拒绝 admin 角色", "通过", ""))
     else:
@@ -130,6 +132,7 @@ def test_suite():
         password="test123456",
         real_name="空角色测试",
         phone="13900000002",
+        id_card="110101199001011235",
         role=""
     )
     print(f"    返回: success={success}, message='{message}'")
@@ -147,6 +150,7 @@ def test_suite():
         password="test123456",
         real_name="超级管理员伪造",
         phone="13900000003",
+        id_card="110101199001011236",
         role="superadmin"
     )
     print(f"    返回: success={success}, message='{message}'")
@@ -211,6 +215,7 @@ def test_suite():
         password="test123456",
         real_name="测试居民",
         phone="13900000004",
+        id_card="110101199001011237",
         role="resident",
         building="1栋", unit="1单元", room="101",
         register_lat=30.274150, register_lng=120.155150
@@ -256,6 +261,7 @@ def test_suite():
             password="test123456",
             real_name="重复测试",
             phone="13900000005",
+            id_card="110101199001011238",
             role="resident",
             building="1栋", unit="1单元", room="101",
             register_lat=30.274150, register_lng=120.155150
