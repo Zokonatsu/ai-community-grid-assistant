@@ -177,6 +177,7 @@
         let confirmSeconds = 5;
         let currentDesc = '';
         let currentEmergencyType = '';
+        let confirmSubmitting = false;
         let listPollTimer = null;
         const POLL_LIST_MS = 15000;
 
@@ -566,14 +567,20 @@
             document.getElementById('confirmOverlay').classList.add('hidden');
         }
 
-        function onConfirmAgree() {
-            closeConfirmDialog();
-            const beneficiary = collectBeneficiary();
-            if (beneficiary.error) {
-                document.getElementById('error').textContent = beneficiary.error;
-                return;
+        async function onConfirmAgree() {
+            if (confirmSubmitting) return;
+            confirmSubmitting = true;
+            try {
+                closeConfirmDialog();
+                const beneficiary = collectBeneficiary();
+                if (beneficiary.error) {
+                    document.getElementById('error').textContent = beneficiary.error;
+                    return;
+                }
+                await doSubmit(currentDesc, beneficiary, { confirmed: true, emergency_type: currentEmergencyType });
+            } finally {
+                confirmSubmitting = false;
             }
-            doSubmit(currentDesc, beneficiary, { confirmed: true, emergency_type: currentEmergencyType });
         }
 
         function onConfirmCancel() {

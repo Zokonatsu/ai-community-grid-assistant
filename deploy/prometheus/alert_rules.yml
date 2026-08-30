@@ -1,0 +1,33 @@
+groups:
+  - name: ai-community-grid
+    rules:
+      # 服务存活：up 为 Prometheus 内建指标
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "AI社区网格员助手 服务不可用"
+
+      # 5xx 错误率（prometheus_fastapi_instrumentator 内建 http_requests_total）
+      - alert: High5xxRate
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) > 0.5
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: "5xx 错误率过高"
+
+      # 健康检查失败（可依据实际 /health 暴露的指标扩展）
+      - alert: HealthCheckFail
+        expr: health_check_status == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "健康检查未通过"
+
+      # 自定义业务计数器（events_* / llm_circuit_open）接入后可按需启用
+      # - alert: LLMCircuitOpen
+      #   expr: llm_circuit_open == 1
+      #   for: 1m
+      #   labels: { severity: critical }
+      #   annotations: { summary: "LLM 熔断器打开，语义校验降级" }

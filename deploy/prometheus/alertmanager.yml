@@ -1,0 +1,20 @@
+route:
+  receiver: "default"
+  group_by: ["alertname"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: "default"
+    # 通用 webhook：填你的通知地址
+    webhook_configs:
+      - url: "https://your-webhook.example.com/alert"
+        send_resolved: true
+    # 邮件方案（取消注释并配置）
+    # email_configs:
+    #   - to: "ops@example.com"
+    #     from: "alert@example.com"
+    #     smarthost: "smtp.example.com:587"
+    #     auth_username: "alert@example.com"
+    #     auth_password: "SMTP_PASSWORD"

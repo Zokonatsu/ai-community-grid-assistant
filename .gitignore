@@ -199,3 +199,4 @@ test_results.json
 _regress_logs*/
 .dsh/
 
+backups/
