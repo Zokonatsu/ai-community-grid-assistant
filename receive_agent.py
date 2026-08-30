@@ -131,7 +131,7 @@ llm_circuit = _LLMCircuitBreaker()
 # 当模型对边界输入判断不一致时，硬规则提供兜底确定性。
 # 规则优先级低于模型但高于投票统计，命中即强制覆盖对应标签。
 _LIFE_RESCUE_RE = re.compile(
-    r"心脏骤停|心跳停止|心肺复苏|大出血|昏迷|窒息|触电|电击伤|电击|突发重病|心梗|心肌梗死|脑溢血|中风|溺水|"
+    r"心脏骤停|心跳停止|心肺复苏|大出血|昏迷|窒息|触电|电击伤|电击|突发重病|心梗|心肌梗死|脑溢血|中风|"
     r"人死了|有人死|死人|去世|身亡|猝死|割腕|自杀|自残|跳楼|轻生|煤气中毒|"
     r"心脏病发作|心脏病|叫救护车|救护车|胸痛|呼吸困难",
     re.IGNORECASE,
@@ -152,7 +152,7 @@ _FUZZY_POLICE_RE = re.compile(
     re.IGNORECASE,
 )
 _FUZZY_FIRE_RE = re.compile(
-    r"着火|火灾|燃气泄漏|被困|爆炸|救火",
+    r"着火|火灾|燃气泄漏|爆炸|救火",
     re.IGNORECASE,
 )
 
@@ -206,30 +206,39 @@ def _apply_hard_rules(description: str, parsed: dict) -> dict:
     return parsed
 
 
+# 合并后的急救类型关键词（medical/police/fire），供 _resolve_emergency_type 统一解析
+_EMERGENCY_MEDICAL_RE = re.compile(
+    r"心脏骤停|心跳停止|心肺复苏|大出血|昏迷|窒息|触电|电击|突发重病|心梗|脑溢血|中风|人死了|去世|身亡|猝死|割腕|"
+    r"自杀|自残|跳楼|轻生|煤气中毒|心脏病发作|叫救护车|救护车|胸痛|呼吸困难|吐血|上吊|晕倒|中毒|救命|救我|呼救",
+    re.IGNORECASE,
+)
+_EMERGENCY_POLICE_RE = re.compile(
+    r"绑架|抢劫|杀人|持刀|行凶|强奸|强盗|性侵|猥亵|骚扰|盗窃|偷窃|偷东西|打架|斗殴|暴力|威胁|恐吓|暴恐|寻仇|吸毒",
+    re.IGNORECASE,
+)
+_EMERGENCY_FIRE_RE = re.compile(
+    r"火灾|起火|着火|燃气泄漏|煤气泄漏|煤气味|燃气味|煤气|燃气|被困|爆炸|救火|坍塌|电梯困人|高空坠物|严重交通事故",
+    re.IGNORECASE,
+)
+
+
 def _resolve_emergency_type(description: str, scene_tag: str) -> str:
     """
     根据描述和场景标签推断 emergency_type，用于接收模块向派发模块传递明确结论。
 
-    当接收模块已判定为生命急救或紧急救援，但 emergency_type 未设置时，
-    通过关键词匹配补全，避免下游派发模块因信息不足而错误 fallback。
+    生命周期急救/紧急救援但 emergency_type 未设置时，通过合并的关键词集合解析；
+    急诊类型一旦确定，仅在接收阶段解析一次并透传，下游不再重新推断。
     """
     if scene_tag == "生命急救":
         return "medical"
+    if _EMERGENCY_MEDICAL_RE.search(description):
+        return "medical"
+    if _EMERGENCY_POLICE_RE.search(description):
+        return "police"
+    if _EMERGENCY_FIRE_RE.search(description):
+        return "fire"
     if scene_tag == "紧急救援":
-        # fire 关键词：与 dispatch_agent 的推断规则保持一致
-        if _FUZZY_FIRE_RE.search(description) or re.search(
-            r"煤气味|燃气味|煤气|燃气", description, re.IGNORECASE
-        ):
-            return "fire"
-        if _FUZZY_POLICE_RE.search(description):
-            return "police"
-        # 兜底：按描述中更完整的救援类型关键词区分
-        if re.search(
-            r"火灾|起火|着火|燃气泄漏|煤气泄漏|爆炸|坍塌|电梯困人|高空坠物",
-            description,
-            re.IGNORECASE,
-        ):
-            return "fire"
+        # 无法明确分类的紧急救援：按公安（110）兜底，避免误派人工部
         return "police"
     return ""
 
@@ -689,8 +698,8 @@ def receive_node(state: ReceiveState) -> ReceiveState:
             hard_result["confirmation_required"] = True
             # emergency_type 已由 _check_hard_rules_first 设置
         else:
+            # confirmed=true：保留硬规则解析出的 emergency_type，透传给派发模块，不清空
             hard_result["confirmation_required"] = False
-            hard_result["emergency_type"] = ""
         return hard_result
 
     # ------------------------------------------------------------------
@@ -887,12 +896,17 @@ def receive_node(state: ReceiveState) -> ReceiveState:
     if scene_tag not in ("生命急救", "紧急救援", "常规"):
         scene_tag = "常规"
 
-    # 修正：财产丢失/遗失类描述不应触发外部急救资源
-    # 根因：LLM 将"丢失/不见"泛化为 Prompt 中的"盗窃"举例，误判为紧急救援
+    # 硬规则误判后的修正：财产丢失/遗失类描述不应触发外部急救资源
+    # （LLM 可能将"丢失/不见"泛化为 Prompt 中的"盗窃"举例，误判为紧急救援）
     if scene_tag in ("生命急救", "紧急救援") and _PROPERTY_LOSS_RE.search(description):
         scene_tag = "常规"
         if urgency == "高":
             urgency = "中"
+
+    # 安全兜底：含"溺水"的描述若被 LLM 误判为常规，强制升为紧急救援（110/公安）
+    if re.search(r"溺水", description, re.IGNORECASE) and scene_tag == "常规":
+        scene_tag = "紧急救援"
+        urgency = "高"
 
     # ------------------------------------------------------------------
     # 步骤4：address 基本校验 + 缺失拦截

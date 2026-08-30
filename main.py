@@ -782,6 +782,8 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
                 "status": task["status"],
                 "created_at": task["created_at"],
                 "reply": task.get("reply", ""),
+                "error": task.get("error", ""),
+                "confidence": task.get("confidence", ""),
                 "replies": replies,
                 "has_new_reply": has_new_reply,
                 "rejected_reason": task.get("rejected_reason", ""),
@@ -1177,7 +1179,7 @@ async def create_event(
             # 优先使用接收模块已推断的 emergency_type，避免二次推断与语义判断不一致
             inferred = semantic_result.get("emergency_type")
             if not inferred:
-                inferred = dispatch_agent._infer_emergency_type(body.description)
+                inferred = receive_agent._resolve_emergency_type(body.description, scene_tag)
             if not inferred:
                 if scene_tag == "生命急救":
                     inferred = "medical"

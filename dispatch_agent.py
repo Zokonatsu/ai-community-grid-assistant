@@ -65,41 +65,14 @@ EVENT_TYPE_TO_HANDLER: dict[str, str] = {
     "邻里纠纷": "调解员",
     "公共设施": "工程部",
     "其他": "综合部",
+    "医疗急救": "120医疗急救中心（外部资源）",
 }
 
 
 # ------------------------------------------------------------------
-# 模糊急救关键词推断（兜底：二次提交时 emergency_type 被清空后的恢复）
+# 紧急资源类型（medical/police/fire）统一由 receive_agent._resolve_emergency_type
+# 在接收阶段解析并透传，dispatch_node 不再二次推断。
 # ------------------------------------------------------------------
-_FUZZY_MEDICAL_RE = re.compile(
-    r"吐血|上吊|晕倒|猝死|窒息|中毒|心脏病发作|心脏骤停|心梗|胸痛|呼吸困难",
-    re.IGNORECASE,
-)
-_FUZZY_POLICE_RE = re.compile(
-    r"绑架|抢劫|杀人|持刀|行凶|强奸|强盗|性侵|猥亵|骚扰|盗窃|偷窃|偷东西|打架|斗殴|暴力|威胁|恐吓|暴恐|寻仇|吸毒",
-    re.IGNORECASE,
-)
-_FUZZY_FIRE_RE = re.compile(
-    r"着火|火灾|燃气泄漏|煤气泄漏|煤气味|燃气味|煤气|燃气|被困|爆炸|起火",
-    re.IGNORECASE,
-)
-
-
-def _infer_emergency_type(description: str) -> str | None:
-    """
-    根据居民描述中的关键词推断模糊急救类型。
-
-    当前端二次提交（confirmed=true）时，receive_node 会清空 emergency_type，
-    导致 dispatch_node 无法根据该字段匹配 110/119/120。本函数作为兜底，
-    通过原始描述中的关键词重新推断类型，确保 police/fire/medical 都能正确派单。
-    """
-    if _FUZZY_MEDICAL_RE.search(description):
-        return "medical"
-    if _FUZZY_POLICE_RE.search(description):
-        return "police"
-    if _FUZZY_FIRE_RE.search(description):
-        return "fire"
-    return None
 
 
 # ------------------------------------------------------------------
@@ -130,14 +103,10 @@ def dispatch_node(state: DispatchState) -> DispatchState:
     scene_tag = state.get("scene_tag", "常规")
     emergency_type = state.get("emergency_type")
 
-    # 兜底：若 receive_node 将 emergency_type 清空为空字符串，根据 description 重新推断
-    if not emergency_type:
-        emergency_type = _infer_emergency_type(state.get("description", ""))
-
     # 人工部兜底：待审核事件或明确标记为人工部的事件
     if emergency_type == "人工部" or event_type == "待审核":
         handler = "人工部"
-    # 若有 emergency_type（来自模糊急救确认），直接按类型分配外部资源处理方
+    # 紧急资源类型（接收阶段已解析并透传），直接按类型分配外部资源处理方
     elif emergency_type == "medical":
         handler = "120医疗急救中心（外部资源）"
     elif emergency_type == "police":
@@ -149,24 +118,8 @@ def dispatch_node(state: DispatchState) -> DispatchState:
         # 生命急救语义核心始终是医疗急救，固定 fallback 为 medical，不允许推断为 fire
         handler = "120医疗急救中心（外部资源）"
     elif scene_tag == "紧急救援":
-        inferred = _infer_emergency_type(state.get("description", ""))
-        if not inferred:
-            # 无法通过关键词直接推断时，根据描述进一步区分
-            desc = state.get("description", "")
-            if re.search(r"火灾|起火|着火|燃气泄漏|煤气泄漏|煤气味|燃气味|煤气|燃气|爆炸|坍塌|电梯困人|高空坠物", desc):
-                inferred = "fire"
-            else:
-                # 无法明确推断的紧急救援，不再硬编码默认消防（119），
-                # 降级为待审核走人工紧急审核流程
-                inferred = None
-        if inferred is None:
-            handler = "人工部"
-        else:
-            handler = (
-                "119消防急救中心（外部资源）" if inferred == "fire"
-                else "110公安急救中心（外部资源）" if inferred == "police"
-                else "120医疗急救中心（外部资源）"
-            )
+        # 接收阶段若未解析出明确类型，按公安（110）兜底，避免误派人工部延误
+        handler = "110公安急救中心（外部资源）"
     else:
         # 常规场景：根据事件类型匹配处理部门，未命中时回退到"综合部"
         handler = EVENT_TYPE_TO_HANDLER.get(event_type, "综合部")

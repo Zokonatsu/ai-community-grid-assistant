@@ -608,10 +608,10 @@
                     // 调试输出：便于排查 status 字段实际值
                     console.log(`[轮询 ${pollCount}] event_id=${eventId}, status="${d.status}"`);
 
-                    if (d.status === '已完成' || d.status === '已派单') {
+                    if (d.status === '已完成' || d.status === '已派单' || d.status === '待审核' || d.status === '已拒绝') {
                         clearInterval(pollTimer);
                         pollTimer = null;
-                        // 隐藏轮询提示，展示结果
+                        // 隐藏轮询提示，展示结果（与同步提交路径一致，含"已拒绝"）
                         document.getElementById('polling').classList.add('hidden');
                         document.getElementById('r-event_type').textContent = d.event_type || '-';
                         document.getElementById('r-urgency').textContent = d.urgency || '-';
@@ -622,27 +622,11 @@
                         document.getElementById('r-address').textContent = d.address || '-';
                         document.getElementById('result').classList.remove('hidden');
                         loadList();
-                    } else if (d.status === '待审核') {
+                    } else if (d.status === '处理超时' || d.status === '处理失败') {
                         clearInterval(pollTimer);
                         pollTimer = null;
                         document.getElementById('polling').classList.add('hidden');
-                        document.getElementById('r-event_type').textContent = d.event_type || '-';
-                        document.getElementById('r-urgency').textContent = d.urgency || '-';
-                        document.getElementById('r-handler').textContent = d.handler || '-';
-                        document.getElementById('r-status').textContent = d.status || '-';
-                        document.getElementById('r-scene_tag').textContent = d.scene_tag || '-';
-                        document.getElementById('r-created_at').textContent = d.created_at || '-';
-                        document.getElementById('r-address').textContent = d.address || '-';
-                        document.getElementById('result').classList.remove('hidden');
-                        loadList();
-                    } else if (d.status === '处理超时' || d.status === '处理失败' || d.status === '已拒绝') {
-                        clearInterval(pollTimer);
-                        pollTimer = null;
-                        document.getElementById('polling').classList.add('hidden');
-                        let errMsg = d.error || '处理超时，请稍后刷新或重新提交';
-                        if (d.status === '已拒绝') {
-                            errMsg = d.rejected_reason ? `事件已被拒绝：${d.rejected_reason}` : '事件已被拒绝';
-                        }
+                        const errMsg = d.error || '处理超时，请稍后刷新或重新提交';
                         document.getElementById('error').textContent = errMsg;
                         loadList();
                     } else if (pollCount >= maxPolls) {
@@ -778,8 +762,11 @@
                 };
                 const rows = events.map(e => `
                     <tr data-event-id="${e.event_id}">
+                        <td data-label="事件编号">${escapeHtml((e.event_id || '').slice(0, 8))}</td>
                         <td data-label="创建时间">${escapeHtml(e.created_at || '-')}</td>
                         <td data-label="描述">${escapeHtml(e.description || '-')}</td>
+                        <td data-label="地址">${escapeHtml(e.address || '-')}</td>
+                        <td data-label="提交方式">${e.beneficiary_type === 'proxy' ? ('代人办：' + escapeHtml(e.beneficiary_name || '') + '·' + escapeHtml(e.beneficiary_phone || '')) : '本人'}</td>
                         <td data-label="类型">${escapeHtml(e.event_type || '-')}</td>
                         <td data-label="紧急程度"><span class="tag ${urgencyClass(e.urgency)}">${escapeHtml(e.urgency || '-')}</span></td>
                         <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${escapeHtml(e.scene_tag || '-')}</span></td>
@@ -792,8 +779,11 @@
                     <table>
                         <thead>
                             <tr>
+                                <th>事件编号</th>
                                 <th>创建时间</th>
                                 <th>描述</th>
+                                <th>地址</th>
+                                <th>提交方式</th>
                                 <th>类型</th>
                                 <th>紧急程度</th>
                                 <th>场景标签</th>
