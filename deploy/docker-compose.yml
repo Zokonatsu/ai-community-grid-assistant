@@ -4,6 +4,8 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     container_name: ai-grid-assistant
+    environment:
+      - TZ=Asia/Shanghai
     ports:
       - "8080:8000"
     env_file:
