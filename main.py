@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from prometheus_fastapi_instrumentator import Instrumentator, metrics
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -43,6 +43,19 @@ import community_store
 from secure_store import encrypt_field, decrypt_field
 
 logger = logging.getLogger("main")
+def _compute_handler(event_type: str, urgency: str, scene_tag: str, emergency_type: str = "") -> str:
+    """同步计算处理部门（与后台 dispatch_node 保持一致），避免提交响应与实际派单结果不一致。"""
+    return dispatch_agent.dispatch_node({
+        "description": "",
+        "address": "",
+        "event_type": event_type or "",
+        "urgency": urgency or "",
+        "scene_tag": scene_tag or "",
+        "handler": "",
+        "emergency_type": emergency_type or "",
+    }).get("handler", "")
+
+
 
 # 确保静态文件目录存在
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -478,6 +491,17 @@ class EventResponseData(BaseModel):
     created_at: str
     confirmation_required: bool | None = Field(default=None, description="是否需要前端二次确认（模糊急救短词触发）")
     emergency_type: str | None = Field(default=None, description="模糊急救类型：medical/police/fire")
+    @model_validator(mode="after")
+    def _auto_fill_handler(self) -> "EventResponseData":
+        # 提交响应与后台派单保持一致：handler 为空时按 event_type/urgency/scene_tag/emergency_type 同步计算
+        if not self.handler:
+            self.handler = _compute_handler(
+                self.event_type or "",
+                self.urgency or "",
+                self.scene_tag or "",
+                self.emergency_type or "",
+            )
+        return self
 
 
 class EventResponse(BaseModel):
