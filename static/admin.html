@@ -836,7 +836,7 @@
                             </div>
                             <div class="review-desc">${escapeHtml(first.description || '-')}</div>
                             ${beneficiaryLine(first)}
-                            <div class="reply-box" id="reply-box-${first.created_at}">
+                            <div class="reply-box visible" id="reply-box-${first.created_at}">
                                 <textarea id="reply-text-${first.created_at}" placeholder="请输入回复内容（受理可空 / 拒绝必填）"></textarea>
                             </div>
                             <div class="review-actions">
@@ -862,7 +862,7 @@
                                     </div>
                                     <div class="review-desc">${escapeHtml(e.description || '-')}</div>
                                     ${beneficiaryLine(e)}
-                                    <div class="reply-box" id="reply-box-${e.created_at}">
+                                    <div class="reply-box visible" id="reply-box-${e.created_at}">
                                         <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容（受理可空 / 拒绝必填）"></textarea>
                                     </div>
                                     <div class="review-actions">
