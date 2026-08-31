@@ -493,7 +493,7 @@ Few-shot 示例：
 字段要求：
 1. is_valid（布尔值）：描述是否为有效的社区事务
 2. reject_reason（字符串）：当 is_valid 为 false 时，说明拒绝原因；为 true 时返回空字符串 ""
-3. address（字符串）：描述中涉及的具体地址或位置信息。如果描述中没有提到具体地址，返回空字符串""
+3. address（字符串）：恒为空字符串""，无需从描述中提取地址。
 4. event_type（字符串）：事件类型，只能从以下类别中选择一项。选择时必须结合各部门职责范围进行判断：
    【决策优先级】
    第一：涉及人员伤病、中毒、昏迷、突发疾病，或居民明确要求叫救护车 → 医疗急救
@@ -888,7 +888,7 @@ def receive_node(state: ReceiveState) -> ReceiveState:
         }
 
     # 提取字段，若缺失则使用安全默认值
-    address = merged.get("address", "")
+    address = ""  # 不再由大模型判定地址
     event_type = merged.get("event_type", "其他")
     urgency = merged.get("urgency", "中")
     scene_tag = merged.get("scene_tag", "常规")
@@ -911,19 +911,6 @@ def receive_node(state: ReceiveState) -> ReceiveState:
     # ------------------------------------------------------------------
     # 步骤4：address 基本校验 + 缺失拦截
     # ------------------------------------------------------------------
-    _validate_address(address, description)
-
-    if not address and merged.get("event_type") != "待审核":
-        scene_tag = merged.get("scene_tag", "")
-        if scene_tag in ("生命急救", "紧急救援"):
-            merged["address_missing"] = True
-            logger.warning("紧急场景地址为空，保留原分类并标记地址缺失。description='%s'", description)
-        else:
-            merged["event_type"] = "待审核"
-            merged["urgency"] = "中" if merged.get("urgency") != "高" else "高"
-            merged["confidence"] = "low"
-            logger.warning("地址为空，标记为待审核。description='%s'", description)
-
     # 置信度低 -> 进入待审核状态，不直接派单
     if confidence != "high":
         logger.warning(

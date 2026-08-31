@@ -103,8 +103,6 @@
                         <div class="value" id="r-created_at"></div>
                     </div>
                     <div class="result-item">
-                        <div class="label">地址</div>
-                        <div class="value" id="r-address"></div>
                     </div>
                 </div>
             </div>
@@ -481,7 +479,7 @@
                     document.getElementById('r-status').textContent = d.status || '-';
                     document.getElementById('r-scene_tag').textContent = d.scene_tag || '-';
                     document.getElementById('r-created_at').textContent = d.created_at || '-';
-                    document.getElementById('r-address').textContent = d.address || '-';
+                    
                     document.getElementById('result').classList.remove('hidden');
                     document.getElementById('description').value = '';
                     clearBeneficiary();
@@ -626,7 +624,7 @@
                         document.getElementById('r-status').textContent = d.status || '-';
                         document.getElementById('r-scene_tag').textContent = d.scene_tag || '-';
                         document.getElementById('r-created_at').textContent = d.created_at || '-';
-                        document.getElementById('r-address').textContent = d.address || '-';
+                        
                         document.getElementById('result').classList.remove('hidden');
                         loadList();
                     } else if (d.status === '处理超时' || d.status === '处理失败') {
@@ -786,8 +784,7 @@
                         <td data-label="事件编号">${escapeHtml((e.event_id || '').slice(0, 8))}</td>
                         <td data-label="创建时间">${escapeHtml(e.created_at || '-')}</td>
                         <td data-label="描述">${escapeHtml(e.description || '-')}</td>
-                        <td data-label="地址">${escapeHtml(e.address || '-')}</td>
-                        <td data-label="提交方式">${e.beneficiary_type === 'proxy' ? ('代人办：' + escapeHtml(e.beneficiary_name || '') + '·' + escapeHtml(e.beneficiary_phone || '')) : '本人'}</td>
+                                                <td data-label="提交方式">${e.beneficiary_type === 'proxy' ? ('代人办：' + escapeHtml(e.beneficiary_name || '') + '·' + escapeHtml(e.beneficiary_phone || '')) : '本人'}</td>
                         <td data-label="类型">${escapeHtml(e.event_type || '-')}</td>
                         <td data-label="紧急程度"><span class="tag ${urgencyClass(e.urgency)}">${escapeHtml(e.urgency || '-')}</span></td>
                         <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${escapeHtml(e.scene_tag || '-')}</span></td>
@@ -804,8 +801,7 @@
                                 <th>事件编号</th>
                                 <th>创建时间</th>
                                 <th>描述</th>
-                                <th>地址</th>
-                                <th>提交方式</th>
+                                                                <th>提交方式</th>
                                 <th>类型</th>
                                 <th>紧急程度</th>
                                 <th>场景标签</th>
