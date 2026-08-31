@@ -1162,6 +1162,12 @@
                 alert('网络请求失败');
             }
         }
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text == null ? '' : String(text);
+            return div.innerHTML;
+        }
+
         async function submitReply(createdAt) {
             const event = allEvents.find(e => e.created_at === createdAt);
             if (!event || !event.event_id) {
