@@ -48,3 +48,6 @@ scripts/
 
 # Claude 项目配置（构建无关）
 .claude/
+
+# mypy 缓存（体积大，构建无关）
+.mypy_cache/
