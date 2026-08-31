@@ -758,14 +758,28 @@
                     return '';
                 };
                 const statusCell = e => {
-                if (e.status === '已拒绝' && e.rejected_reason) {
-                    return `<span class="tag ${statusClass(e.status)}" title="拒绝理由：${escapeHtml(e.rejected_reason)}">${escapeHtml(e.status || '-')}</span>`;
+                if (e.status === '已拒绝') {
+                    const tip = e.rejected_reason ? `title="拒绝理由：${escapeHtml(e.rejected_reason)}"` : '';
+                    return `<span class="tag ${statusClass(e.status)}" ${tip}>拒绝</span>`;
                 }
                     if (e.status === '已完成' && (e.reply || (e.replies && e.replies.length > 0))) {
                         const unreadBadge = e.has_new_reply ? '<span class="unread-badge">●</span>' : '';
                         return `<span class="reply-link" onclick="handleReplyClick('${e.event_id}')">请点击查看人工的回复${unreadBadge}</span>`;
                     }
                     return `<span class="tag ${statusClass(e.status)}">${escapeHtml(e.status || '-')}</span>`;
+                };
+                const replyCell = e => {
+                    let txt = '';
+                    if (e.status === '已拒绝' && e.rejected_reason) {
+                        txt = e.rejected_reason;
+                    } else if (e.reply) {
+                        txt = e.reply;
+                    } else if (e.replies && e.replies.length) {
+                        txt = (e.replies[e.replies.length - 1].content || '');
+                    }
+                    if (!txt) return '<span class="muted">-</span>';
+                    const short = txt.length > 30 ? txt.slice(0, 30) + '…' : txt;
+                    return `<span class="reply-cell" title="${escapeHtml(txt)}">${escapeHtml(short)}</span>`;
                 };
                 const rows = events.map(e => `
                     <tr data-event-id="${e.event_id}">
@@ -779,6 +793,7 @@
                         <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${escapeHtml(e.scene_tag || '-')}</span></td>
                         <td data-label="处理部门">${escapeHtml(e.handler || '-')}</td>
                         <td data-label="状态">${statusCell(e)}</td>
+                        <td data-label="回复">${replyCell(e)}</td>
                         <td data-label="操作">${renderActionCell(e)}</td>
                     </tr>
                 `).join('');
@@ -796,6 +811,7 @@
                                 <th>场景标签</th>
                                 <th>处理部门</th>
                                 <th>状态</th>
+                                <th>回复</th>
                                 <th>操作</th>
                             </tr>
                         </thead>

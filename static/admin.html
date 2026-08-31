@@ -523,7 +523,7 @@
                     <option value="已派单">已派单</option>
                     <option value="处理超时">处理超时</option>
                     <option value="处理失败">处理失败</option>
-                    <option value="已拒绝">已拒绝</option>
+                    <option value="已拒绝">拒绝</option>
                 </select>
                 <label>类型：</label>
                 <select id="filterType">
@@ -1186,6 +1186,20 @@
             }
         }
 
+        function renderReplyCell(e) {
+            let txt = '';
+            if (e.status === '已拒绝' && e.rejected_reason) {
+                txt = e.rejected_reason;
+            } else if (e.reply) {
+                txt = e.reply;
+            } else if (e.replies && e.replies.length) {
+                txt = (e.replies[e.replies.length - 1].content || '');
+            }
+            if (!txt) return '<span class="muted">-</span>';
+            const short = txt.length > 30 ? txt.slice(0, 30) + '…' : txt;
+            return `<span class="reply-cell" title="${escapeHtml(txt)}">${escapeHtml(short)}</span>`;
+        }
+
         // 渲染表格
         function renderTable(events) {
             const container = document.getElementById('tableContainer');
@@ -1213,11 +1227,12 @@
                     <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${escapeHtml(e.scene_tag || '-')}</span></td>
                     <td data-label="处理部门">${escapeHtml(e.handler || '-')}</td>
                     <td data-label="位置">${locationCell(e)}</td>
+        <td data-label="回复">${renderReplyCell(e)}</td>
         <td data-label="status">${
           e.status === '已撤销'
-            ? `<span class="tag ${statusClass('已撤销')}" title="撤回时间：${escapeHtml(e.withdrawn_at || '-')}">用户已撤回</span>`
+            ? `<span class="tag ${statusClass('已撤销')}" title="撤回时间：${escapeHtml(e.withdrawn_at || '-')}">已撤销</span>`
             : e.status === '已拒绝'
-            ? `<span class="tag ${statusClass('已拒绝')}" title="拒绝理由：${escapeHtml(e.rejected_reason || '-')}">${escapeHtml(e.status)}</span>`
+            ? `<span class="tag ${statusClass('已拒绝')}" title="拒绝理由：${escapeHtml(e.rejected_reason || '-')}">拒绝</span>`
             : `<span class="tag ${statusClass(e.status)}">${escapeHtml(e.status || '-')}</span>`
         }</td>
                 </tr>
@@ -1235,6 +1250,7 @@
                             <th onclick="sortBy('handler')">处理部门<span class="sort-indicator">${sortIndicator('handler')}</span></th>
                             <th>位置</th>
                             <th onclick="sortBy('status')">状态<span class="sort-indicator">${sortIndicator('status')}</span></th>
+                            <th>回复</th>
                         </tr>
                     </thead>
                     <tbody>${rows}</tbody>
