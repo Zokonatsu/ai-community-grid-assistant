@@ -460,15 +460,6 @@
             </div>
         </div>
 
-        <!-- 住户列表专区 -->
-        <div class="card review-section">
-            <h2>住户列表</h2>
-            <p class="section-desc">本小区已注册住户（注册即生效，无需审核）。</p>
-            <div id="userReviewContainer">
-                <div class="empty">加载中…</div>
-            </div>
-        </div>
-
         <!-- 社区设置专区 -->
         <div class="card review-section">
             <h2>社区设置</h2>
@@ -943,62 +934,6 @@
         }
 
         // ------------------------------------------------------------------
-        // 住户列表专区（只读）
-        // ------------------------------------------------------------------
-        async function loadUsers() {
-            const container = document.getElementById('userReviewContainer');
-            try {
-                const res = await fetch(`${API_BASE}/api/admin/users`, {
-                    headers: getAuthHeaders(false)
-                });
-                if (checkUnauthorized(res)) return;
-                if (!res.ok) {
-                    container.innerHTML = '<div class="empty">加载失败</div>';
-                    return;
-                }
-                const users = await res.json();
-                renderUserCards(users);
-            } catch (e) {
-                container.innerHTML = '<div class="empty">加载失败</div>';
-            }
-        }
-
-        function renderUserCards(users) {
-            const container = document.getElementById('userReviewContainer');
-            if (!users || users.length === 0) {
-                container.innerHTML = '<div class="empty">暂无住户</div>';
-                return;
-            }
-            container.innerHTML = users.map(u => {
-                const locBadge = u.location_status === 'verified'
-                    ? '<span class="loc-badge loc-ok">定位已验证</span>'
-                    : '<span class="loc-badge loc-warn">定位未验证</span>';
-                let locInfo = '未定位';
-                if (u.register_lat != null && u.register_lng != null) {
-                    const dist = u.register_distance_m != null ? `（距中心 ${Math.round(u.register_distance_m)} 米）` : '';
-                    const url = `https://uri.amap.com/marker?position=${u.register_lng},${u.register_lat}&name=${encodeURIComponent(u.real_name || u.username)}&src=community-grid`;
-                    locInfo = `${u.register_lat.toFixed(5)}, ${u.register_lng.toFixed(5)}${dist} <a class="loc-link" href="${url}" target="_blank" rel="noopener">查看地图</a>`;
-                }
-                return `
-                    <div class="review-card">
-                        <div class="review-header">
-                            <div class="review-user">
-                                <strong>${escapeHtml(u.real_name || u.username)}</strong>
-                                <span class="user-meta">@${escapeHtml(u.username)}</span>
-                                <span class="user-meta">${ICON.phone}${escapeHtml(u.phone || '-')}</span>
-                                <span class="user-meta">${ICON.idcard}${escapeHtml(u.id_card || '-')}</span>
-                            </div>
-                            <div><span class="role-tag resident">居民</span></div>
-                        </div>
-                        <div class="review-desc">楼栋：${escapeHtml(u.building)} · 单元：${escapeHtml(u.unit)} · 房间：${escapeHtml(u.room)}</div>
-                        <div class="review-desc">定位：${locBadge} ${locInfo}</div>
-                        <div class="review-desc">注册时间：${u.register_time || u.created_at || '-'}</div>
-                    </div>
-                `;
-            }).join('');
-        }
-
-        // ------------------------------------------------------------------
         // 社区设置专区：一键定位 + 内嵌可拖动地图
         // ------------------------------------------------------------------
         let commMap = null;
@@ -1422,7 +1357,6 @@
                 updateTypeFilterOptions(allEvents);
                 applyFilters();
                 renderReviewLists();
-                loadUsers();
             } catch (e) {
                 document.getElementById('typeChart').innerHTML = '<div class="empty">数据加载失败</div>';
                 document.getElementById('urgencyChart').innerHTML = '<div class="empty">数据加载失败</div>';
