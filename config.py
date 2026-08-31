@@ -56,6 +56,14 @@ if not DATA_ENCRYPTION_KEY or len(DATA_ENCRYPTION_KEY.strip()) != 64:
 # true/1/yes/on  -> 注册必须带浏览器定位且定位在小区范围内（原产品规则，需 HTTPS/localhost）
 # false/0/no/off -> 关闭定位校验，允许无定位注册（暂无 HTTPS 环境临时开放注册用，配置 HTTPS 后建议恢复）
 COMMUNITY_REQUIRE_LOCATION: bool = os.getenv("COMMUNITY_REQUIRE_LOCATION", "true").strip().lower() in ("1", "true", "yes", "on")
+# ------------------------------------------------------------------
+# 自动受理：待审核事件超过 AUTO_ACCEPT_HOURS 小时未受理，自动转为已受理
+# ------------------------------------------------------------------
+# 0 / 空 -> 关闭自动受理；正数 -> 自动受理的小时数（0.5 = 30 分钟）
+AUTO_ACCEPT_HOURS: float = float(os.getenv("AUTO_ACCEPT_HOURS", "0.5") or 0)
+AUTO_ACCEPT_ENABLED: bool = AUTO_ACCEPT_HOURS > 0
+AUTO_ACCEPT_CHECK_SECONDS: int = int(os.getenv("AUTO_ACCEPT_CHECK_SECONDS", "60"))
+
 
 # ------------------------------------------------------------------
 # 账号存储后端（本地加密文件 / 腾讯云 COS 云存储）

@@ -17,7 +17,7 @@ import logging
 import os
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
@@ -302,6 +302,47 @@ async def _process_event(
         logger.error("事件处理失败，event_id=%s，异常=%s", event_id, exc)
 
 
+# ------------------------------------------------------------------
+# 自动受理：待审核事件超过 AUTO_ACCEPT_HOURS 小时未受理自动转为已受理
+# ------------------------------------------------------------------
+async def _auto_accept_stale_pending() -> int:
+    """将超过 AUTO_ACCEPT_HOURS 小时仍未受理的待审核事件自动转为已受理。"""
+    if not config.AUTO_ACCEPT_ENABLED:
+        return 0
+    now = datetime.now()
+    cutoff = (now - timedelta(hours=config.AUTO_ACCEPT_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
+    changed = 0
+    async with _task_lock:
+        _refresh_tasks()
+        for task in _tasks.values():
+            if task.get("status") != "待审核":
+                continue
+            created = task.get("created_at", "")
+            if not created or created > cutoff:
+                continue
+            task["status"] = "已受理"
+            task["auto_accepted_at"] = now.strftime("%Y-%m-%d %H:%M:%S")
+            task["auto_accepted"] = True
+            changed += 1
+        if changed:
+            _save_tasks(_tasks)
+    if changed:
+        logger.info("自动受理 %d 条超时未处理的待审核事件", changed)
+    return changed
+
+
+async def _auto_accept_loop() -> None:
+    """后台定时扫描并自动受理超时未处理的待审核事件。"""
+    while True:
+        try:
+            await _auto_accept_stale_pending()
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("自动受理扫描异常：%s", exc)
+        await asyncio.sleep(config.AUTO_ACCEPT_CHECK_SECONDS)
+
+
 def _build_task(
     *,
     event_id: str,
@@ -393,6 +434,13 @@ app = FastAPI(
     description="接收居民事件描述，自动完成信息提取、派单分配和持久化记录（支持异步处理）",
     version="1.1.0",
 )
+
+
+@app.on_event("startup")
+async def _auto_accept_startup() -> None:
+    """启动后后台循环扫描并自动受理超时未处理的待审核事件。"""
+    asyncio.create_task(_auto_accept_loop())
+
 
 # 注册 CORS 中间件，允许前端跨域调用（白名单取自环境变量，默认含本机与生产前端）
 _cors_origins = config.CORS_ALLOW_ORIGINS
