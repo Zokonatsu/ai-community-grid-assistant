@@ -836,12 +836,12 @@
                             </div>
                             <div class="review-desc">${escapeHtml(first.description || '-')}</div>
                             ${beneficiaryLine(first)}
+                            <div class="reply-box" id="reply-box-${first.created_at}">
+                                <textarea id="reply-text-${first.created_at}" placeholder="请输入回复内容（受理可空 / 拒绝必填）"></textarea>
+                            </div>
                             <div class="review-actions">
                                 <button class="btn-sm btn-accept" onclick="acceptEvent('${first.created_at}')">受理</button>
-                            </div>
-                            <div class="reply-box" id="reply-box-${first.created_at}">
-                                <textarea id="reply-text-${first.created_at}" placeholder="请输入回复内容"></textarea>
-                                <button class="btn-sm btn-done" onclick="submitReply('${first.created_at}')">提交回复</button>
+                                <button class="btn-sm btn-reject" onclick="rejectEvent('${first.created_at}')">拒绝</button>
                             </div>
                     `;
                     if (rest.length > 0) {
@@ -862,12 +862,12 @@
                                     </div>
                                     <div class="review-desc">${escapeHtml(e.description || '-')}</div>
                                     ${beneficiaryLine(e)}
+                                    <div class="reply-box" id="reply-box-${e.created_at}">
+                                        <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容（受理可空 / 拒绝必填）"></textarea>
+                                    </div>
                                     <div class="review-actions">
                                         <button class="btn-sm btn-accept" onclick="acceptEvent('${e.created_at}')">受理</button>
-                                    </div>
-                                    <div class="reply-box" id="reply-box-${e.created_at}">
-                                        <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容"></textarea>
-                                        <button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>
+                                        <button class="btn-sm btn-reject" onclick="rejectEvent('${e.created_at}')">拒绝</button>
                                     </div>
                                 </div>
                             `;
@@ -1102,20 +1102,18 @@
         }
 
         async function acceptEvent(createdAt) {
-            const event = allEvents.find(e => e.created_at === createdAt);
-            if (!event) return;
-            // 用 created_at 作为临时标识查找 event_id（实际应该用 event_id）
-            // 注意：当前 API 中没有返回 event_id，需要修改 list_events 返回 event_id
-            // 先找到对应的 task
             const ev = allEvents.find(e => e.created_at === createdAt);
             if (!ev || !ev.event_id) {
                 alert('找不到事件ID，请刷新页面');
                 return;
             }
+            const textEl = document.getElementById(`reply-text-${createdAt}`);
+            const reply = textEl ? textEl.value.trim() : '';
             try {
                 const res = await fetch(`${API_BASE}/api/events/${ev.event_id}/accept`, {
                     method: 'POST',
                     headers: getAuthHeaders(),
+                    body: JSON.stringify({ reply }),
                 });
                 if (checkUnauthorized(res)) return;
                 if (!res.ok) {
@@ -1125,7 +1123,6 @@
                 }
                 const data = await res.json();
                 if (data.success) {
-                    // 成功受理后刷新数据
                     await loadData();
                 }
             } catch (e) {
@@ -1133,25 +1130,38 @@
             }
         }
 
-        function toggleReplyBox(createdAt) {
-            const box = document.getElementById(`reply-box-${createdAt}`);
-            if (box) box.classList.toggle('visible');
+        async function rejectEvent(createdAt) {
+            const ev = allEvents.find(e => e.created_at === createdAt);
+            if (!ev || !ev.event_id) {
+                alert('找不到事件ID，请刷新页面');
+                return;
+            }
+            const textEl = document.getElementById(`reply-text-${createdAt}`);
+            const reply = textEl ? textEl.value.trim() : '';
+            if (!reply) {
+                alert('请先填写回复内容再拒绝');
+                return;
+            }
+            try {
+                const res = await fetch(`${API_BASE}/api/events/${ev.event_id}/reject`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ reason: reply }),
+                });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) {
+                    const err = await res.json();
+                    alert(err.detail || '拒绝失败');
+                    return;
+                }
+                const data = await res.json();
+                if (data.success) {
+                    await loadData();
+                }
+            } catch (e) {
+                alert('网络请求失败');
+            }
         }
-
-        function toggleCollapsed(safeId) {
-            const collapsed = document.getElementById('collapsed-' + safeId);
-            const btn = document.getElementById('expand-btn-' + safeId);
-            if (!collapsed || !btn) return;
-            const isVisible = collapsed.classList.toggle('visible');
-            btn.textContent = isVisible ? '收起' : '展开该用户其余 ' + (collapsed.children.length) + ' 条待审核事件';
-        }
-
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text == null ? '' : String(text);
-            return div.innerHTML;
-        }
-
         async function submitReply(createdAt) {
             const event = allEvents.find(e => e.created_at === createdAt);
             if (!event || !event.event_id) {
@@ -1227,7 +1237,6 @@
                     <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${escapeHtml(e.scene_tag || '-')}</span></td>
                     <td data-label="处理部门">${escapeHtml(e.handler || '-')}</td>
                     <td data-label="位置">${locationCell(e)}</td>
-        <td data-label="回复">${renderReplyCell(e)}</td>
         <td data-label="status">${
           e.status === '已撤销'
             ? `<span class="tag ${statusClass('已撤销')}" title="撤回时间：${escapeHtml(e.withdrawn_at || '-')}">已撤销</span>`
@@ -1235,6 +1244,7 @@
             ? `<span class="tag ${statusClass('已拒绝')}" title="拒绝理由：${escapeHtml(e.rejected_reason || '-')}">拒绝</span>`
             : `<span class="tag ${statusClass(e.status)}">${escapeHtml(e.status || '-')}</span>`
         }</td>
+        <td data-label="回复">${renderReplyCell(e)}</td>
                 </tr>
             `).join('');
 

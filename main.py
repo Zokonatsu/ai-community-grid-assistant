@@ -20,7 +20,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Depends, Header, Request
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, Body
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -582,6 +582,10 @@ class EventStatusResponse(BaseModel):
 
 class RejectRequest(BaseModel):
     reason: str = Field(..., min_length=1, max_length=500, description="拒绝理由")
+class AcceptRequest(BaseModel):
+    reply: str = Field(default="", max_length=5000, description="受理时回复内容（可空）")
+
+
 
 
 class ReplyRequest(BaseModel):
@@ -1588,6 +1592,7 @@ async def cancel_event(
 @app.post("/api/events/{event_id}/accept")
 async def accept_event(
     event_id: str,
+    request: AcceptRequest | None = Body(default=None),
     current_user: dict[str, Any] = Depends(get_admin_dependency),
 ) -> dict[str, Any]:
     """
@@ -1602,6 +1607,8 @@ async def accept_event(
             raise HTTPException(status_code=400, detail="仅待审核事件可受理")
         task["status"] = "已受理"
         task["reviewer_id"] = current_user.get("id", "")
+        if request and request.reply:
+            task["reply"] = request.reply
         _save_tasks(_tasks)
 
     # 追加记录到 events.jsonl
@@ -1653,6 +1660,7 @@ async def reject_event(
             raise HTTPException(status_code=400, detail="仅待审核事件可拒绝")
         task["status"] = "已拒绝"
         task["rejected_reason"] = request.reason
+        task["reply"] = request.reason
         task["rejected_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         task["rejected_by"] = current_user.get("id", "")
         _save_tasks(_tasks)
