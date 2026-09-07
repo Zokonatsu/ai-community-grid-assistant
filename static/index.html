@@ -503,7 +503,7 @@
                     return;
                 }
                 // 终态判断：若后端已直接返回最终结果，立即展示，无需轮询
-                const terminalStatuses = ['已完成', '已派单', '待审核', '处理超时', '处理失败', '已拒绝'];
+                const terminalStatuses = ['已完成', '已派单', '待审核', '待处理', '已受理', '处理中', '处理超时', '处理失败', '已拒绝'];
                 if (terminalStatuses.includes(d.status)) {
                     document.getElementById('r-event_type').textContent = d.event_type || '-';
                     document.getElementById('r-urgency').textContent = d.urgency || '-';
@@ -647,7 +647,7 @@
                     // 调试输出：便于排查 status 字段实际值
                     console.log(`[轮询 ${pollCount}] event_id=${eventId}, status="${d.status}"`);
 
-                    if (d.status === '已完成' || d.status === '已派单' || d.status === '待审核' || d.status === '已拒绝') {
+                    if (['已完成', '已派单', '待审核', '待处理', '已受理', '处理中', '已拒绝'].includes(d.status)) {
                         clearInterval(pollTimer);
                         pollTimer = null;
                         // 隐藏轮询提示，展示结果（与同步提交路径一致，含"已拒绝"）
@@ -673,7 +673,7 @@
                         clearInterval(pollTimer);
                         pollTimer = null;
                         document.getElementById('polling').classList.add('hidden');
-                        document.getElementById('error').textContent = '轮询超时，事件可能已完成，请刷新页面查看最新状态';
+                        document.getElementById('error').textContent = '事件正在处理中，请稍后刷新列表查看最新状态';
                         loadList();
                     } else {
                         // 未知状态（如"处理中"）继续轮询，直到达到最大次数
