@@ -1068,7 +1068,7 @@
                     method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ reply })
                 });
                 if (checkUnauthorized(res)) return;
-                if (!res.ok) { const err = await res.json().catch(() => ({})); alert(err.detail || '受理失败'); return; }
+                if (!res.ok) { const err = await res.json().catch(() => ({})); alert((err.error || err.detail) || '受理失败'); return; }
                 await loadData();
             } catch (e) { alert('网络请求失败'); }
         }
@@ -1082,7 +1082,7 @@
                     method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ reason })
                 });
                 if (checkUnauthorized(res)) return;
-                if (!res.ok) { const err = await res.json().catch(() => ({})); alert(err.detail || '拒绝失败'); return; }
+                if (!res.ok) { const err = await res.json().catch(() => ({})); alert((err.error || err.detail) || '拒绝失败'); return; }
                 await loadData();
             } catch (e) { alert('网络请求失败'); }
         }
@@ -1102,7 +1102,7 @@
                     method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ reply, photos })
                 });
                 if (checkUnauthorized(res)) return;
-                if (!res.ok) { const err = await res.json().catch(() => ({})); alert(err.detail || '回复失败'); return; }
+                if (!res.ok) { const err = await res.json().catch(() => ({})); alert((err.error || err.detail) || '回复失败'); return; }
                 resetCardPhotos(eventId);
                 await loadData();
             } catch (e) { alert('网络请求失败'); }
@@ -1187,7 +1187,7 @@
             try {
                 const res = await fetch(`${API_BASE}/api/events/${eventId}/start`, { method: 'POST', headers: getAuthHeaders(false) });
                 if (checkUnauthorized(res)) return;
-                if (!res.ok) { const err = await res.json().catch(() => ({})); alert(err.detail || '开始处理失败'); return; }
+                if (!res.ok) { const err = await res.json().catch(() => ({})); alert((err.error || err.detail) || '开始处理失败'); return; }
                 await loadData();
             } catch (e) { alert('网络请求失败'); }
         }
@@ -1202,7 +1202,7 @@
                     method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ reply, photos })
                 });
                 if (checkUnauthorized(res)) return;
-                if (!res.ok) { const err = await res.json().catch(() => ({})); alert(err.detail || '完成失败'); return; }
+                if (!res.ok) { const err = await res.json().catch(() => ({})); alert((err.error || err.detail) || '完成失败'); return; }
                 resetCardPhotos(eventId);
                 await loadData();
             } catch (e) { alert('网络请求失败'); }
@@ -1218,7 +1218,7 @@
                     method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ event_type: type, urgency: ev.urgency || '' })
                 });
                 if (checkUnauthorized(res)) return;
-                if (!res.ok) { const err = await res.json().catch(() => ({})); alert(err.detail || '改类型失败'); }
+                if (!res.ok) { const err = await res.json().catch(() => ({})); alert((err.error || err.detail) || '改类型失败'); }
                 await loadData();
             } catch (e) { alert('网络请求失败'); }
         }
@@ -1233,7 +1233,7 @@
                     method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ department: dept })
                 });
                 if (checkUnauthorized(res)) return;
-                if (!res.ok) { const err = await res.json().catch(() => ({})); alert(err.detail || '改派失败'); }
+                if (!res.ok) { const err = await res.json().catch(() => ({})); alert((err.error || err.detail) || '改派失败'); }
                 await loadData();
             } catch (e) { alert('网络请求失败'); }
         }
@@ -1282,7 +1282,7 @@
             if (checkUnauthorized(res)) return;
             const d = await res.json().catch(() => ({}));
             if (res.ok && d.success) { alert('部门账号已创建'); ['du-username','du-password','du-real_name','du-phone'].forEach(id => document.getElementById(id).value = ''); loadDeptUsers(); }
-            else { alert((d && d.detail) || '创建失败'); }
+            else { alert((d && (d.error || d.detail)) || '创建失败'); }
         }
 
         async function deleteDeptUser(userId) {
