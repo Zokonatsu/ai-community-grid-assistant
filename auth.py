@@ -19,6 +19,7 @@ from typing import Any
 import cloud_store
 import config
 import geo
+import dispatch_agent
 from filelock import FileLock
 from secure_store import decrypt, encrypt, load_encrypted, save_encrypted
 
@@ -373,9 +374,14 @@ def _mask_id_card(id_card: str) -> str:
     return id_card[:6] + "********" + id_card[-4:]
 
 
+def _department_name(key: str) -> str:
+    """部门键 -> 中文显示名。"""
+    return dispatch_agent.DEPARTMENTS.get(key or "", "")
+
+
 def _user_status(user: dict[str, Any]) -> str:
-    """住户审核状态：管理员账号恒为 active。"""
-    if user.get("role") == "admin":
+    """住户审核状态：管理员/部门账号恒为 active。"""
+    if user.get("role") in ("admin", "dept"):
         return "active"
     return user.get("status", "active")  # 兼容旧数据（存量住户视为已通过）
 
@@ -389,6 +395,8 @@ def _public_user(user: dict[str, Any]) -> dict[str, Any]:
         "phone": user["phone"],
         "id_card": _mask_id_card(user.get("id_card", "")),
         "role": user["role"],
+        "department": user.get("department", ""),
+        "department_name": _department_name(user.get("department", "")),
         "created_at": user["created_at"],
         "status": _user_status(user),
         "building": user.get("building", ""),
@@ -633,6 +641,8 @@ def get_user_by_id(user_id: str) -> dict[str, Any] | None:
         "phone": user["phone"],
         "id_card": user.get("id_card", ""),
         "role": user["role"],
+        "department": user.get("department", ""),
+        "department_name": _department_name(user.get("department", "")),
         "created_at": user["created_at"],
     }
 
@@ -678,6 +688,122 @@ def list_users() -> list[dict[str, Any]]:
         # 注册时间倒序（新住户在前）
         users.sort(key=lambda x: x.get("register_time") or x.get("created_at") or "", reverse=True)
         return users
+
+
+# ------------------------------------------------------------------
+# 部门账号管理（仅超管调用）
+# ------------------------------------------------------------------
+def _dept_user_public(user: dict[str, Any]) -> dict[str, Any]:
+    """部门账号对外信息（不含身份证等敏感字段）。"""
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "real_name": user["real_name"],
+        "phone": user["phone"],
+        "department": user.get("department", ""),
+        "department_name": _department_name(user.get("department", "")),
+        "status": user.get("status", "active"),
+        "created_at": user["created_at"],
+    }
+
+
+def create_dept_user(username: str, password: str, real_name: str, phone: str, department: str) -> tuple[bool, str, dict[str, Any] | None]:
+    """超管创建部门账号。返回 (success, message, user_dict)。"""
+    username = username.strip()
+    real_name = real_name.strip()
+    phone = phone.strip()
+    if department not in dispatch_agent.DEPARTMENTS:
+        return False, "部门不合法", None
+    if not username or len(username) < 3 or len(username) > 20:
+        return False, "用户名需 3-20 位", None
+    if not re.match(r"^[a-zA-Z0-9_一-龥]+$", username):
+        return False, "用户名含非法字符", None
+    if not password or len(password) < 6:
+        return False, "密码至少 6 位", None
+    if not real_name or len(real_name) > 20:
+        return False, "姓名需 1-20 位", None
+    if not re.match(r"^1[3-9]\d{9}$", phone):
+        return False, "手机号格式不正确", None
+    with _auth_lock:
+        global _users
+        _refresh_users_if_stale()
+        if username in _username_index:
+            return False, "用户名已存在", None
+        if phone in _phone_index:
+            return False, "手机号已存在", None
+        user_id = secrets.token_hex(16)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        user = {
+            "id": user_id,
+            "username": username,
+            "password_hash": _hash_password(password),
+            "real_name": real_name,
+            "phone": phone,
+            "id_card": "",
+            "role": "dept",
+            "department": department,
+            "status": "active",
+            "location_status": "unverified",
+            "building": "",
+            "unit": "",
+            "room": "",
+            "created_at": now,
+        }
+        _users[user_id] = user
+        _username_index[username] = user_id
+        _phone_index[phone] = user_id
+        _save_users(_users)
+        _users_mtime = _update_mtime_after_save(USERS_FILE)
+    return True, "部门账号已创建", _dept_user_public(user)
+
+
+def delete_dept_user(user_id: str) -> tuple[bool, str]:
+    """超管删除部门账号（连同密码一并移除）。返回 (success, message)。"""
+    with _auth_lock:
+        global _users
+        _refresh_users_if_stale()
+        user = _users.get(user_id)
+        if user is None or user.get("role") != "dept":
+            return False, "部门账号不存在"
+        uname = user.get("username", "")
+        phone = user.get("phone", "")
+        _users.pop(user_id, None)
+        _username_index.pop(uname, None)
+        _phone_index.pop(phone, None)
+        _save_users(_users)
+        _users_mtime = _update_mtime_after_save(USERS_FILE)
+    return True, "部门账号已删除"
+
+
+def list_dept_users() -> list[dict[str, Any]]:
+    """返回全部部门账号（仅超管使用，只读）。"""
+    with _auth_lock:
+        global _users
+        _refresh_users_if_stale()
+        return [_dept_user_public(u) for u in _users.values() if u.get("role") == "dept"]
+
+
+def update_dept_user(user_id: str, password: str | None = None, department: str | None = None, status: str | None = None) -> tuple[bool, str, dict[str, Any] | None]:
+    """超管更新部门账号（改密/改部门/启停）。"""
+    with _auth_lock:
+        global _users
+        _refresh_users_if_stale()
+        user = _users.get(user_id)
+        if user is None or user.get("role") != "dept":
+            return False, "部门账号不存在", None
+        if department is not None:
+            if department not in dispatch_agent.DEPARTMENTS:
+                return False, "部门不合法", None
+            user["department"] = department
+        if password:
+            if len(password) < 6:
+                return False, "密码至少 6 位", None
+            user["password_hash"] = _hash_password(password)
+        if status is not None:
+            user["status"] = "active" if status == "active" else "disabled"
+        _save_users(_users)
+        _users_mtime = _update_mtime_after_save(USERS_FILE)
+    return True, "已更新", _dept_user_public(user)
 
 
 # ------------------------------------------------------------------

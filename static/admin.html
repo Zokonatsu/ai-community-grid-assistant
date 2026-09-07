@@ -445,19 +445,32 @@
             </div>
         </div>
 
-        <!-- 人工审核专区 -->
+        <!-- 工单处理专区 -->
         <div class="card review-section">
-            <h2>人工审核</h2>
+            <div class="section-actions">
+                <h2>工单处理</h2>
+                <span class="unread-dot hidden" id="unreadBadge">0</span>
+            </div>
             <div class="review-tabs">
-                <button class="review-tab active" id="tab-pending" onclick="switchReviewTab('pending')">待审核</button>
-                <button class="review-tab" id="tab-accepted" onclick="switchReviewTab('accepted')">已受理</button>
+                <button class="review-tab active" id="tab-todo" onclick="switchReviewTab('todo')">待我处理</button>
+                <button class="review-tab" id="tab-mine" onclick="switchReviewTab('mine')">我处理的</button>
+                <button class="review-tab" id="tab-all" onclick="switchReviewTab('all')">全部</button>
             </div>
-            <div id="reviewPendingContainer">
-                <div class="empty">加载中…</div>
+            <div id="reviewContainer"><div class="empty">加载中…</div></div>
+        </div>
+
+        <!-- 部门账号管理（仅超管） -->
+        <div class="card review-section hidden" id="deptUsersCard">
+            <h2>部门账号管理</h2>
+            <div class="form-row">
+                <div class="form-group"><label>用户名</label><input type="text" id="du-username"></div>
+                <div class="form-group"><label>姓名</label><input type="text" id="du-real_name"></div>
+                <div class="form-group"><label>手机号</label><input type="tel" id="du-phone"></div>
+                <div class="form-group"><label>密码</label><input type="text" id="du-password" placeholder="至少6位"></div>
+                <div class="form-group"><label>部门</label><select id="du-department"></select></div>
             </div>
-            <div id="reviewAcceptedContainer" style="display:none;">
-                <div class="empty">加载中…</div>
-            </div>
+            <button class="btn-sm" onclick="createDeptUser()">新建部门账号</button>
+            <div id="deptUsersList" style="margin-top:10px;"></div>
         </div>
 
         <!-- 社区设置专区 -->
@@ -517,6 +530,7 @@
                 <select id="filterStatus">
                     <option value="">全部</option>
                     <option value="待审核">待审核</option>
+                    <option value="待处理">待处理</option>
                     <option value="已受理">已受理</option>
                     <option value="处理中">处理中</option>
                     <option value="已完成">已完成</option>
@@ -579,6 +593,8 @@
         })();
         let allEvents = [];
         let currentSort = { key: 'created_at', desc: true };
+        window.cardText = {};
+        window.cardPhotos = {};
 
         // 内联极简线性 SVG 图标（stroke 1.5，currentColor）
         const ICON = {
@@ -625,12 +641,24 @@
                     return false;
                 }
                 const user = await res.json();
-                if (user.role !== 'admin') {
-                    alert('权限不足，仅管理员可访问后台管理页面');
+                if (user.role !== 'admin' && user.role !== 'dept') {
+                    alert('权限不足，仅工作人员可访问后台管理页面');
                     window.location.href = '/';
                     return false;
                 }
+                window.currentUser = user;
                 document.getElementById('user-name').textContent = user.real_name || user.username;
+                const roleEl = document.getElementById('user-role');
+                if (user.role === 'dept') {
+                    roleEl.textContent = user.department_name || '部门账号';
+                    roleEl.className = 'role-tag dept';
+                    document.getElementById('tab-all').style.display = 'none';
+                } else {
+                    roleEl.textContent = '超级管理员';
+                    roleEl.className = 'role-tag super';
+                    document.getElementById('tab-all').style.display = '';
+                    document.getElementById('deptUsersCard').classList.remove('hidden');
+                }
                 return true;
             } catch (e) {
                 alert('网络异常，请重新登录');
@@ -682,7 +710,7 @@
             const total = events.length;
             const today = todayStr();
             const todayCount = events.filter(e => (e.created_at || '').startsWith(today)).length;
-            const pending = events.filter(e => e.status === '处理中' || e.status === '待审核' || e.status === '已受理').length;
+            const pending = events.filter(e => e.status === '处理中' || e.status === '待审核' || e.status === '待处理' || e.status === '已受理').length;
             const done = events.filter(e => e.status === '已完成' || e.status === '已派单').length;
 
             document.getElementById('stat-total').textContent = total;
@@ -743,7 +771,7 @@
             if (s === '处理中') return 'tag-processing';
             if (s === '处理超时' || s === '处理失败' || s === '已拒绝') return 'tag-failed';
             if (s === '已完成' || s === '已派单') return 'tag-success';
-            if (s === '待审核') return 'tag-pending';
+            if (s === '待审核' || s === '待处理') return 'tag-pending';
             if (s === '已受理') return 'tag-accepted';
             return '';
         }
@@ -757,180 +785,111 @@
         // ------------------------------------------------------------------
         // 人工审核专区
         // ------------------------------------------------------------------
-        let currentReviewTab = 'pending';
+
+        // ------------------------------------------------------------------
+        // 工单处理专区（部门角色）
+        // ------------------------------------------------------------------
+        let currentReviewTab = 'todo';
+        const EVENT_TYPES = ['物业维修', '环境卫生', '安全隐患', '邻里纠纷', '公共设施', '医疗急救', '其他', '待审核'];
+        const DEPTS = { property: '物业部', sanitation: '环卫部', security: '安保部', engineering: '工程部', general: '综合部', mediator: '调解员' };
 
         function switchReviewTab(tab) {
             currentReviewTab = tab;
-            document.getElementById('tab-pending').classList.toggle('active', tab === 'pending');
-            document.getElementById('tab-accepted').classList.toggle('active', tab === 'accepted');
-            document.getElementById('reviewPendingContainer').style.display = tab === 'pending' ? 'block' : 'none';
-            document.getElementById('reviewAcceptedContainer').style.display = tab === 'accepted' ? 'block' : 'none';
+            document.getElementById('tab-todo').classList.toggle('active', tab === 'todo');
+            document.getElementById('tab-mine').classList.toggle('active', tab === 'mine');
+            document.getElementById('tab-all').classList.toggle('active', tab === 'all');
             renderReviewLists();
         }
 
-        // 被帮助人信息行（本人/代人办）
+        function tabEvents() {
+            const role = (window.currentUser || {}).role;
+            const dept = (window.currentUser || {}).department || '';
+            const me = (window.currentUser || {}).id;
+            if (currentReviewTab === 'todo') {
+                if (role === 'dept') return allEvents.filter(e => e.assigned_dept === dept && ['待处理', '待审核'].includes(e.status));
+                return allEvents.filter(e => e.status === '待审核' || (e.status === '待处理' && !e.assigned_dept));
+            }
+            if (currentReviewTab === 'mine') {
+                if (role === 'dept') return allEvents.filter(e => e.reviewer_dept === dept || e.reviewer_id === me);
+                return allEvents.filter(e => e.reviewer_id === me);
+            }
+            return allEvents;
+        }
+
         function beneficiaryLine(e) {
             if (e.beneficiary_type === 'proxy') {
                 const room = (e.beneficiary_building || '') + (e.beneficiary_unit || '') + (e.beneficiary_room || '');
                 return `<div class="review-beneficiary">代人办：${escapeHtml(e.beneficiary_name || '-')} · ${escapeHtml(e.beneficiary_phone || '-')} · ${escapeHtml(room)}</div>`;
             }
-            return `<div class="review-beneficiary">本人：${escapeHtml(e.user_name || '-')}</div>`;
+            const room = (e.user_building || '') + (e.user_unit || '') + (e.user_room || '');
+            return `<div class="review-beneficiary">本人：${escapeHtml(e.user_name || '-')}${room ? ' · ' + escapeHtml(room) : ''}</div>`;
         }
 
         function renderReviewLists() {
-            const pendingEvents = allEvents.filter(e => e.status === '待审核');
-            const acceptedEvents = allEvents.filter(e => e.status === '已受理' || e.status === '已完成');
-
-            // 保存折叠/展开状态，避免定时刷新时丢失
-            const collapsedState = {};
-            document.querySelectorAll('[id^="collapsed-"]').forEach(el => {
-                collapsedState[el.id] = el.classList.contains('visible');
+            const container = document.getElementById('reviewContainer');
+            container.querySelectorAll('textarea[id^="reply-text-"]').forEach(ta => {
+                window.cardText[ta.id.replace('reply-text-', '')] = ta.value;
             });
-
-            // 保存已受理输入框中用户正在输入的内容，避免定时刷新时丢失
-            const savedReplies = {};
-            const acceptedContainer = document.getElementById('reviewAcceptedContainer');
-            acceptedContainer.querySelectorAll('textarea[id^="reply-text-"]').forEach(textarea => {
-                const key = textarea.id.replace('reply-text-', '');
-                if (textarea.value.trim()) {
-                    savedReplies[key] = textarea.value;
-                }
+            const events = tabEvents();
+            if (!events.length) { container.innerHTML = '<div class="empty">暂无相关工单</div>'; return; }
+            container.innerHTML = events.map(renderCard).join('');
+            events.forEach(e => {
+                if ((window.cardPhotos[e.event_id] || []).length) renderCardPhotos(e.event_id);
             });
+        }
 
-            // 保存当前焦点位置和光标，避免重建DOM后光标消失
-            let focusId = null;
-            let selStart = 0;
-            let selEnd = 0;
-            const activeEl = document.activeElement;
-            if (activeEl && acceptedContainer.contains(activeEl) && activeEl.tagName === 'TEXTAREA') {
-                focusId = activeEl.id;
-                selStart = activeEl.selectionStart;
-                selEnd = activeEl.selectionEnd;
+        function renderCard(e) {
+            const role = (window.currentUser || {}).role;
+            const dept = (window.currentUser || {}).department || '';
+            const owned = e.assigned_dept === dept || e.reviewer_dept === dept || role === 'admin';
+            const canAct = role === 'admin' || owned;
+            const canHandle = canAct && ['已受理', '处理中', '已完成'].includes(e.status);
+            const actions = [];
+            if (canAct && e.status === '待处理') {
+                actions.push(`<button class="btn-sm btn-accept" onclick="acceptEvent('${e.event_id}')">受理</button>`);
+                actions.push(`<button class="btn-sm btn-reject" onclick="rejectEvent('${e.event_id}')">拒绝</button>`);
             }
-
-            const pendingContainer = document.getElementById('reviewPendingContainer');
-            if (pendingEvents.length === 0) {
-                pendingContainer.innerHTML = '<div class="empty">暂无待审核事件</div>';
-            } else {
-                // 按身份证号分组，同一用户的多个事件折叠展示
-                const grouped = {};
-                for (const e of pendingEvents) {
-                    const key = e.user_id_card || 'unknown';
-                    if (!grouped[key]) grouped[key] = [];
-                    grouped[key].push(e);
-                }
-                let html = '';
-                for (const [idCard, events] of Object.entries(grouped)) {
-                    const first = events[0];
-                    const rest = events.slice(1);
-                    const safeId = idCard.replace(/[^a-zA-Z0-9]/g, '_');
-                    html += `
-                        <div class="review-card" id="card-${first.created_at}">
-                            <div class="review-header">
-                                <div class="review-user">
-                                    <strong>${escapeHtml(first.user_name || '-')}</strong>
-                                    <span class="user-meta">${ICON.phone}${escapeHtml(first.user_phone || '-')}</span>
-                                    <span class="user-meta">${ICON.idcard}${escapeHtml(first.user_id_card || '-')}</span>
-                                </div>
-                                <div><span class="tag ${statusClass(first.status)}">${escapeHtml(first.status)}</span></div>
-                            </div>
-                            <div class="review-desc">${escapeHtml(first.description || '-')}</div>
-                            ${beneficiaryLine(first)}
-                            <div class="reply-box visible" id="reply-box-${first.created_at}">
-                                <textarea id="reply-text-${first.created_at}" placeholder="请输入回复内容（受理可空 / 拒绝必填）"></textarea>
-                            </div>
-                            <div class="review-actions">
-                                <button class="btn-sm btn-accept" onclick="acceptEvent('${first.created_at}')">受理</button>
-                                <button class="btn-sm btn-reject" onclick="rejectEvent('${first.created_at}')">拒绝</button>
-                            </div>
-                    `;
-                    if (rest.length > 0) {
-                        html += `
-                            <button class="review-expand-btn" id="expand-btn-${safeId}" onclick="toggleCollapsed('${safeId}')">展开该用户其余 ${rest.length} 条待审核事件</button>
-                            <div class="review-collapsed" id="collapsed-${safeId}">
-                        `;
-                        for (const e of rest) {
-                            html += `
-                                <div class="collapsed-card" id="card-${e.created_at}">
-                                    <div class="review-header">
-                                        <div class="review-user">
-                                            <strong>${escapeHtml(e.user_name || '-')}</strong>
-                                            <span class="user-meta">${ICON.phone}${escapeHtml(e.user_phone || '-')}</span>
-                                            <span class="user-meta">${ICON.idcard}${escapeHtml(e.user_id_card || '-')}</span>
-                                        </div>
-                                        <div><span class="tag ${statusClass(e.status)}">${escapeHtml(e.status)}</span></div>
-                                    </div>
-                                    <div class="review-desc">${escapeHtml(e.description || '-')}</div>
-                                    ${beneficiaryLine(e)}
-                                    <div class="reply-box visible" id="reply-box-${e.created_at}">
-                                        <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容（受理可空 / 拒绝必填）"></textarea>
-                                    </div>
-                                    <div class="review-actions">
-                                        <button class="btn-sm btn-accept" onclick="acceptEvent('${e.created_at}')">受理</button>
-                                        <button class="btn-sm btn-reject" onclick="rejectEvent('${e.created_at}')">拒绝</button>
-                                    </div>
-                                </div>
-                            `;
-                        }
-                        html += `</div>`;
-                    }
-                    html += `</div>`;
-                }
-                pendingContainer.innerHTML = html;
+            if (canAct && e.status === '待审核') {
+                actions.push(`<button class="btn-sm btn-reject" onclick="rejectEvent('${e.event_id}')">拒绝</button>`);
             }
-
-            if (acceptedEvents.length === 0) {
-                acceptedContainer.innerHTML = '<div class="empty">暂无已受理事件</div>';
-            } else {
-                acceptedContainer.innerHTML = acceptedEvents.map(e => `
-                    <div class="review-card accepted" id="card-${e.created_at}">
-                        <div class="review-header">
-                            <div class="review-user">
-                                <strong>${escapeHtml(e.user_name || '-')}</strong>
-                                <span class="user-meta">${ICON.phone}${escapeHtml(e.user_phone || '-')}</span>
-                                <span class="user-meta">${ICON.idcard}${escapeHtml(e.user_id_card || '-')}</span>
-                            </div>
-                            <div><span class="tag ${statusClass(e.status)}">${escapeHtml(e.status)}</span></div>
-                        </div>
-                        <div class="review-desc">${escapeHtml(e.description || '-')}</div>
-                        ${beneficiaryLine(e)}
-                        ${(e.replies && e.replies.length > 0) ? `
-                            <div class="reply-history">
-                                ${e.replies.map(r => `
-                                    <div class="reply-history-item">
-                                        <div class="reply-history-meta">${escapeHtml(r.reviewer_name || '管理员')} · ${escapeHtml(r.created_at)}</div>
-                                        <div class="reply-history-content">${escapeHtml(r.content)}</div>
-                                    </div>
-                                `).join('')}
-                            </div>
-                        ` : ''}
-                        <div class="reply-box visible" id="reply-box-${e.created_at}">
-                            <textarea id="reply-text-${e.created_at}" placeholder="请输入回复内容">${savedReplies[e.created_at] || ''}</textarea>
-                            <button class="btn-sm btn-done" onclick="submitReply('${e.created_at}')">提交回复</button>
-                        </div>
-                    </div>
-                `).join('');
+            if (canAct && e.status === '已受理') {
+                actions.push(`<button class="btn-sm" onclick="startEvent('${e.event_id}')">开始处理</button>`);
             }
-
-            // 恢复折叠状态
-            Object.entries(collapsedState).forEach(([id, wasVisible]) => {
-                const el = document.getElementById(id);
-                if (el && wasVisible) {
-                    el.classList.add('visible');
-                    const btnId = id.replace('collapsed-', 'expand-btn-');
-                    const btn = document.getElementById(btnId);
-                    if (btn) btn.textContent = '收起';
-                }
-            });
-
-            // 重新渲染后恢复焦点和光标位置
-            if (focusId) {
-                const newEl = document.getElementById(focusId);
-                if (newEl) {
-                    newEl.focus();
-                    newEl.setSelectionRange(selStart, selEnd);
-                }
+            if (canAct && ['已受理', '处理中'].includes(e.status)) {
+                actions.push(`<button class="btn-sm btn-done" onclick="completeEvent('${e.event_id}')">完成</button>`);
             }
+            if (canHandle) {
+                actions.push(`<button class="btn-sm" onclick="submitReply('${e.event_id}')">回复</button>`);
+            }
+            const typeSel = `<select class="review-card-select" onchange="changeType('${e.event_id}', this.value)">` + EVENT_TYPES.map(t => `<option value="${t}" ${e.event_type === t ? 'selected' : ''}>${t}</option>`).join('') + `</select>`;
+            let deptSel = '';
+            if (role === 'admin') {
+                deptSel = `<select class="review-card-select" onchange="changeDept('${e.event_id}', this.value)"><option value="">改派…</option>` + Object.entries(DEPTS).map(([k, v]) => `<option value="${k}" ${e.assigned_dept === k ? 'selected' : ''}>${v}</option>`).join('') + `</select>`;
+            }
+            const repliesHtml = (e.replies || []).map(r => `<div class="reply-history-item"><div class="reply-history-meta">${escapeHtml(r.reviewer_name || '')} · ${escapeHtml(r.created_at || '')}</div><div class="reply-history-content">${escapeHtml(r.content || '')}</div></div>`).join('');
+            const interaction = canHandle
+                ? `<div class="reply-box visible">
+                      <textarea id="reply-text-${e.event_id}" placeholder="回复文字">${escapeHtml(window.cardText[e.event_id] || '')}</textarea>
+                      <div class="photo-grid" id="card-photos-${e.event_id}"></div>
+                      <div class="form-row">
+                          <button type="button" class="btn-sm" onclick="document.getElementById('card-photo-input-${e.event_id}').click()">&#128247; 添加照片</button>
+                          <input type="file" id="card-photo-input-${e.event_id}" accept="image/*" multiple style="display:none" onchange="onPickCardPhoto('${e.event_id}', this.files)">
+                          <span class="locate-hint" id="card-photo-hint-${e.event_id}"></span>
+                      </div>
+                  </div>`
+                : '';
+            return `<div class="review-card" id="card-${e.event_id}">
+                <div class="review-header">
+                    <div class="review-user"><strong>${escapeHtml(e.user_name || '-')}</strong><span class="user-meta">${ICON.phone}${escapeHtml(e.user_phone || '-')}</span></div>
+                    <div><span class="tag ${statusClass(e.status)}">${escapeHtml(e.status || '-')}</span></div>
+                </div>
+                <div class="review-desc">${escapeHtml(e.description || '-')}</div>
+                ${beneficiaryLine(e)}
+                <div class="review-meta-line">类型：${typeSel} ${deptSel} · 部门：${escapeHtml(e.department_name || e.handler || '-')}${e.status === '待审核' ? '（待审核：请先修改类型归类后受理）' : ''}</div>
+                ${(e.replies && e.replies.length) ? `<div class="reply-history">${repliesHtml}</div>` : ''}
+                ${interaction}
+                <div class="review-actions">${actions.join(' ')}</div>
+            </div>`;
         }
 
         // ------------------------------------------------------------------
@@ -1101,66 +1060,31 @@
             }
         }
 
-        async function acceptEvent(createdAt) {
-            const ev = allEvents.find(e => e.created_at === createdAt);
-            if (!ev || !ev.event_id) {
-                alert('找不到事件ID，请刷新页面');
-                return;
-            }
-            const textEl = document.getElementById(`reply-text-${createdAt}`);
-            const reply = textEl ? textEl.value.trim() : '';
+        async function acceptEvent(eventId) {
+            const el = document.getElementById(`reply-text-${eventId}`);
+            const reply = el ? el.value.trim() : '';
             try {
-                const res = await fetch(`${API_BASE}/api/events/${ev.event_id}/accept`, {
-                    method: 'POST',
-                    headers: getAuthHeaders(),
-                    body: JSON.stringify({ reply }),
+                const res = await fetch(`${API_BASE}/api/events/${eventId}/accept`, {
+                    method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ reply })
                 });
                 if (checkUnauthorized(res)) return;
-                if (!res.ok) {
-                    const err = await res.json();
-                    alert(err.detail || '受理失败');
-                    return;
-                }
-                const data = await res.json();
-                if (data.success) {
-                    await loadData();
-                }
-            } catch (e) {
-                alert('网络请求失败');
-            }
+                if (!res.ok) { const err = await res.json().catch(() => ({})); alert(err.detail || '受理失败'); return; }
+                await loadData();
+            } catch (e) { alert('网络请求失败'); }
         }
 
-        async function rejectEvent(createdAt) {
-            const ev = allEvents.find(e => e.created_at === createdAt);
-            if (!ev || !ev.event_id) {
-                alert('找不到事件ID，请刷新页面');
-                return;
-            }
-            const textEl = document.getElementById(`reply-text-${createdAt}`);
-            const reply = textEl ? textEl.value.trim() : '';
-            if (!reply) {
-                alert('请先填写回复内容再拒绝');
-                return;
-            }
+        async function rejectEvent(eventId) {
+            const el = document.getElementById(`reply-text-${eventId}`);
+            const reason = el ? el.value.trim() : '';
+            if (!reason) { alert('请先填写拒绝理由'); return; }
             try {
-                const res = await fetch(`${API_BASE}/api/events/${ev.event_id}/reject`, {
-                    method: 'POST',
-                    headers: getAuthHeaders(),
-                    body: JSON.stringify({ reason: reply }),
+                const res = await fetch(`${API_BASE}/api/events/${eventId}/reject`, {
+                    method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ reason })
                 });
                 if (checkUnauthorized(res)) return;
-                if (!res.ok) {
-                    const err = await res.json();
-                    alert(err.detail || '拒绝失败');
-                    return;
-                }
-                const data = await res.json();
-                if (data.success) {
-                    await loadData();
-                }
-            } catch (e) {
-                alert('网络请求失败');
-            }
+                if (!res.ok) { const err = await res.json().catch(() => ({})); alert(err.detail || '拒绝失败'); return; }
+                await loadData();
+            } catch (e) { alert('网络请求失败'); }
         }
         function escapeHtml(text) {
             const div = document.createElement('div');
@@ -1168,38 +1092,208 @@
             return div.innerHTML;
         }
 
-        async function submitReply(createdAt) {
-            const event = allEvents.find(e => e.created_at === createdAt);
-            if (!event || !event.event_id) {
-                alert('找不到事件ID，请刷新页面');
-                return;
-            }
-            const textEl = document.getElementById(`reply-text-${createdAt}`);
-            const reply = textEl ? textEl.value.trim() : '';
-            if (!reply) {
-                alert('请输入回复内容');
-                return;
-            }
+        async function submitReply(eventId) {
+            const el = document.getElementById(`reply-text-${eventId}`);
+            const reply = el ? el.value.trim() : '';
+            if (!reply) { alert('请输入回复内容'); return; }
+            const photos = window.cardPhotos[eventId] || [];
             try {
-                const res = await fetch(`${API_BASE}/api/events/${event.event_id}/reply`, {
-                    method: 'POST',
-                    headers: getAuthHeaders(),
-                    body: JSON.stringify({ reply })
+                const res = await fetch(`${API_BASE}/api/events/${eventId}/reply`, {
+                    method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ reply, photos })
                 });
                 if (checkUnauthorized(res)) return;
-                if (!res.ok) {
-                    const err = await res.json();
-                    alert(err.detail || '提交失败');
-                    return;
-                }
-                const data = await res.json();
-                if (data.success) {
-                    alert('回复提交成功');
-                    await loadData();
-                }
-            } catch (e) {
-                alert('网络请求失败');
+                if (!res.ok) { const err = await res.json().catch(() => ({})); alert(err.detail || '回复失败'); return; }
+                resetCardPhotos(eventId);
+                await loadData();
+            } catch (e) { alert('网络请求失败'); }
+        }
+
+        async function uploadAdminFiles(files) {
+            const ids = [];
+            for (const f of Array.from(files || [])) {
+                if (!f) continue;
+                const fd = new FormData(); fd.append('file', f);
+                const res = await fetch(`${API_BASE}/api/uploads`, {
+                    method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }, body: fd
+                });
+                if (checkUnauthorized(res)) continue;
+                const d = await res.json().catch(() => ({}));
+                if (d && d.data && d.data.media_id) ids.push(d.data.media_id);
             }
+            return ids;
+        }
+
+        const cardMediaUrlCache = {};
+        async function cardMediaUrl(id) {
+            if (!id) return '';
+            if (cardMediaUrlCache[id]) return cardMediaUrlCache[id];
+            try {
+                const res = await fetch(`${API_BASE}/api/media/${id}`, { headers: getAuthHeaders(false) });
+                if (!res.ok) return '';
+                const url = URL.createObjectURL(await res.blob());
+                cardMediaUrlCache[id] = url;
+                return url;
+            } catch (e) { return ''; }
+        }
+        async function uploadAdminFile(file) {
+            const fd = new FormData();
+            fd.append('file', file);
+            const res = await fetch(`${API_BASE}/api/uploads`, {
+                method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }, body: fd
+            });
+            if (checkUnauthorized(res)) return null;
+            const d = await res.json().catch(() => ({}));
+            return d && d.data ? d.data.media_id : null;
+        }
+        function renderCardPhotos(eventId) {
+            const grid = document.getElementById(`card-photos-${eventId}`);
+            if (!grid) return;
+            grid.innerHTML = '';
+            const photos = window.cardPhotos[eventId] || [];
+            photos.forEach((pid, i) => {
+                const div = document.createElement('div');
+                div.className = 'photo-thumb';
+                cardMediaUrl(pid).then(url => {
+                    div.innerHTML = `<img src="${url}" alt="照片"><span class="rm" onclick="removeCardPhoto('${eventId}', ${i})">×</span>`;
+                });
+                grid.appendChild(div);
+            });
+        }
+        async function onPickCardPhoto(eventId, files) {
+            window.cardPhotos[eventId] = window.cardPhotos[eventId] || [];
+            const hint = document.getElementById(`card-photo-hint-${eventId}`);
+            for (const f of Array.from(files || [])) {
+                if (!f.type.startsWith('image/')) continue;
+                const id = await uploadAdminFile(f);
+                if (id) window.cardPhotos[eventId].push(id);
+            }
+            renderCardPhotos(eventId);
+            const input = document.getElementById(`card-photo-input-${eventId}`);
+            if (input) input.value = '';
+            if (hint) hint.textContent = window.cardPhotos[eventId].length ? `已选 ${window.cardPhotos[eventId].length} 张` : '';
+        }
+        function removeCardPhoto(eventId, index) {
+            window.cardPhotos[eventId].splice(index, 1);
+            renderCardPhotos(eventId);
+            const hint = document.getElementById(`card-photo-hint-${eventId}`);
+            if (hint) hint.textContent = window.cardPhotos[eventId].length ? `已选 ${window.cardPhotos[eventId].length} 张` : '';
+        }
+        function resetCardPhotos(eventId) {
+            window.cardPhotos[eventId] = [];
+            window.cardText[eventId] = '';
+        }
+
+        async function startEvent(eventId) {
+            try {
+                const res = await fetch(`${API_BASE}/api/events/${eventId}/start`, { method: 'POST', headers: getAuthHeaders(false) });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) { const err = await res.json().catch(() => ({})); alert(err.detail || '开始处理失败'); return; }
+                await loadData();
+            } catch (e) { alert('网络请求失败'); }
+        }
+
+        async function completeEvent(eventId) {
+            const el = document.getElementById(`reply-text-${eventId}`);
+            const reply = el ? el.value.trim() : '';
+            const photos = window.cardPhotos[eventId] || [];
+            if (!photos.length) { alert('完成事件必须上传至少 1 张留证照片'); return; }
+            try {
+                const res = await fetch(`${API_BASE}/api/events/${eventId}/complete`, {
+                    method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ reply, photos })
+                });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) { const err = await res.json().catch(() => ({})); alert(err.detail || '完成失败'); return; }
+                resetCardPhotos(eventId);
+                await loadData();
+            } catch (e) { alert('网络请求失败'); }
+        }
+
+        async function changeType(eventId, type) {
+            const ev = allEvents.find(x => x.event_id === eventId);
+            if (!ev) return;
+            if (type === ev.event_type) { await loadData(); return; }
+            if (!confirm('确定将事件类型由「' + ev.event_type + '」改为「' + type + '」并自动重派？')) { await loadData(); return; }
+            try {
+                const res = await fetch(`${API_BASE}/api/events/${eventId}/type`, {
+                    method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ event_type: type, urgency: ev.urgency || '' })
+                });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) { const err = await res.json().catch(() => ({})); alert(err.detail || '改类型失败'); }
+                await loadData();
+            } catch (e) { alert('网络请求失败'); }
+        }
+
+        async function changeDept(eventId, dept) {
+            if (!dept) return;
+            const ev = allEvents.find(x => x.event_id === eventId);
+            if (ev && dept === ev.assigned_dept) { await loadData(); return; }
+            if (!confirm('确定将该事件转交给所选部门？新部门需重新受理。')) { await loadData(); return; }
+            try {
+                const res = await fetch(`${API_BASE}/api/events/${eventId}/dept`, {
+                    method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ department: dept })
+                });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) { const err = await res.json().catch(() => ({})); alert(err.detail || '改派失败'); }
+                await loadData();
+            } catch (e) { alert('网络请求失败'); }
+        }
+
+        async function loadUnread() {
+            try {
+                const res = await fetch(`${API_BASE}/api/notifications/unread`, { headers: getAuthHeaders(false) });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) return;
+                const d = await res.json();
+                const total = (d.pending || 0) + (d.new_reply || 0);
+                const badge = document.getElementById('unreadBadge');
+                badge.textContent = total;
+                badge.classList.toggle('hidden', total === 0);
+            } catch (e) {}
+        }
+
+        function populateDeptSelect() {
+            const sel = document.getElementById('du-department');
+            if (!sel) return;
+            sel.innerHTML = Object.entries(DEPTS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+        }
+
+        async function loadDeptUsers() {
+            const box = document.getElementById('deptUsersList');
+            if (!box) return;
+            try {
+                const res = await fetch(`${API_BASE}/api/admin/dept_users`, { headers: getAuthHeaders(false) });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) return;
+                const users = await res.json();
+                box.innerHTML = users.map(u => `<div class="review-beneficiary">${escapeHtml(u.real_name || u.username)} · ${escapeHtml(u.username)} · ${escapeHtml(u.department_name || '')} ${u.status === 'disabled' ? '· 已停用' : ''} <button class="btn-sm btn-reject" onclick="deleteDeptUser('${u.id}')">删除</button></div>`).join('') || '<div class="empty">暂无部门账号</div>';
+            } catch (e) { box.innerHTML = '<div class="empty">加载失败</div>'; }
+        }
+
+        async function createDeptUser() {
+            const username = document.getElementById('du-username').value.trim();
+            const password = document.getElementById('du-password').value;
+            const real_name = document.getElementById('du-real_name').value.trim();
+            const phone = document.getElementById('du-phone').value.trim();
+            const department = document.getElementById('du-department').value;
+            if (!username || !password || !real_name || !phone || !department) { alert('请填写完整部门账号信息'); return; }
+            const res = await fetch(`${API_BASE}/api/admin/dept_users`, {
+                method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ username, password, real_name, phone, department })
+            });
+            if (checkUnauthorized(res)) return;
+            const d = await res.json().catch(() => ({}));
+            if (res.ok && d.success) { alert('部门账号已创建'); ['du-username','du-password','du-real_name','du-phone'].forEach(id => document.getElementById(id).value = ''); loadDeptUsers(); }
+            else { alert((d && d.detail) || '创建失败'); }
+        }
+
+        async function deleteDeptUser(userId) {
+            if (!confirm('确定删除该部门账号？账号与密码将一并删除，不可恢复。')) return;
+            const res = await fetch(`${API_BASE}/api/admin/dept_users/${userId}`, {
+                method: 'DELETE', headers: getAuthHeaders(false)
+            });
+            if (checkUnauthorized(res)) return;
+            const d = await res.json().catch(() => ({}));
+            if (res.ok) { alert('已删除'); loadDeptUsers(); }
+            else { alert((d && (d.detail || d.error)) || '删除失败'); }
         }
 
         function renderReplyCell(e) {
@@ -1400,12 +1494,16 @@
         // 初始化：先认证，再加载数据
         initAuth().then(ok => {
             if (ok) {
+                populateDeptSelect();
                 loadData();
+                loadUnread();
                 loadCommunitySettings();
+                if ((window.currentUser || {}).role === 'admin') loadDeptUsers();
                 // 每 10 秒自动刷新一次，页面隐藏时暂停
                 setInterval(() => {
                     if (document.hidden) return;
                     loadData();
+                    loadUnread();
                 }, 10000);
             }
         });

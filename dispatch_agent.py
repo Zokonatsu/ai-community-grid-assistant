@@ -262,3 +262,64 @@ if __name__ == "__main__":
 
     print("=" * 50)
     print("全部测试通过！")
+
+
+# ------------------------------------------------------------------
+# 部门角色映射（部门账号体系）
+# ------------------------------------------------------------------
+# 部门键 -> 中文显示名（与 auth 部门账号 department 字段一致）
+DEPARTMENTS: dict[str, str] = {
+    "property": "物业部",
+    "sanitation": "环卫部",
+    "security": "安保部",
+    "engineering": "工程部",
+    "general": "综合部",
+    "mediator": "调解员",
+}
+
+# handler 中文名 -> 部门键（不含 [紧急] 前缀）
+HANDLER_TO_DEPARTMENT: dict[str, str] = {
+    "物业部": "property",
+    "环卫部": "sanitation",
+    "安保部": "security",
+    "工程部": "engineering",
+    "综合部": "general",
+    "调解员": "mediator",
+}
+
+# 外部资源 / 人工兜底 handler：无对应部门账号，归超管闭环
+EXTERNAL_HANDLERS: frozenset[str] = frozenset({
+    "120医疗急救中心（外部资源）",
+    "110公安急救中心（外部资源）",
+    "119消防急救中心（外部资源）",
+    "应急救援队（外部资源）",
+    "人工部",
+})
+
+
+def handler_to_department(handler: str) -> tuple[str, str]:
+    """把派单 handler 映射为 (部门键, 部门中文名)。
+
+    外部资源/人工部/未知 handler 返回 ("", "")，表示归超管处理、无部门账号。
+    自动去除 [紧急] 前缀。
+    """
+    h = (handler or "").replace("[紧急]", "").strip()
+    key = HANDLER_TO_DEPARTMENT.get(h)
+    if key is None:
+        return "", ""
+    return key, DEPARTMENTS[key]
+
+
+def event_type_to_department(event_type: str, urgency: str = "", scene_tag: str = "常规", emergency_type: str = "") -> tuple[str, str, str]:
+    """根据事件语义计算 (handler, 部门键, 部门中文名)。"""
+    handler = dispatch_node({
+        "description": "",
+        "address": "",
+        "event_type": event_type or "",
+        "urgency": urgency or "",
+        "scene_tag": scene_tag or "常规",
+        "handler": "",
+        "emergency_type": emergency_type or "",
+    }).get("handler", "")
+    key, name = handler_to_department(handler)
+    return handler, key, name

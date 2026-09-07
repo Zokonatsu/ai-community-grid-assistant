@@ -274,7 +274,7 @@ def test_bad_return_marks_failed_and_persists():
 
 
 def test_tool_success_marks_completed():
-    """正向控制：工具调用成功 -> 已完成并落盘（证明断链检测有效而非恒失败）。"""
+    """正向控制：工具调用成功 -> 派单到部门并落盘（新版状态为待处理）。"""
     main_module = _get_client()[1]
     saved_tasks, saved_bg = main_module._tasks, main_module._background_tasks
     main_module._tasks, main_module._background_tasks = {}, set()
@@ -289,11 +289,12 @@ def test_tool_success_marks_completed():
             asyncio.run(main_module._process_event(
                 eid, {"description": "正常事件", "status": "处理中"}, "seed-user"))
             task = main_module._tasks[eid]
-            assert task["status"] == "已完成", f"正常调用应已完成: {task}"
+            assert task["status"] == "待处理", f"正常调用应进入待处理: {task}"
             assert task["handler"] == "物业部", task
+            assert task["assigned_dept"] == "property", task
             disk = _snapshot_tasks_file(main_module)
-            assert disk[eid]["status"] == "已完成", "正常结果未落盘"
-        print("  [PASS] 断链2c 正向控制：正常调用置已完成 + 落盘")
+            assert disk[eid]["status"] == "待处理", "正常结果未落盘"
+        print("  [PASS] 断链2c 正向控制：正常调用置待处理 + 落盘")
     finally:
         main_module._tasks, main_module._background_tasks = saved_tasks, saved_bg
 

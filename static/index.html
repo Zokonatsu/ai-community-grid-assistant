@@ -63,7 +63,23 @@
                     </div>
                 </div>
             </div>
+            <!-- 事件位置（本人默认取注册住址，可修改） -->
+            <div class="form-row">
+                <div class="form-group"><label>楼栋</label><input type="text" id="ev-building" placeholder="如：2栋"></div>
+                <div class="form-group"><label>单元</label><input type="text" id="ev-unit" placeholder="如：3单元"></div>
+                <div class="form-group"><label>房间号</label><input type="text" id="ev-room" placeholder="如：401"></div>
+            </div>
             <textarea id="description" placeholder="请输入居民问题描述，例如：我家楼下下水道堵了"></textarea>
+            <div class="voice-row">
+                <button type="button" class="btn-sm" id="voiceBtn" onclick="toggleVoice()">&#127908; 语音转文字</button>
+                <button type="button" class="btn-sm" id="recBtn" onclick="toggleRecord()">&#9209; 录音</button>
+                <span class="locate-hint" id="voiceHint"></span>
+            </div>
+            <div class="photo-grid" id="photoGrid"></div>
+            <div class="form-row">
+                <button type="button" class="btn-sm" onclick="document.getElementById('photoInput').click()">&#128247; 添加照片（最多3张）</button>
+                <input type="file" id="photoInput" accept="image/*" multiple style="display:none" onchange="onPickPhotos(this.files)">
+            </div>
             <button class="btn" id="submitBtn" onclick="submitEvent()">提交处理</button>
             <div class="locate-hint" id="locateHint"></div>
             <div class="loading" id="loading" style="display:none;"><span class="dot"></span>正在处理，请稍候</div>
@@ -139,6 +155,15 @@
                 <button class="btn btn-cancel" onclick="closeSubmitConfirm()">取消</button>
                 <button class="btn" onclick="confirmAndSubmit()">确认提交</button>
             </div>
+        </div>
+    </div>
+
+    <!-- 事件详情时间线弹窗 -->
+    <div class="overlay hidden" id="detailOverlay">
+        <div class="modal">
+            <div class="modal-close" onclick="closeDetail()" aria-label="关闭">&times;</div>
+            <div class="modal-title">事件详情与时间线</div>
+            <div class="modal-content" id="detailContent"></div>
         </div>
     </div>
 
@@ -281,8 +306,11 @@
                 }
                 const user = await res.json();
                 window.currentUser = user;
-                // 管理员不进入事件提交页，直接进入管理后台
-                if (user.role === 'admin') {
+                if (user.building) document.getElementById('ev-building').value = user.building;
+                if (user.unit) document.getElementById('ev-unit').value = user.unit;
+                if (user.room) document.getElementById('ev-room').value = user.room;
+                // 管理员/部门账号不进入事件提交页，直接进入管理后台
+                if (user.role === 'admin' || user.role === 'dept') {
                     window.location.href = '/admin.html';
                     return false;
                 }
@@ -450,6 +478,10 @@
                         description: desc,
                         lat: pos ? pos.lat : null,
                         lng: pos ? pos.lng : null,
+                        building: document.getElementById('ev-building').value.trim(),
+                        unit: document.getElementById('ev-unit').value.trim(),
+                        room: document.getElementById('ev-room').value.trim(),
+                        media_ids: mediaIds,
                         ...(extra || {}),
                         ...beneficiary
                     })
@@ -483,6 +515,7 @@
                     document.getElementById('result').classList.remove('hidden');
                     document.getElementById('description').value = '';
                     clearBeneficiary();
+                    resetMedia();
                     loadList();
                     btn.disabled = false;
                     loading.style.display = 'none';
@@ -493,6 +526,7 @@
                 polling.classList.remove('hidden');
                 document.getElementById('description').value = '';
                 clearBeneficiary();
+                resetMedia();
                 loadList();
                 startPolling(d.event_id);
             } catch (e) {
@@ -751,7 +785,7 @@
                     if (s === '处理中') return 'tag-processing';
                     if (s === '处理超时' || s === '处理失败' || s === '已拒绝') return 'tag-failed';
                     if (s === '已完成' || s === '已派单') return 'tag-success';
-                    if (s === '待审核') return 'tag-pending';
+                    if (s === '待审核' || s === '待处理') return 'tag-pending';
                     if (s === '已受理') return 'tag-accepted';
                     return '';
                 };
@@ -783,7 +817,7 @@
                     <tr data-event-id="${e.event_id}">
                         <td data-label="事件编号">${escapeHtml((e.event_id || '').slice(0, 8))}</td>
                         <td data-label="创建时间">${escapeHtml(e.created_at || '-')}</td>
-                        <td data-label="描述">${escapeHtml(e.description || '-')}</td>
+                        <td data-label="描述" class="clickable-row" onclick="openDetail('${e.event_id}')">${escapeHtml(e.description || '-')}</td>
                                                 <td data-label="提交方式">${e.beneficiary_type === 'proxy' ? ('代人办：' + escapeHtml(e.beneficiary_name || '') + '·' + escapeHtml(e.beneficiary_phone || '')) : '本人'}</td>
                         <td data-label="类型">${escapeHtml(e.event_type || '-')}</td>
                         <td data-label="紧急程度"><span class="tag ${urgencyClass(e.urgency)}">${escapeHtml(e.urgency || '-')}</span></td>
@@ -848,6 +882,149 @@
         });
 
         // 页面初始化：先认证，再加载数据；加载成功后启动 15 秒列表轮询
+        // ------------------------------------------------------------------
+        // 富提交：媒体 / 语音 / 时间线详情
+        // ------------------------------------------------------------------
+        let mediaIds = [];
+        const mediaUrlCache = {};
+        async function mediaUrl(id) {
+            if (!id) return '';
+            if (mediaUrlCache[id]) return mediaUrlCache[id];
+            try {
+                const res = await fetch(`${API_BASE}/api/media/${id}`, { headers: getAuthHeaders(false) });
+                if (!res.ok) return '';
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                mediaUrlCache[id] = url;
+                return url;
+            } catch (e) { return ''; }
+        }
+        function resetMedia() { mediaIds = []; document.getElementById('photoGrid').innerHTML = ''; }
+        async function renderPhotoGrid() {
+            const grid = document.getElementById('photoGrid');
+            grid.innerHTML = '';
+            for (let i = 0; i < mediaIds.length; i++) {
+                const url = await mediaUrl(mediaIds[i]);
+                const div = document.createElement('div');
+                div.className = 'photo-thumb';
+                div.innerHTML = `<img src="${url}" alt="照片"><span class="rm" onclick="removeMedia(${i})">×</span>`;
+                grid.appendChild(div);
+            }
+        }
+        function removeMedia(i) { mediaIds.splice(i, 1); renderPhotoGrid(); }
+        async function uploadFile(file) {
+            const fd = new FormData();
+            fd.append('file', file);
+            const res = await fetch(`${API_BASE}/api/uploads`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+                body: fd
+            });
+            if (checkUnauthorized(res)) return null;
+            const data = await res.json();
+            return data && data.data ? data.data.media_id : null;
+        }
+        async function onPickPhotos(files) {
+            for (const file of Array.from(files || [])) {
+                if (mediaIds.length >= 3) { alert('最多3张照片'); break; }
+                if (!file.type.startsWith('image/')) continue;
+                const id = await uploadFile(file);
+                if (id) { mediaIds.push(id); await renderPhotoGrid(); }
+            }
+            document.getElementById('photoInput').value = '';
+        }
+
+        let recognition = null;
+        function toggleVoice() {
+            const hint = document.getElementById('voiceHint');
+            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SR) { hint.textContent = '当前浏览器不支持语音识别（需 Chrome/Edge + HTTPS）'; return; }
+            if (recognition) { recognition.stop(); recognition = null; hint.textContent = ''; return; }
+            recognition = new SR();
+            recognition.lang = 'zh-CN';
+            recognition.interimResults = false;
+            recognition.maxAlternatives = 1;
+            hint.textContent = '正在聆听，请说话…';
+            recognition.onresult = e => {
+                const txt = e.results[0][0].transcript;
+                const el = document.getElementById('description');
+                el.value = (el.value ? el.value + ' ' : '') + txt;
+                hint.textContent = '已识别，可继续编辑';
+            };
+            recognition.onerror = e => { hint.textContent = '语音识别失败：' + e.error; };
+            recognition.onend = () => { recognition = null; };
+            recognition.start();
+        }
+
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        async function toggleRecord() {
+            const hint = document.getElementById('voiceHint');
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                document.getElementById('recBtn').textContent = '⏺ 录音';
+                return;
+            }
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { hint.textContent = '当前环境不支持录音（需 HTTPS）'; return; }
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                recordedChunks = [];
+                mediaRecorder.ondataavailable = e => { if (e.data.size) recordedChunks.push(e.data); };
+                mediaRecorder.onstop = async () => {
+                    const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+                    const ext = (blob.type.includes('mp4') || blob.type.includes('m4a')) ? 'm4a' : (blob.type.includes('ogg') ? 'ogg' : 'webm');
+                    const file = new File([blob], 'rec.' + ext, { type: blob.type });
+                    const id = await uploadFile(file);
+                    if (id) { mediaIds.push(id); await renderPhotoGrid(); hint.textContent = '录音已附加'; }
+                    stream.getTracks().forEach(tr => tr.stop());
+                };
+                mediaRecorder.start();
+                document.getElementById('recBtn').textContent = '⏹ 停止录音';
+                hint.textContent = '正在录音…';
+            } catch (e) { hint.textContent = '无法访问麦克风：' + e.message; }
+        }
+
+        let currentDetailId = null;
+        async function openDetail(eventId) {
+            currentDetailId = eventId;
+            document.getElementById('detailContent').innerHTML = '<div class="empty">加载中…</div>';
+            document.getElementById('detailOverlay').classList.remove('hidden');
+            try {
+                const res = await fetch(`${API_BASE}/api/events/${eventId}`, { headers: getAuthHeaders(false) });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) { document.getElementById('detailContent').innerHTML = '<div class="empty">加载失败</div>'; return; }
+                renderDetail(await res.json());
+            } catch (e) { document.getElementById('detailContent').innerHTML = '<div class="empty">加载失败</div>'; }
+        }
+        async function renderDetail(e) {
+            const tl = await Promise.all((e.timeline || []).map(async n => {
+                let photos = '';
+                if (n.photos && n.photos.length) {
+                    const imgs = [];
+                    for (const p of n.photos) { const u = await mediaUrl(p); if (u) imgs.push(`<img src="${u}" alt="">`); }
+                    if (imgs.length) photos = `<div class="tl-photos">${imgs.join('')}</div>`;
+                }
+                return `<div class="tl-item"><div class="tl-time">${escapeHtml(n.time || '')} · ${escapeHtml(n.type || '')}</div><div class="tl-text">${escapeHtml(n.text || '')}</div>${n.actor ? `<div class="tl-actor">${escapeHtml(n.actor)}</div>` : ''}${photos}</div>`;
+            }));
+            let follow = '';
+            if (['已受理', '处理中', '已完成'].includes(e.status)) {
+                follow = `<div class="form-row"><textarea id="followupText" placeholder="向工作人员追问"></textarea></div><button class="btn-sm" onclick="sendFollowup('${e.event_id}')">发送追问</button>`;
+            }
+            document.getElementById('detailContent').innerHTML = `<div class="modal-text">${escapeHtml(e.description || '')}</div><div class="modal-text muted">类型：${escapeHtml(e.event_type || '-')} · 状态：${escapeHtml(e.status || '-')} · 部门：${escapeHtml(e.department_name || e.handler || '-')}</div><div class="timeline">${tl.join('')}</div>${follow}`;
+        }
+        function closeDetail() { document.getElementById('detailOverlay').classList.add('hidden'); currentDetailId = null; }
+        async function sendFollowup(eventId) {
+            const txt = document.getElementById('followupText').value.trim();
+            if (!txt) { alert('请输入追问内容'); return; }
+            const res = await fetch(`${API_BASE}/api/events/${eventId}/reply`, {
+                method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ reply: txt, photos: [] })
+            });
+            if (checkUnauthorized(res)) return;
+            if (res.ok) { alert('追问已发送'); openDetail(eventId); loadList(); }
+            else { const d = await res.json().catch(() => ({})); alert((d && d.detail) || '发送失败'); }
+        }
+
         initAuth().then(ok => {
             if (ok) {
                 loadList();

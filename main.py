@@ -20,8 +20,8 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Depends, Header, Request, Body
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, Body, UploadFile, File
+from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -40,6 +40,7 @@ import dispatch_agent
 import auth
 import geo
 import community_store
+import media_store
 from secure_store import encrypt_field, decrypt_field
 
 logger = logging.getLogger("main")
@@ -54,6 +55,42 @@ def _compute_handler(event_type: str, urgency: str, scene_tag: str, emergency_ty
         "handler": "",
         "emergency_type": emergency_type or "",
     }).get("handler", "")
+
+
+def _now() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _timeline_append(task: dict, type_: str, text: str, actor: str = "", photos: list | None = None) -> dict:
+    """向事件追加一条时间线节点（文本不存敏感字段）。"""
+    node = {"type": type_, "text": text, "time": _now(), "actor": actor or "", "photos": photos or []}
+    task.setdefault("timeline", []).append(node)
+    return node
+
+
+def _append_reply(task: dict, content: str, user: dict[str, Any], photos: list | None = None) -> dict:
+    """追加一条多轮回复记录（content 走字段级加密，photos 只存 media_id）。"""
+    entry = {
+        "content": content,
+        "created_at": _now(),
+        "role": user.get("role", ""),
+        "reviewer_id": user.get("id", ""),
+        "reviewer_name": user.get("real_name", "") or user.get("username", ""),
+        "photos": photos or [],
+    }
+    task.setdefault("replies", []).append(entry)
+    task["reply"] = content
+    return entry
+
+
+def _apply_dispatch(task: dict, event_type: str, urgency: str, scene_tag: str, emergency_type: str = "") -> tuple[str, str, str]:
+    """计算并写入 handler / assigned_dept / department_name，返回 (handler, dept_key, dept_name)。"""
+    handler = _compute_handler(event_type or "", urgency or "", scene_tag or "", emergency_type or "")
+    key, name = dispatch_agent.handler_to_department(handler)
+    task["handler"] = handler
+    task["assigned_dept"] = key
+    task["department_name"] = name
+    return handler, key, name
 
 
 
@@ -193,9 +230,22 @@ for task in _tasks.values():
                 "created_at": task.get("completed_at", task.get("created_at", "")),
                 "reviewer_id": task.get("reviewer_id", ""),
                 "reviewer_name": "",
+                "role": "admin",
+                "photos": [],
             })
-    if "user_read_at" not in task:
-        task["user_read_at"] = ""
+    for fld in ("user_read_at", "assigned_dept", "department_name", "reviewer_dept", "dept_read_at"):
+        if fld not in task:
+            task[fld] = ""
+    if "media" not in task:
+        task["media"] = []
+    if "timeline" not in task:
+        task["timeline"] = [{
+            "type": "提交",
+            "text": "居民提交事件",
+            "time": task.get("created_at", ""),
+            "actor": task.get("user_name", ""),
+            "photos": [],
+        }]
 
 # 并发锁：保护内存状态更新与文件写入
 _task_lock = asyncio.Lock()
@@ -267,18 +317,29 @@ async def _process_event(
                     _save_tasks(_tasks)
                 logger.error("事件处理结果缺失必需字段，event_id=%s，missing=%s", event_id, ",".join(missing))
             else:
-                # 处理中事件完成后标记为"已完成"；待审核事件保留原状态
-                if task["status"] == "处理中":
-                    task["status"] = "已完成"
+                # 新流程：AI 派单成功后进入部门「待处理」；外部资源/人工部进入「待审核」（超管闭环）
+                handler = result.get("handler", "")
+                key, name = dispatch_agent.handler_to_department(handler)
                 task.update({
                     "address": result["address"],
                     "event_type": result["event_type"],
                     "urgency": result["urgency"],
                     "scene_tag": result["scene_tag"],
-                    "handler": result["handler"],
-                    "completed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "handler": handler,
+                    "assigned_dept": key,
+                    "department_name": name,
                     "emergency_type": task.get("emergency_type", pre_checked_state.get("emergency_type", "")),
                 })
+                if key:
+                    if task.get("status") in ("处理中", "待审核"):
+                        task["status"] = "待处理"
+                        _timeline_append(task, "待处理", "已派单至" + name, "系统")
+                    elif task.get("status") == "待处理" and not any(n.get("type") == "待处理" for n in task.get("timeline", [])):
+                        _timeline_append(task, "待处理", "已派单至" + name, "系统")
+                else:
+                    if task.get("status") in ("处理中", "待审核"):
+                        task["status"] = "待审核"
+                        _timeline_append(task, "待审核", "已转入超管/人工审核", "系统")
                 _save_tasks(_tasks)
     except asyncio.TimeoutError:
         async with _task_lock:
@@ -400,6 +461,18 @@ def _build_task(
         "event_location_status": location_status,
         "event_distance_m": event_distance_m,
         "emergency_type": emergency_type or "",
+        "assigned_dept": "",
+        "department_name": "",
+        "reviewer_id": "",
+        "reviewer_dept": "",
+        "timeline": [{
+            "type": "提交",
+            "text": "居民提交事件",
+            "time": created_at,
+            "actor": user.get("real_name", ""),
+            "photos": [],
+        }],
+        "media": [],
         "beneficiary_type": bf.get("beneficiary_type", "self"),
         "beneficiary_name": bf.get("beneficiary_name", user.get("real_name", "")),
         "beneficiary_phone": bf.get("beneficiary_phone", user.get("phone", "")),
@@ -505,6 +578,10 @@ class EventRequest(BaseModel):
     emergency_type: str | None = Field(default=None, description="模糊急救类型：medical/police/fire（用于二次提交时传递）")
     lat: float | None = Field(default=None, ge=-90, le=90, description="事件实时定位纬度")
     lng: float | None = Field(default=None, ge=-180, le=180, description="事件实时定位经度")
+    building: str | None = Field(default=None, max_length=20, description="事件楼栋（可空，默认取注册住址）")
+    unit: str | None = Field(default=None, max_length=20, description="事件单元")
+    room: str | None = Field(default=None, max_length=20, description="事件房间号")
+    media_ids: list[str] = Field(default_factory=list, description="已上传媒体ID列表（照片/录音）")
     # 提交方式：本人（self）/ 代人办（proxy）
     beneficiary_type: str = Field(default="self", description="提交方式：self=本人，proxy=代人办")
     beneficiary_name: str | None = Field(default=None, description="被帮助人姓名（代人办必填）")
@@ -590,6 +667,35 @@ class AcceptRequest(BaseModel):
 
 class ReplyRequest(BaseModel):
     reply: str = Field(..., min_length=1, max_length=5000, description="后台回复内容")
+    photos: list[str] = Field(default_factory=list, description="回复附带照片 media_id 列表")
+
+
+class CompleteRequest(BaseModel):
+    reply: str = Field(default="", max_length=5000, description="完成说明（可空）")
+    photos: list[str] = Field(default_factory=list, description="留证照片 media_id 列表")
+
+
+class TypeUpdateRequest(BaseModel):
+    event_type: str = Field(..., min_length=1, max_length=50, description="修正后的事件类型")
+    urgency: str = Field(default="", max_length=10, description="修正后的紧急程度（可空，不改则不传）")
+
+
+class DeptUpdateRequest(BaseModel):
+    department: str = Field(..., min_length=1, max_length=30, description="目标部门键")
+
+
+class DeptUserCreateRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=20)
+    password: str = Field(..., min_length=6, max_length=64)
+    real_name: str = Field(..., min_length=1, max_length=20)
+    phone: str = Field(..., pattern=r"^1[3-9]\d{9}$")
+    department: str = Field(..., min_length=1, max_length=30)
+
+
+class DeptUserUpdateRequest(BaseModel):
+    password: str | None = Field(default=None, min_length=6, max_length=64)
+    department: str | None = Field(default=None, min_length=1, max_length=30)
+    status: str | None = Field(default=None, description="active=启用 / disabled=停用")
 
 
 # ------------------------------------------------------------------
@@ -626,6 +732,8 @@ class UserInfo(BaseModel):
     real_name: str
     phone: str
     role: str
+    department: str = ""
+    department_name: str = ""
     created_at: str
     status: str = "active"
     building: str = ""
@@ -668,6 +776,19 @@ async def get_admin_dependency(
         raise HTTPException(status_code=401, detail="未登录或登录已过期，请重新登录")
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="权限不足，仅管理员可访问")
+    return user
+
+
+async def get_staff_dependency(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> dict[str, Any]:
+    """管理员/部门账号均可访问（用于事件处理类操作）。"""
+    token = credentials.credentials if credentials else None
+    user = auth.get_current_user(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="未登录或登录已过期，请重新登录")
+    if user.get("role") not in ("admin", "dept"):
+        raise HTTPException(status_code=403, detail="权限不足，仅工作人员可访问")
     return user
 
 
@@ -829,9 +950,14 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
 
     async with _task_lock:
         _refresh_tasks()
+        role = current_user.get("role")
+        dept = current_user.get("department", "")
         for task in _tasks.values():
-            if current_user.get("role") != "admin" and task.get("user_id") != current_user.get("id"):
+            if role == "resident" and task.get("user_id") != current_user.get("id"):
                 continue
+            if role == "dept":
+                if task.get("assigned_dept", "") != dept and task.get("reviewer_dept", "") != dept and task.get("reviewer_id", "") != current_user.get("id"):
+                    continue
             replies = task.get("replies", [])
             if not replies and task.get("reply"):
                 replies = [{
@@ -841,11 +967,20 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
                     "reviewer_name": "",
                 }]
             has_new_reply = False
-            if replies:
-                last_reply_at = replies[-1].get("created_at", "")
-                user_read_at = task.get("user_read_at", "")
-                if not user_read_at or last_reply_at > user_read_at:
-                    has_new_reply = True
+            if role == "resident":
+                staff_replies = [r for r in replies if r.get("role") in ("admin", "dept")]
+                if staff_replies:
+                    last_reply_at = staff_replies[-1].get("created_at", "")
+                    user_read_at = task.get("user_read_at", "")
+                    if not user_read_at or last_reply_at > user_read_at:
+                        has_new_reply = True
+            elif role in ("admin", "dept"):
+                resident_replies = [r for r in replies if r.get("role") == "resident"]
+                if resident_replies:
+                    last_reply_at = resident_replies[-1].get("created_at", "")
+                    dept_read_at = task.get("dept_read_at", "")
+                    if not dept_read_at or last_reply_at > dept_read_at:
+                        has_new_reply = True
             event_item: dict[str, Any] = {
                 "event_id": task["event_id"],
                 "description": task["description"],
@@ -878,9 +1013,15 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
                 "beneficiary_building": task.get("beneficiary_building", ""),
                 "beneficiary_unit": task.get("beneficiary_unit", ""),
                 "beneficiary_room": task.get("beneficiary_room", ""),
+                "assigned_dept": task.get("assigned_dept", ""),
+                "department_name": task.get("department_name", ""),
+                "timeline": task.get("timeline", []),
+                "media": task.get("media", []),
+                "reviewer_id": task.get("reviewer_id", ""),
+                "reviewer_dept": task.get("reviewer_dept", ""),
             }
-            # 定位坐标/距中心米数仅管理员可见，居民端不返回（避免暴露他人位置）
-            if current_user.get("role") == "admin":
+            # 定位坐标/距中心米数仅管理员/部门可见，居民端不返回（避免暴露他人位置）
+            if role in ("admin", "dept"):
                 event_item["event_lat"] = task.get("event_lat")
                 event_item["event_lng"] = task.get("event_lng")
                 event_item["event_location_status"] = task.get("event_location_status", "unverified")
@@ -933,6 +1074,16 @@ async def create_event(
                     error="代人办需填写：" + "、".join(missing),
                 )
         beneficiary = _resolve_beneficiary(body, current_user)
+        building = (body.building or "").strip()
+        unit = (body.unit or "").strip()
+        room = (body.room or "").strip()
+        media_entries = [{
+            "media_id": m,
+            "kind": "user",
+            "uploaded_by": current_user.get("id", ""),
+            "created_at": "",
+            "note": "",
+        } for m in (body.media_ids or []) if m]
         # ------------------------------------------------------------------
         # 前置硬规则检查（生命安全优先）：命中则跳过所有LLM调用
         # ------------------------------------------------------------------
@@ -976,6 +1127,12 @@ async def create_event(
                     lng=body.lng,
                     beneficiary=beneficiary,
                 )
+                _tasks[event_id]["media"] = [{**m, "created_at": created_at} for m in media_entries]
+                if _tasks[event_id].get("timeline"):
+                    _tasks[event_id]["timeline"][0]["photos"] = [m.get("media_id", "") for m in media_entries]
+                _tasks[event_id]["event_building"] = building
+                _tasks[event_id]["event_unit"] = unit
+                _tasks[event_id]["event_room"] = room
                 _save_tasks(_tasks)
             # 启动后台异步任务
             bg_task = asyncio.create_task(
@@ -1074,6 +1231,12 @@ async def create_event(
                     lng=body.lng,
                     beneficiary=beneficiary,
                 )
+                _tasks[event_id]["media"] = [{**m, "created_at": created_at} for m in media_entries]
+                if _tasks[event_id].get("timeline"):
+                    _tasks[event_id]["timeline"][0]["photos"] = [m.get("media_id", "") for m in media_entries]
+                _tasks[event_id]["event_building"] = building
+                _tasks[event_id]["event_unit"] = unit
+                _tasks[event_id]["event_room"] = room
                 _save_tasks(_tasks)
             # 启动后台让 dispatch_agent 设置 handler="人工部"
             timeout_state = {
@@ -1130,6 +1293,12 @@ async def create_event(
                     lng=body.lng,
                     beneficiary=beneficiary,
                 )
+                _tasks[event_id]["media"] = [{**m, "created_at": created_at} for m in media_entries]
+                if _tasks[event_id].get("timeline"):
+                    _tasks[event_id]["timeline"][0]["photos"] = [m.get("media_id", "") for m in media_entries]
+                _tasks[event_id]["event_building"] = building
+                _tasks[event_id]["event_unit"] = unit
+                _tasks[event_id]["event_room"] = room
                 _save_tasks(_tasks)
             # 启动后台让 dispatch_agent 设置 handler="人工部"
             exc_state = {
@@ -1193,6 +1362,12 @@ async def create_event(
                     lng=body.lng,
                     beneficiary=beneficiary,
                 )
+                _tasks[event_id]["media"] = [{**m, "created_at": created_at} for m in media_entries]
+                if _tasks[event_id].get("timeline"):
+                    _tasks[event_id]["timeline"][0]["photos"] = [m.get("media_id", "") for m in media_entries]
+                _tasks[event_id]["event_building"] = building
+                _tasks[event_id]["event_unit"] = unit
+                _tasks[event_id]["event_room"] = room
                 _save_tasks(_tasks)
             # 启动后台让 dispatch_agent 设置 handler="人工部"
             invalid_state = {
@@ -1313,6 +1488,12 @@ async def create_event(
                     lng=body.lng,
                     beneficiary=beneficiary,
                 )
+                _tasks[event_id]["media"] = [{**m, "created_at": created_at} for m in media_entries]
+                if _tasks[event_id].get("timeline"):
+                    _tasks[event_id]["timeline"][0]["photos"] = [m.get("media_id", "") for m in media_entries]
+                _tasks[event_id]["event_building"] = building
+                _tasks[event_id]["event_unit"] = unit
+                _tasks[event_id]["event_room"] = room
                 _save_tasks(_tasks)
             # 启动后台让 dispatch_agent 设置 handler="人工部"
             api_err_state = {
@@ -1368,6 +1549,12 @@ async def create_event(
                     lng=body.lng,
                     beneficiary=beneficiary,
                 )
+                _tasks[event_id]["media"] = [{**m, "created_at": created_at} for m in media_entries]
+                if _tasks[event_id].get("timeline"):
+                    _tasks[event_id]["timeline"][0]["photos"] = [m.get("media_id", "") for m in media_entries]
+                _tasks[event_id]["event_building"] = building
+                _tasks[event_id]["event_unit"] = unit
+                _tasks[event_id]["event_room"] = room
                 _save_tasks(_tasks)
             # 启动后台异步任务，让 dispatch_agent 分配 handler="人工部" 并记录
             semantic_result["status"] = "待审核"
@@ -1402,7 +1589,7 @@ async def create_event(
                 event_id=event_id,
                 description=body.description,
                 created_at=created_at,
-                status="处理中" if body.confirmed else "待审核",
+                status="待处理",
                 address=semantic_result.get("address", ""),
                 event_type=semantic_result.get("event_type", ""),
                 urgency=semantic_result.get("urgency", ""),
@@ -1413,11 +1600,17 @@ async def create_event(
                 lng=body.lng,
                 beneficiary=beneficiary,
             )
+            _tasks[event_id]["media"] = [{**m, "created_at": created_at} for m in media_entries]
+            if _tasks[event_id].get("timeline"):
+                _tasks[event_id]["timeline"][0]["photos"] = [m.get("media_id", "") for m in media_entries]
+            _tasks[event_id]["event_building"] = building
+            _tasks[event_id]["event_unit"] = unit
+            _tasks[event_id]["event_room"] = room
             _save_tasks(_tasks)
 
         # 启动后台异步任务，传入已校验结果，避免二次调用 LLM API
         semantic_result["confirmed"] = body.confirmed
-        semantic_result["status"] = "处理中" if body.confirmed else "待审核"
+        semantic_result["status"] = "待处理"
         bg_task = asyncio.create_task(
             _process_event(event_id, semantic_result, current_user["id"], body.lat, body.lng)
         )
@@ -1434,7 +1627,7 @@ async def create_event(
                 urgency=semantic_result.get("urgency", ""),
                 scene_tag=semantic_result.get("scene_tag", ""),
                 handler="",
-                status="处理中" if body.confirmed else "待审核",
+                status="待处理",
                 created_at=created_at,
                 emergency_type=semantic_result.get("emergency_type", ""),
             ),
@@ -1464,6 +1657,12 @@ async def create_event(
                     lng=body.lng,
                     beneficiary=beneficiary,
                 )
+                _tasks[event_id]["media"] = [{**m, "created_at": created_at} for m in media_entries]
+                if _tasks[event_id].get("timeline"):
+                    _tasks[event_id]["timeline"][0]["photos"] = [m.get("media_id", "") for m in media_entries]
+                _tasks[event_id]["event_building"] = building
+                _tasks[event_id]["event_unit"] = unit
+                _tasks[event_id]["event_room"] = room
                 _save_tasks(_tasks)
             # 启动后台让 dispatch_agent 设置 handler="人工部"
             hard_state = {
@@ -1506,13 +1705,13 @@ async def create_event(
 # ------------------------------------------------------------------
 # API 端点：GET /api/events/{event_id}
 # ------------------------------------------------------------------
-@app.get("/api/events/{event_id}", response_model=EventStatusResponse)
+@app.get("/api/events/{event_id}")
 async def get_event(
     event_id: str,
     current_user: dict[str, Any] = Depends(get_current_user_dependency),
-) -> EventStatusResponse:
+) -> dict[str, Any]:
     """
-    按事件标识查询处理状态和完整结果。服务重启后仍可通过本接口恢复查询。
+    按事件标识查询处理状态、时间线、媒体与回复。
     """
     async with _task_lock:
         _refresh_tasks()
@@ -1521,24 +1720,35 @@ async def get_event(
     if task is None:
         raise HTTPException(status_code=404, detail="事件不存在")
 
-    if current_user.get("role") != "admin" and task.get("user_id") != current_user.get("id"):
+    role = current_user.get("role")
+    dept = current_user.get("department", "")
+    if role == "resident" and task.get("user_id") != current_user.get("id"):
+        raise HTTPException(status_code=403, detail="无权访问该事件")
+    if role == "dept" and task.get("assigned_dept", "") != dept and task.get("reviewer_dept", "") != dept and task.get("reviewer_id", "") != current_user.get("id"):
         raise HTTPException(status_code=403, detail="无权访问该事件")
 
-    return EventStatusResponse(
-        event_id=task["event_id"],
-        description=task["description"],
-        status=task["status"],
-        address=task.get("address") or None,
-        event_type=task.get("event_type") or None,
-        urgency=task.get("urgency") or None,
-        scene_tag=task.get("scene_tag") or None,
-        emergency_type=task.get("emergency_type") or None,
-        handler=task.get("handler") or None,
-        created_at=task["created_at"],
-        completed_at=task.get("completed_at"),
-        error=task.get("error"),
-        reply=task.get("reply") or None,
-    )
+    return {
+        "event_id": task["event_id"],
+        "description": task["description"],
+        "status": task["status"],
+        "address": task.get("address") or None,
+        "event_type": task.get("event_type") or None,
+        "urgency": task.get("urgency") or None,
+        "scene_tag": task.get("scene_tag") or None,
+        "emergency_type": task.get("emergency_type") or None,
+        "handler": task.get("handler") or None,
+        "department_name": task.get("department_name", ""),
+        "assigned_dept": task.get("assigned_dept", ""),
+        "created_at": task["created_at"],
+        "completed_at": task.get("completed_at"),
+        "error": task.get("error"),
+        "reply": task.get("reply") or None,
+        "replies": task.get("replies", []),
+        "timeline": task.get("timeline", []),
+        "media": task.get("media", []),
+        "rejected_reason": task.get("rejected_reason", ""),
+        "withdrawn_at": task.get("withdrawn_at", ""),
+    }
 
 
 # ------------------------------------------------------------------
@@ -1593,25 +1803,33 @@ async def cancel_event(
 async def accept_event(
     event_id: str,
     request: AcceptRequest | None = Body(default=None),
-    current_user: dict[str, Any] = Depends(get_admin_dependency),
+    current_user: dict[str, Any] = Depends(get_staff_dependency),
 ) -> dict[str, Any]:
     """
-    后台人员受理待审核事件，将状态更新为"已受理"。
+    工作人员受理待处理/待审核事件，状态更新为"已受理"。
+    部门账号只能受理本部门事件；超管可受理外部资源与待审核事件。
     """
     async with _task_lock:
         _refresh_tasks()
         task = _tasks.get(event_id)
         if task is None:
             raise HTTPException(status_code=404, detail="事件不存在")
-        if task.get("status") != "待审核":
-            raise HTTPException(status_code=400, detail="仅待审核事件可受理")
+        role = current_user.get("role")
+        dept = current_user.get("department", "")
+        if role == "dept" and task.get("assigned_dept", "") != dept:
+            raise HTTPException(status_code=403, detail="无权操作该事件")
+        if task.get("status") == "待审核":
+            raise HTTPException(status_code=400, detail="待审核事件请先归类（修改事件类型）后再受理")
+        if task.get("status") != "待处理":
+            raise HTTPException(status_code=400, detail="仅待处理事件可受理")
         task["status"] = "已受理"
         task["reviewer_id"] = current_user.get("id", "")
+        task["reviewer_dept"] = dept
         if request and request.reply:
-            task["reply"] = request.reply
+            _append_reply(task, request.reply, current_user)
+        _timeline_append(task, "已受理", "已受理", current_user.get("real_name", ""))
         _save_tasks(_tasks)
 
-    # 追加记录到 events.jsonl
     try:
         record_agent.record_node({
             "description": task["description"],
@@ -1646,23 +1864,28 @@ async def accept_event(
 async def reject_event(
     event_id: str,
     request: RejectRequest,
-    current_user: dict[str, Any] = Depends(get_admin_dependency),
+    current_user: dict[str, Any] = Depends(get_staff_dependency),
 ) -> dict[str, Any]:
     """
-    管理员拒绝待审核事件，将状态更新为"已拒绝"并记录理由。
+    工作人员拒绝待处理/待审核事件，状态更新为"已拒绝"并记录理由。
     """
     async with _task_lock:
         _refresh_tasks()
         task = _tasks.get(event_id)
         if task is None:
             raise HTTPException(status_code=404, detail="事件不存在")
-        if task.get("status") != "待审核":
-            raise HTTPException(status_code=400, detail="仅待审核事件可拒绝")
+        role = current_user.get("role")
+        dept = current_user.get("department", "")
+        if role == "dept" and task.get("assigned_dept", "") != dept:
+            raise HTTPException(status_code=403, detail="无权操作该事件")
+        if task.get("status") not in ("待处理", "待审核"):
+            raise HTTPException(status_code=400, detail="仅待处理或待审核事件可拒绝")
         task["status"] = "已拒绝"
         task["rejected_reason"] = request.reason
         task["reply"] = request.reason
-        task["rejected_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        task["rejected_at"] = _now()
         task["rejected_by"] = current_user.get("id", "")
+        _timeline_append(task, "已拒绝", "事件被拒绝：" + request.reason, current_user.get("real_name", ""))
         _save_tasks(_tasks)
 
     return {
@@ -1685,7 +1908,7 @@ async def reply_event(
     current_user: dict[str, Any] = Depends(get_current_user_dependency),
 ) -> dict[str, Any]:
     """
-    后台人员或居民提交回复，将状态更新为"已完成"。
+    多轮对话：工作人员回复（文字+可选照片）或居民追问，不改变事件状态。
     """
     async with _task_lock:
         _refresh_tasks()
@@ -1693,35 +1916,89 @@ async def reply_event(
         if task is None:
             raise HTTPException(status_code=404, detail="事件不存在")
 
-        # 权限判断：admin 需匹配 reviewer_id；resident 只能回复自己的事件
-        is_admin = current_user.get("role") == "admin"
-        is_owner = task.get("user_id") == current_user.get("id")
-        if is_admin:
-            if task.get("reviewer_id") and task.get("reviewer_id") != current_user.get("id"):
-                raise HTTPException(status_code=403, detail="仅受理该事件的管理员可回复")
-        elif is_owner:
-            pass
+        role = current_user.get("role")
+        dept = current_user.get("department", "")
+        if role == "resident":
+            if task.get("user_id") != current_user.get("id"):
+                raise HTTPException(status_code=403, detail="无权操作该事件")
+            if task.get("status") not in ("已受理", "处理中", "已完成"):
+                raise HTTPException(status_code=400, detail="仅已受理/处理中/已完成事件可追问")
+            _append_reply(task, request.reply, current_user, request.photos)
+            _timeline_append(task, "追问", "居民追问", current_user.get("real_name", ""), request.photos)
+        elif role in ("admin", "dept"):
+            if role == "dept" and task.get("assigned_dept", "") != dept and task.get("reviewer_dept", "") != dept:
+                raise HTTPException(status_code=403, detail="无权操作该事件")
+            _append_reply(task, request.reply, current_user, request.photos)
+            _timeline_append(task, "回复", "工作人员回复", current_user.get("real_name", ""), request.photos)
         else:
             raise HTTPException(status_code=403, detail="无权操作该事件")
-
-        if task.get("status") not in ("已受理", "已完成"):
-            raise HTTPException(status_code=400, detail="仅已受理或已完成事件可提交回复")
-        # 首次回复时才将状态设为已完成；如果已经是已完成，保持不动
-        if task.get("status") != "已完成":
-            task["status"] = "已完成"
-        reply_entry = {
-            "content": request.reply,
-            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "reviewer_id": current_user.get("id", ""),
-            "reviewer_name": current_user.get("real_name", ""),
-        }
-        task.setdefault("replies", []).append(reply_entry)
-        task["reply"] = request.reply
-        task["reviewer_id"] = current_user.get("id", "")
-        task["completed_at"] = reply_entry["created_at"]
         _save_tasks(_tasks)
 
-    # 追加记录到 events.jsonl
+    return {
+        "success": True,
+        "data": {
+            "event_id": task["event_id"],
+            "reply": task["reply"],
+        },
+    }
+
+
+# ------------------------------------------------------------------
+# API 端点：POST /api/events/{event_id}/start（开始处理，可选）
+# ------------------------------------------------------------------
+@app.post("/api/events/{event_id}/start")
+async def start_event(
+    event_id: str,
+    current_user: dict[str, Any] = Depends(get_staff_dependency),
+) -> dict[str, Any]:
+    async with _task_lock:
+        _refresh_tasks()
+        task = _tasks.get(event_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="事件不存在")
+        role = current_user.get("role")
+        dept = current_user.get("department", "")
+        if role == "dept" and task.get("assigned_dept", "") != dept:
+            raise HTTPException(status_code=403, detail="无权操作该事件")
+        if task.get("status") != "已受理":
+            raise HTTPException(status_code=400, detail="仅已受理事件可开始处理")
+        task["status"] = "处理中"
+        _timeline_append(task, "处理中", "开始处理", current_user.get("real_name", ""))
+        _save_tasks(_tasks)
+    return {"success": True, "data": {"event_id": task["event_id"], "status": task["status"]}}
+
+
+# ------------------------------------------------------------------
+# API 端点：POST /api/events/{event_id}/complete（完成，强制照片留证）
+# ------------------------------------------------------------------
+@app.post("/api/events/{event_id}/complete")
+async def complete_event(
+    event_id: str,
+    request: CompleteRequest,
+    current_user: dict[str, Any] = Depends(get_staff_dependency),
+) -> dict[str, Any]:
+    async with _task_lock:
+        _refresh_tasks()
+        task = _tasks.get(event_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="事件不存在")
+        role = current_user.get("role")
+        dept = current_user.get("department", "")
+        if role == "dept" and task.get("assigned_dept", "") != dept and task.get("reviewer_dept", "") != dept:
+            raise HTTPException(status_code=403, detail="无权操作该事件")
+        if task.get("status") not in ("已受理", "处理中"):
+            raise HTTPException(status_code=400, detail="仅已受理或处理中事件可完成")
+        if not request.photos:
+            raise HTTPException(status_code=400, detail="完成事件必须上传至少 1 张留证照片")
+        task["status"] = "已完成"
+        task["reviewer_id"] = current_user.get("id", "")
+        task["reviewer_dept"] = dept
+        task["completed_at"] = _now()
+        if request.reply:
+            _append_reply(task, request.reply, current_user, request.photos)
+        _timeline_append(task, "已完成", "处理完成" + (("：" + request.reply) if request.reply else ""), current_user.get("real_name", ""), request.photos)
+        _save_tasks(_tasks)
+
     try:
         record_agent.record_node({
             "description": task["description"],
@@ -1737,16 +2014,210 @@ async def reply_event(
             "reply": request.reply,
         })
     except Exception as exc:
-        logger.warning("回复记录写入失败：event_id=%s，异常=%s", event_id, exc)
+        logger.warning("完成记录写入失败：event_id=%s，异常=%s", event_id, exc)
 
-    return {
-        "success": True,
-        "data": {
-            "event_id": task["event_id"],
-            "status": task["status"],
-            "reply": task["reply"],
-        },
-    }
+    return {"success": True, "data": {"event_id": task["event_id"], "status": task["status"]}}
+
+
+# ------------------------------------------------------------------
+# API 端点：PATCH /api/events/{event_id}/type（手动修正类型并自动重派）
+# ------------------------------------------------------------------
+@app.patch("/api/events/{event_id}/type")
+async def update_event_type(
+    event_id: str,
+    request: TypeUpdateRequest,
+    current_user: dict[str, Any] = Depends(get_staff_dependency),
+) -> dict[str, Any]:
+    async with _task_lock:
+        _refresh_tasks()
+        task = _tasks.get(event_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="事件不存在")
+        role = current_user.get("role")
+        dept = current_user.get("department", "")
+        if role == "dept" and task.get("assigned_dept", "") != dept:
+            raise HTTPException(status_code=403, detail="无权操作该事件")
+        old_type = task.get("event_type", "")
+        new_type = request.event_type.strip()
+        TERMINAL = ("已完成", "已拒绝", "已撤销")
+        if task.get("status") in TERMINAL:
+            raise HTTPException(status_code=400, detail="已完成/已拒绝/已撤销的事件不可修改类型")
+        valid_types = set(dispatch_agent.EVENT_TYPE_TO_HANDLER.keys()) | {"待审核"}
+        if new_type not in valid_types:
+            raise HTTPException(status_code=400, detail="事件类型不合法")
+        # 类型与紧急度均未变化：不做任何派单/时间线，直接返回
+        changed = new_type != old_type or bool(request.urgency and request.urgency != task.get("urgency", ""))
+        if not changed:
+            return {"success": True, "data": {"event_id": task["event_id"], "status": task["status"], "event_type": new_type, "department_name": task.get("department_name", "")}}
+        if request.urgency and request.urgency in ("高", "中", "低"):
+            task["urgency"] = request.urgency
+        task["event_type"] = new_type
+        if new_type == "待审核":
+            task["handler"] = "人工部"
+            task["assigned_dept"] = ""
+            task["department_name"] = ""
+            task["status"] = "待审核"
+            _timeline_append(task, "改类型", f"事件类型由 {old_type} 调整为待审核", current_user.get("real_name", ""))
+        else:
+            handler, key, name = dispatch_agent.event_type_to_department(new_type, task.get("urgency", ""), task.get("scene_tag", ""), task.get("emergency_type", ""))
+            task["handler"] = handler
+            task["assigned_dept"] = key
+            task["department_name"] = name
+            task["status"] = "待处理"
+            _timeline_append(task, "改类型", f"事件类型由 {old_type} 调整为 {new_type}，已转派 {name}", current_user.get("real_name", ""))
+        _save_tasks(_tasks)
+    return {"success": True, "data": {"event_id": task["event_id"], "status": task["status"], "event_type": task["event_type"], "department_name": task.get("department_name", "")}}
+
+
+# ------------------------------------------------------------------
+# API 端点：PATCH /api/events/{event_id}/dept（超管改派部门）
+# ------------------------------------------------------------------
+@app.patch("/api/events/{event_id}/dept")
+async def update_event_dept(
+    event_id: str,
+    request: DeptUpdateRequest,
+    current_user: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    async with _task_lock:
+        _refresh_tasks()
+        task = _tasks.get(event_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="事件不存在")
+        dept = request.department.strip()
+        if dept not in dispatch_agent.DEPARTMENTS:
+            raise HTTPException(status_code=400, detail="部门不合法")
+        TERMINAL = ("已完成", "已拒绝", "已撤销")
+        if task.get("status") in TERMINAL:
+            raise HTTPException(status_code=400, detail="已完成/已拒绝/已撤销的事件不可改派")
+        if dept == task.get("assigned_dept", ""):
+            return {"success": True, "data": {"event_id": task["event_id"], "status": task["status"], "department_name": task.get("department_name", "")}}
+        name = dispatch_agent.DEPARTMENTS[dept]
+        task["assigned_dept"] = dept
+        task["department_name"] = name
+        task["handler"] = name
+        # 改派后由新部门重新受理，清空原受理进度
+        task["status"] = "待处理"
+        task["reviewer_id"] = ""
+        task["reviewer_dept"] = ""
+        _timeline_append(task, "改派", f"事件已改派至 {name}", current_user.get("real_name", ""))
+        _save_tasks(_tasks)
+    return {"success": True, "data": {"event_id": task["event_id"], "status": task["status"], "department_name": name}}
+
+
+@app.delete("/api/admin/dept_users/{user_id}")
+async def admin_delete_dept_user(
+    user_id: str,
+    _admin: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    ok, msg = auth.delete_dept_user(user_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"success": True, "message": msg}
+
+
+# ------------------------------------------------------------------
+# API 端点：媒体上传 / 读取（COS 或本地回退）
+# ------------------------------------------------------------------
+@app.post("/api/uploads")
+async def upload_media(
+    file: UploadFile = File(...),
+    current_user: dict[str, Any] = Depends(get_current_user_dependency),
+) -> dict[str, Any]:
+    data = await file.read()
+    try:
+        media_id = media_store.save_upload(data, file.filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"success": True, "data": {"media_id": media_id, "url": f"/api/media/{media_id}"}}
+
+
+@app.get("/api/media/{media_id}")
+async def get_media(
+    media_id: str,
+    current_user: dict[str, Any] = Depends(get_current_user_dependency),
+) -> Response:
+    data = media_store.read_upload(media_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="媒体不存在")
+    return Response(content=data, media_type=media_store.content_type(media_id))
+
+
+# ------------------------------------------------------------------
+# API 端点：部门账号管理（仅超管）
+# ------------------------------------------------------------------
+@app.get("/api/admin/dept_users")
+async def admin_list_dept_users(
+    _admin: dict[str, Any] = Depends(get_admin_dependency),
+) -> list[dict[str, Any]]:
+    return auth.list_dept_users()
+
+
+@app.post("/api/admin/dept_users")
+async def admin_create_dept_user(
+    body: DeptUserCreateRequest,
+    _admin: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    ok, msg, user = auth.create_dept_user(
+        username=body.username, password=body.password, real_name=body.real_name,
+        phone=body.phone, department=body.department,
+    )
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"success": True, "data": user}
+
+
+@app.patch("/api/admin/dept_users/{user_id}")
+async def admin_update_dept_user(
+    user_id: str,
+    body: DeptUserUpdateRequest,
+    _admin: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    ok, msg, user = auth.update_dept_user(
+        user_id, password=body.password, department=body.department, status=body.status,
+    )
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"success": True, "data": user}
+
+
+# ------------------------------------------------------------------
+# API 端点：未读提示
+# ------------------------------------------------------------------
+@app.get("/api/notifications/unread")
+async def unread_notifications(
+    current_user: dict[str, Any] = Depends(get_current_user_dependency),
+) -> dict[str, Any]:
+    async with _task_lock:
+        _refresh_tasks()
+        role = current_user.get("role")
+        dept = current_user.get("department", "")
+        pending = 0
+        new_reply = 0
+        for task in _tasks.values():
+            replies = task.get("replies") or []
+            if role == "resident":
+                if task.get("user_id") != current_user.get("id"):
+                    continue
+                staff = [r for r in replies if r.get("role") in ("admin", "dept")]
+                if staff and staff[-1].get("created_at", "") > (task.get("user_read_at") or ""):
+                    new_reply += 1
+            elif role == "dept":
+                if task.get("assigned_dept", "") != dept and task.get("reviewer_dept", "") != dept and task.get("reviewer_id", "") != current_user.get("id"):
+                    continue
+                if task.get("status") == "待处理" and task.get("assigned_dept", "") == dept:
+                    pending += 1
+                resident_msgs = [r for r in replies if r.get("role") == "resident"]
+                if resident_msgs and resident_msgs[-1].get("created_at", "") > (task.get("dept_read_at") or ""):
+                    new_reply += 1
+            else:
+                if task.get("status") == "待审核":
+                    pending += 1
+                if task.get("status") == "待处理" and not task.get("assigned_dept"):
+                    pending += 1
+                resident_msgs = [r for r in replies if r.get("role") == "resident"]
+                if resident_msgs and resident_msgs[-1].get("created_at", "") > (task.get("dept_read_at") or ""):
+                    new_reply += 1
+        return {"success": True, "pending": pending, "new_reply": new_reply}
 
 
 # ------------------------------------------------------------------
@@ -1758,16 +2229,25 @@ async def mark_event_read(
     current_user: dict[str, Any] = Depends(get_current_user_dependency),
 ) -> dict[str, Any]:
     """
-    用户查看回复后标记为已读。
+    居民查看回复后标记 user_read_at；工作人员查看追问后标记 dept_read_at。
     """
     async with _task_lock:
         _refresh_tasks()
         task = _tasks.get(event_id)
         if task is None:
             raise HTTPException(status_code=404, detail="事件不存在")
-        if current_user.get("role") != "admin" and task.get("user_id") != current_user.get("id"):
+        role = current_user.get("role")
+        dept = current_user.get("department", "")
+        if role == "resident":
+            if task.get("user_id") != current_user.get("id"):
+                raise HTTPException(status_code=403, detail="无权访问此事件")
+            task["user_read_at"] = _now()
+        elif role in ("admin", "dept"):
+            if role == "dept" and task.get("assigned_dept", "") != dept and task.get("reviewer_dept", "") != dept and task.get("reviewer_id", "") != current_user.get("id"):
+                raise HTTPException(status_code=403, detail="无权访问此事件")
+            task["dept_read_at"] = _now()
+        else:
             raise HTTPException(status_code=403, detail="无权访问此事件")
-        task["user_read_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         _save_tasks(_tasks)
     return {"success": True}
 

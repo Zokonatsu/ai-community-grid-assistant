@@ -796,3 +796,39 @@ input:disabled, select:disabled { opacity: 0.6; cursor: not-allowed; }
         transition-duration: 0.01ms !important;
     }
 }
+
+
+/* --------------------------------------------------------------------------
+   升级新增：富提交 / 时间线 / 部门视图 / 未读角标
+   -------------------------------------------------------------------------- */
+.form-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+.form-row .form-group { flex: 1 1 120px; }
+.form-group label { display: block; font-size: 13px; color: var(--text-2); margin-bottom: 4px; }
+
+.voice-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.btn-sm { padding: 8px 12px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-1); cursor: pointer; }
+.btn-sm:hover { filter: brightness(0.96); }
+.btn-ghost { background: transparent; }
+
+.photo-grid { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.photo-thumb { position: relative; width: 84px; height: 84px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+.photo-thumb img, .photo-thumb video, .photo-thumb audio { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-thumb .rm { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; line-height: 18px; text-align: center; background: rgba(0,0,0,.55); color: #fff; border-radius: 50%; cursor: pointer; font-size: 13px; }
+
+.timeline { margin: 8px 0; }
+.tl-item { position: relative; padding: 0 0 14px 20px; border-left: 2px solid var(--border); margin-left: 8px; }
+.tl-item:last-child { border-left-color: transparent; }
+.tl-item::before { content: ''; position: absolute; left: -7px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); }
+.tl-item .tl-time { font-size: 12px; color: var(--text-3); }
+.tl-item .tl-text { font-size: 14px; color: var(--text-1); margin: 2px 0; }
+.tl-item .tl-actor { font-size: 12px; color: var(--text-2); }
+.tl-photos { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.tl-photos img { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); }
+
+.unread-dot { display: inline-block; min-width: 16px; height: 16px; line-height: 16px; padding: 0 4px; border-radius: 8px; background: #e02424; color: #fff; font-size: 11px; text-align: center; }
+.clickable-row { cursor: pointer; }
+.reply-link { color: var(--accent); cursor: pointer; }
+
+.section-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.role-tag.dept { background: #eef2ff; color: #3730a3; }
+.role-tag.super { background: #fef3c7; color: #92400e; }
