@@ -4,7 +4,7 @@
 # 编译阶段（builder）
 # 用于安装 Python 依赖并编译二进制 wheel，不进入最终镜像
 # ============================================================
-FROM python:3.11-slim AS builder
+FROM python:3.12-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -30,7 +30,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 运行阶段（runtime）
 # 仅保留运行所需的最小依赖，镜像体积显著减小
 # ============================================================
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
