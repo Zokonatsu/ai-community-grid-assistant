@@ -445,6 +445,52 @@
             </div>
         </div>
 
+        <!-- SLA 指标（今日） -->
+        <div class="card review-section" id="slaCard">
+            <div class="section-actions">
+                <h2>SLA 指标（今日）</h2>
+                <button class="btn-sm" id="weeklyReportBtn" onclick="openWeeklyReport()">生成周报</button>
+            </div>
+            <div class="sla-row">
+                <div class="sla-item" id="sla-handling-box">
+                    <div class="sla-label">平均处理时长</div>
+                    <div class="sla-value" id="sla-handling">-</div>
+                    <div class="sla-dept-list" id="sla-dept-list"></div>
+                </div>
+                <div class="sla-item" id="sla-workhours-box">
+                    <div class="sla-label">上班时间</div>
+                    <div class="sla-value" id="sla-workhours"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 系统公告（仅超管） -->
+        <div class="card review-section" id="announcementCard">
+            <h2>系统公告</h2>
+            <div class="form-row">
+                <div class="form-group"><label>公告标题</label><input type="text" id="ann-title"></div>
+            </div>
+            <div class="form-group">
+                <label>公告正文</label>
+                <div class="form-row" style="margin-bottom:4px;">
+                    <button type="button" class="btn-sm" onclick="annCmd('bold')">加粗</button>
+                    <button type="button" class="btn-sm" onclick="annCmd('insertUnorderedList')">列表</button>
+                    <button type="button" class="btn-sm" onclick="annCmd('formatBlock','h3')">标题</button>
+                </div>
+                <div contenteditable="true" id="ann-content" style="min-height:120px;border:1px solid var(--border-strong);border-radius:8px;padding:10px;background:var(--surface);"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>生效时间</label><input type="datetime-local" id="ann-publish"></div>
+                <div class="form-group"><label>到期时间</label><input type="datetime-local" id="ann-expire"></div>
+            </div>
+            <div class="form-row">
+                <button class="btn-sm" id="ann-save" onclick="saveAnnouncement()">发布公告</button>
+                <input type="hidden" id="ann-id">
+                <button class="btn-sm btn-ghost hidden" id="ann-cancel" onclick="resetAnnForm()">取消编辑</button>
+            </div>
+            <div id="annList" style="margin-top:10px;"></div>
+        </div>
+
         <!-- 工单处理专区 -->
         <div class="card review-section">
             <div class="section-actions">
@@ -474,7 +520,7 @@
         </div>
 
         <!-- 社区设置专区 -->
-        <div class="card review-section">
+        <div class="card review-section" id="community-card">
             <h2>社区设置</h2>
             <p class="section-desc">设置小区中心位置：点「一键定位」跳到当前位置，再拖动/点击地图标记选社区中心，用于事件/住户距中心距离计算。</p>
             <div class="form-row">
@@ -557,7 +603,18 @@
                     <option value="紧急救援">紧急救援</option>
                     <option value="常规">常规</option>
                 </select>
-                <button class="btn-sm" onclick="applyFilters()">筛选</button>
+                <label>日期：</label>
+                <select id="filterDate">
+                    <option value="">全部</option>
+                    <option value="today">本日</option>
+                    <option value="yesterday">昨日</option>
+                    <option value="thisweek">本周</option>
+                    <option value="lastweek">上周</option>
+                    <option value="1m">1个月</option>
+                    <option value="3m">3个月</option>
+                    <option value="1y">1年内</option>
+                </select>
+                <button class="btn-sm" onclick="applyFilters(true)">筛选</button>
                 <button class="btn-sm btn-refresh" onclick="loadData()">
                     <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.2 6.2A4.8 4.8 0 1 0 13 8"/><path d="M13.2 2.8V6h-3.2"/></svg>
                     刷新
@@ -569,6 +626,56 @@
             <div class="table-footer">
                 <span id="showingInfo">共 0 条记录</span>
                 <span>数据实时来源于 GET /api/events</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 图片放大弹窗 -->
+    <div class="overlay hidden" id="lightboxOverlay" onclick="closeLightbox()">
+        <div class="lightbox" onclick="event.stopPropagation()">
+            <span class="modal-close" onclick="closeLightbox()" aria-label="关闭">&times;</span>
+            <img id="lightboxImg" src="" alt="照片">
+        </div>
+    </div>
+
+
+    <!-- 部门账号 编辑弹窗 -->
+    <div class="overlay hidden" id="weeklyReportOverlay" onclick="closeWeeklyReport()">
+        <div class="modal" style="max-width:880px;" onclick="event.stopPropagation()">
+            <span class="modal-close" style="left:auto; right:12px; top:12px;" onclick="closeWeeklyReport()" aria-label="关闭">&times;</span>
+            <div class="modal-title" style="padding-left:0;">AI 周报</div>
+            <div class="form-row" style="margin-bottom:10px;flex-wrap:wrap;">
+                <select id="weekSelect" onchange="onWeekChange()" style="max-width:200px;"></select>
+                <input type="date" id="wrStart">
+                <input type="date" id="wrEnd">
+                <button class="btn-sm" id="wrGenerateBtn" onclick="generateWeeklyReport()">生成/刷新</button>
+            </div>
+            <div class="modal-content" id="weeklyReportContent" style="max-height:64vh;overflow-y:auto;"></div>
+            <div class="modal-buttons" style="margin-top:10px;">
+                <button class="btn-sm" onclick="copyWeeklyReport()">复制周报文本</button>
+                <button class="btn-sm" onclick="exportWeeklyReport()">导出 Markdown</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="overlay hidden" id="editDeptUserModal" onclick="closeEditDeptUser()">
+        <div class="modal" onclick="event.stopPropagation()">
+            <span class="modal-close" style="right:12px; left:auto; top:12px;" onclick="closeEditDeptUser()" aria-label="关闭">&times;</span>
+            <div class="modal-title">修改部门账号</div>
+            <input type="hidden" id="eu-id">
+            <div class="form-row">
+                <div class="form-group"><label>用户名</label><input type="text" id="eu-username"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>姓名</label><input type="text" id="eu-real_name"></div>
+                <div class="form-group"><label>手机号</label><input type="tel" id="eu-phone"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>密码</label><input type="text" id="eu-password" placeholder="留空则不修改"></div>
+            </div>
+            <div class="modal-buttons">
+                <button class="btn-sm btn-ghost" onclick="closeEditDeptUser()">取消</button>
+                <button class="btn-sm" onclick="saveDeptUser()">保存</button>
             </div>
         </div>
     </div>
@@ -592,9 +699,14 @@
                 .catch(function () {});
         })();
         let allEvents = [];
+        let eventPage = 1;
+        const EVENT_PAGE_SIZE = 20;
         let currentSort = { key: 'created_at', desc: true };
         window.cardText = {};
         window.cardPhotos = {};
+        window.expandedCards = new Set();
+        let lastEventsSignature = '';
+        let pendingListRefresh = false;
 
         // 内联极简线性 SVG 图标（stroke 1.5，currentColor）
         const ICON = {
@@ -653,11 +765,23 @@
                     roleEl.textContent = user.department_name || '部门账号';
                     roleEl.className = 'role-tag dept';
                     document.getElementById('tab-all').style.display = 'none';
+                    const commCard = document.getElementById('community-card');
+                    if (commCard) commCard.style.display = 'none';
+                    const charts = document.querySelector('.charts-row');
+                    if (charts) charts.style.display = 'none';
+                    const wrBtn = document.getElementById('weeklyReportBtn');
+                    if (wrBtn) wrBtn.style.display = 'none';
+                    const annCard = document.getElementById('announcementCard');
+                    if (annCard) annCard.style.display = 'none';
                 } else {
                     roleEl.textContent = '超级管理员';
                     roleEl.className = 'role-tag super';
                     document.getElementById('tab-all').style.display = '';
                     document.getElementById('deptUsersCard').classList.remove('hidden');
+                    const wrBtn = document.getElementById('weeklyReportBtn');
+                    if (wrBtn) wrBtn.style.display = '';
+                    const annCard = document.getElementById('announcementCard');
+                    if (annCard) annCard.style.display = '';
                 }
                 return true;
             } catch (e) {
@@ -825,70 +949,137 @@
             return `<div class="review-beneficiary">本人：${escapeHtml(e.user_name || '-')}${room ? ' · ' + escapeHtml(room) : ''}</div>`;
         }
 
+        function toggleCard(eventId) {
+            const body = document.getElementById(`card-body-${eventId}`);
+            if (!body) return;
+            const isOpen = body.style.display !== 'none';
+            if (isOpen) { body.style.display = 'none'; window.expandedCards.delete(eventId); }
+            else { body.style.display = 'block'; window.expandedCards.add(eventId); }
+            const card = document.getElementById(`card-${eventId}`);
+            if (card) {
+                const arrow = card.querySelector('.expand-arrow');
+                if (arrow) arrow.innerHTML = isOpen ? '&#9660;' : '&#9650;';
+            }
+        }
+
         function renderReviewLists() {
             const container = document.getElementById('reviewContainer');
             container.querySelectorAll('textarea[id^="reply-text-"]').forEach(ta => {
                 window.cardText[ta.id.replace('reply-text-', '')] = ta.value;
             });
+            // 保存各卡片下拉选中值，刷新后恢复
+            const savedSelects = {};
+            container.querySelectorAll('.review-card').forEach(card => {
+                const id = card.id.replace('card-', '');
+                const sels = card.querySelectorAll('select.review-card-select');
+                if (sels.length) savedSelects[id] = Array.from(sels).map(s => s.value);
+            });
             const events = tabEvents();
             if (!events.length) { container.innerHTML = '<div class="empty">暂无相关工单</div>'; return; }
             container.innerHTML = events.map(renderCard).join('');
+            // 恢复下拉选中值
+            Object.entries(savedSelects).forEach(([id, vals]) => {
+                const card = document.getElementById('card-' + id);
+                if (!card) return;
+                const sels = card.querySelectorAll('select.review-card-select');
+                sels.forEach((s, i) => { if (vals[i] != null && s.options.length > i) s.value = vals[i]; });
+            });
             events.forEach(e => {
                 if ((window.cardPhotos[e.event_id] || []).length) renderCardPhotos(e.event_id);
+                renderResidentPhotos(e.event_id);
+                renderReplyPhotos(e.event_id);
+                renderCardAudio(e.event_id);
             });
         }
 
         function renderCard(e) {
             const role = (window.currentUser || {}).role;
             const dept = (window.currentUser || {}).department || '';
-            const owned = e.assigned_dept === dept || e.reviewer_dept === dept || role === 'admin';
-            const canAct = role === 'admin' || owned;
-            const canHandle = canAct && ['已受理', '处理中', '已完成'].includes(e.status);
+            const isAdmin = role === 'admin';
+            const isDept = role === 'dept';
+            const owned = e.assigned_dept === dept || e.reviewer_dept === dept || isAdmin;
+            const canProcess = !isAdmin && owned;
+            const canHandle = canProcess && ['已受理', '处理中', '已完成'].includes(e.status);
+            const adminReadOnly = isAdmin && ['已受理', '处理中', '已完成'].includes(e.status);
             const actions = [];
-            if (canAct && e.status === '待处理') {
+            // 部门·待处理：受理/拒绝/转回管理
+            if (canProcess && e.status === '待处理') {
                 actions.push(`<button class="btn-sm btn-accept" onclick="acceptEvent('${e.event_id}')">受理</button>`);
                 actions.push(`<button class="btn-sm btn-reject" onclick="rejectEvent('${e.event_id}')">拒绝</button>`);
+                actions.push(`<button class="btn-sm btn-ghost" onclick="returnToAdmin('${e.event_id}')">转回管理</button>`);
             }
-            if (canAct && e.status === '待审核') {
-                actions.push(`<button class="btn-sm btn-reject" onclick="rejectEvent('${e.event_id}')">拒绝</button>`);
-            }
-            if (canAct && e.status === '已受理') {
+            // 部门·已受理：开始处理；已受理/处理中：完成；canHandle：回复
+            if (canProcess && e.status === '已受理') {
                 actions.push(`<button class="btn-sm" onclick="startEvent('${e.event_id}')">开始处理</button>`);
             }
-            if (canAct && ['已受理', '处理中'].includes(e.status)) {
+            if (canProcess && ['已受理', '处理中'].includes(e.status)) {
                 actions.push(`<button class="btn-sm btn-done" onclick="completeEvent('${e.event_id}')">完成</button>`);
             }
             if (canHandle) {
                 actions.push(`<button class="btn-sm" onclick="submitReply('${e.event_id}')">回复</button>`);
             }
-            const typeSel = `<select class="review-card-select" onchange="changeType('${e.event_id}', this.value)">` + EVENT_TYPES.map(t => `<option value="${t}" ${e.event_type === t ? 'selected' : ''}>${t}</option>`).join('') + `</select>`;
-            let deptSel = '';
-            if (role === 'admin') {
-                deptSel = `<select class="review-card-select" onchange="changeDept('${e.event_id}', this.value)"><option value="">改派…</option>` + Object.entries(DEPTS).map(([k, v]) => `<option value="${k}" ${e.assigned_dept === k ? 'selected' : ''}>${v}</option>`).join('') + `</select>`;
+            // 管理员·待审核：归类派单/拒绝；待处理：拒绝（配改派下拉）
+            if (isAdmin && e.status === '待审核') {
+                actions.push(`<button class="btn-sm btn-accept" onclick="acceptClassified('${e.event_id}')">归类派单</button>`);
+                actions.push(`<button class="btn-sm btn-reject" onclick="rejectEvent('${e.event_id}')">拒绝</button>`);
             }
-            const repliesHtml = (e.replies || []).map(r => `<div class="reply-history-item"><div class="reply-history-meta">${escapeHtml(r.reviewer_name || '')} · ${escapeHtml(r.created_at || '')}</div><div class="reply-history-content">${escapeHtml(r.content || '')}</div></div>`).join('');
-            const interaction = canHandle
-                ? `<div class="reply-box visible">
-                      <textarea id="reply-text-${e.event_id}" placeholder="回复文字">${escapeHtml(window.cardText[e.event_id] || '')}</textarea>
-                      <div class="photo-grid" id="card-photos-${e.event_id}"></div>
+            if (isAdmin && e.status === '待处理') {
+                actions.push(`<button class="btn-sm btn-reject" onclick="rejectEvent('${e.event_id}')">拒绝</button>`);
+            }
+            const isPendingReview = e.status === '待审核';
+            const showAdminSelects = isAdmin && !adminReadOnly;
+            const typeSel = showAdminSelects
+                ? `<select class="review-card-select" ${isPendingReview ? `id="card-type-${e.event_id}"` : `onchange="changeType('${e.event_id}', this.value)"`}>` + EVENT_TYPES.map(t => `<option value="${t}" ${e.event_type === t ? 'selected' : ''}>${t}</option>`).join('') + `</select>`
+                : escapeHtml(e.event_type || '-');
+            let deptSel = '';
+            if (showAdminSelects) {
+                deptSel = `<select class="review-card-select" ${isPendingReview ? `id="card-dept-${e.event_id}"` : `onchange="changeDept('${e.event_id}', this.value)"`}><option value="">改派…</option>` + Object.entries(DEPTS).map(([k, v]) => `<option value="${k}" ${e.assigned_dept === k ? 'selected' : ''}>${v}</option>`).join('') + `</select>`;
+            }
+            const repliesHtml = (e.replies || []).map((r, idx) => `<div class="reply-history-item"><div class="reply-history-meta">${escapeHtml(r.reviewer_name || '')} · ${escapeHtml(r.created_at || '')}</div><div class="reply-history-content">${escapeHtml(r.content || '')}</div><div class="reply-photos" id="reply-photos-${e.event_id}-${idx}"></div></div>`).join('');
+            let interaction = '';
+            if (canProcess) {
+                interaction = `<div class="reply-box visible">
+                      <textarea id="reply-text-${e.event_id}" placeholder="${canHandle ? '回复文字' : '输入拒绝理由（拒绝必填）'}">${escapeHtml(window.cardText[e.event_id] || '')}</textarea>
+                      ${canHandle ? `<div class="photo-grid" id="card-photos-${e.event_id}"></div>
                       <div class="form-row">
                           <button type="button" class="btn-sm" onclick="document.getElementById('card-photo-input-${e.event_id}').click()">&#128247; 添加照片</button>
                           <input type="file" id="card-photo-input-${e.event_id}" accept="image/*" multiple style="display:none" onchange="onPickCardPhoto('${e.event_id}', this.files)">
                           <span class="locate-hint" id="card-photo-hint-${e.event_id}"></span>
-                      </div>
-                  </div>`
-                : '';
+                      </div>` : ''}
+                  </div>`;
+            } else if (isAdmin && ['待审核', '待处理'].includes(e.status)) {
+                // 管理员仅提供拒绝理由输入，无照片上传
+                interaction = `<div class="reply-box visible">
+                      <textarea id="reply-text-${e.event_id}" placeholder="输入拒绝理由（拒绝必填）">${escapeHtml(window.cardText[e.event_id] || '')}</textarea>
+                  </div>`;
+            }
+            const expanded = window.expandedCards.has(e.event_id);
+            const hasAudio = (e.media || []).some(m => isAudio(m.media_id)) || !!e.audio_transcript;
+            const hasPhotos = (e.media || []).some(m => !isAudio(m.media_id)) ||
+                              (e.replies || []).some(r => (r.photos || []).length) ||
+                              (e.timeline || []).some(n => (n.photos || []).length);
+            const hasReplies = (e.replies || []).length > 0;
+            const attach = (hasAudio ? '&#128266;' : '') + (hasPhotos ? '&#128444;' : '') + (hasReplies ? '&#128172;' : '');
+            const returnedBadge = (isAdmin && e.returned_by_dept_name) ? `<span class="tag tag-returned" style="background:#fef3c7;color:#92400e;margin-left:6px;">由${escapeHtml(e.returned_by_dept_name)}转回</span>` : '';
+            const dispatchedBadge = (isDept && e.dispatched_by_name) ? `<span class="tag tag-dispatched" style="background:#e0e7ff;color:#3730a3;margin-left:6px;">由管理员转派</span>` : '';
             return `<div class="review-card" id="card-${e.event_id}">
-                <div class="review-header">
-                    <div class="review-user"><strong>${escapeHtml(e.user_name || '-')}</strong><span class="user-meta">${ICON.phone}${escapeHtml(e.user_phone || '-')}</span></div>
-                    <div><span class="tag ${statusClass(e.status)}">${escapeHtml(e.status || '-')}</span></div>
+                <div class="review-summary" onclick="toggleCard('${e.event_id}')">
+                    <div class="review-user"><strong>${escapeHtml(e.user_name || '-')}</strong></div>
+                    <div class="review-summary-meta">${escapeHtml(e.event_type || '-')} · ${escapeHtml(e.created_at || '')}${attach ? '<span class="attach-icons">' + attach + '</span>' : ''}</div>
+                    <div><span class="tag ${statusClass(e.status)}">${escapeHtml(e.status || '-')}</span>${returnedBadge}${dispatchedBadge}</div>
+                    <span class="expand-arrow">${expanded ? '&#9650;' : '&#9660;'}</span>
                 </div>
-                <div class="review-desc">${escapeHtml(e.description || '-')}</div>
-                ${beneficiaryLine(e)}
-                <div class="review-meta-line">类型：${typeSel} ${deptSel} · 部门：${escapeHtml(e.department_name || e.handler || '-')}${e.status === '待审核' ? '（待审核：请先修改类型归类后受理）' : ''}</div>
-                ${(e.replies && e.replies.length) ? `<div class="reply-history">${repliesHtml}</div>` : ''}
-                ${interaction}
-                <div class="review-actions">${actions.join(' ')}</div>
+                <div class="review-body" id="card-body-${e.event_id}" style="display:${expanded ? 'block' : 'none'}">
+                    <div class="review-desc">${escapeHtml(e.description || '-')}</div>
+                    ${beneficiaryLine(e)}
+                    <div class="review-meta-line">类型：${typeSel} ${deptSel} · 部门：${escapeHtml(e.department_name || e.handler || '-')}${e.status === '待审核' ? '（待审核：请先修改类型归类后受理）' : ''}</div>
+                    ${e.audio_transcript ? `<div class="modal-text"><b>语音转写：</b>${escapeHtml(e.audio_transcript)}</div>` : ''}
+                    <div class="tl-photos" id="card-resident-photos-${e.event_id}"></div>
+                    <div class="tl-photos" id="card-audio-${e.event_id}"></div>
+                    ${(e.replies && e.replies.length) ? `<div class="reply-history">${repliesHtml}</div>` : ''}
+                    ${interaction}
+                    <div class="review-actions">${actions.join(' ')}</div>
+                </div>
             </div>`;
         }
 
@@ -1123,6 +1314,135 @@
             return ids;
         }
 
+        function isAudio(id) { return /\.(mp3|m4a|wav|ogg|webm)$/i.test(id || ''); }
+        async function renderCardAudio(eventId) {
+            const box = document.getElementById(`card-audio-${eventId}`);
+            if (!box) return;
+            const ev = allEvents.find(x => x.event_id === eventId);
+            if (!ev) return;
+            const audios = (ev.media || []).filter(m => isAudio(m.media_id));
+            if (!audios.length) return;
+            box.innerHTML = '';
+            for (const m of audios) {
+                const u = await cardMediaUrl(m.media_id);
+                if (u) {
+                    const audio = document.createElement('audio');
+                    audio.controls = true;
+                    audio.preload = 'metadata';
+                    audio.src = u;
+                    audio.style.width = '100%';
+                    audio.className = 'voice-audio';
+                    box.appendChild(audio);
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // 事件列表媒体单元格 / 图片放大
+        // ------------------------------------------------------------------
+        function openLightbox(url) {
+            const img = document.getElementById('lightboxImg');
+            if (!img) return;
+            img.src = url;
+            document.getElementById('lightboxOverlay').classList.remove('hidden');
+            syncPageScrollLock();
+        }
+        function closeLightbox() {
+            document.getElementById('lightboxOverlay').classList.add('hidden');
+            syncPageScrollLock();
+            const img = document.getElementById('lightboxImg');
+            if (img) img.src = '';
+        }
+
+        async function renderTableMediaCells(events) {
+            for (const e of events) {
+                const cell = document.getElementById(`table-media-${e.event_id}`);
+                if (!cell) continue;
+                const photos = (e.media || []).filter(m => !isAudio(m.media_id));
+                const audios = (e.media || []).filter(m => isAudio(m.media_id));
+                let html = '';
+                // 照片槽
+                if (photos.length) {
+                    for (const p of photos) {
+                        const u = await cardMediaUrl(p.media_id);
+                        if (u) html += `<img class="table-thumb" src="${u}" alt="照片" title="点击放大" onclick="openLightbox('${u}')">`;
+                    }
+                } else {
+                    html += '<span class="muted" title="无照片">/</span>';
+                }
+                // 录音槽
+                html += '<span class="table-media-sep"></span>';
+                if (audios.length) {
+                    const u = await cardMediaUrl(audios[0].media_id);
+                    if (u) html += `<button type="button" class="btn-sm audio-play-btn" data-url="${u}" onclick="toggleAudioPlay(this)">&#9654; 播放</button>`;
+                    else html += '<span class="muted" title="录音不可用">/</span>';
+                } else {
+                    html += '<span class="muted" title="无录音">/</span>';
+                }
+                cell.innerHTML = html;
+            }
+        }
+
+        function toggleAudioPlay(btn) {
+            const u = btn.getAttribute('data-url');
+            if (!window.__tableAudio) window.__tableAudio = new Audio();
+            const a = window.__tableAudio;
+            const prevBtn = window.__tableAudioBtn;
+            if (a.src === u) {
+                if (a.paused) { a.play(); btn.innerHTML = '&#9208; 暂停'; window.__tableAudioBtn = btn; }
+                else { a.pause(); btn.innerHTML = '&#9654; 播放'; }
+                return;
+            }
+            if (prevBtn && prevBtn !== btn) prevBtn.innerHTML = '&#9654; 播放';
+            a.pause();
+            a.src = u;
+            window.__tableAudioBtn = btn;
+            a.onended = () => { btn.innerHTML = '&#9654; 播放'; };
+            a.play();
+            btn.innerHTML = '&#9208; 暂停';
+        }
+
+        async function renderReplyPhotos(eventId) {
+            const ev = allEvents.find(x => x.event_id === eventId);
+            if (!ev) return;
+            (ev.replies || []).forEach(async (r, idx) => {
+                const box = document.getElementById(`reply-photos-${eventId}-${idx}`);
+                if (!box || !r.photos || !r.photos.length) return;
+                for (const pid of r.photos) {
+                    const u = await cardMediaUrl(pid);
+                    if (u) {
+                        const img = document.createElement('img');
+                        img.className = 'tl-photo';
+                        img.src = u;
+                        img.alt = '回复照片';
+                        img.onclick = () => openLightbox(u);
+                        box.appendChild(img);
+                    }
+                }
+            });
+        }
+
+        async function renderResidentPhotos(eventId) {
+            const box = document.getElementById(`card-resident-photos-${eventId}`);
+            if (!box) return;
+            const ev = allEvents.find(x => x.event_id === eventId);
+            if (!ev) return;
+            const photos = (ev.media || []).filter(m => !isAudio(m.media_id));
+            if (!photos.length) return;
+            box.innerHTML = '';
+            for (const p of photos) {
+                const u = await cardMediaUrl(p.media_id);
+                if (u) {
+                    const img = document.createElement('img');
+                    img.className = 'tl-photo';
+                    img.src = u;
+                    img.alt = '照片';
+                    img.onclick = () => openLightbox(u);
+                    box.appendChild(img);
+                }
+            }
+        }
+
         const cardMediaUrlCache = {};
         async function cardMediaUrl(id) {
             if (!id) return '';
@@ -1223,6 +1543,42 @@
             } catch (e) { alert('网络请求失败'); }
         }
 
+        async function acceptClassified(eventId) {
+            const ev = allEvents.find(x => x.event_id === eventId);
+            const typeEl = document.getElementById(`card-type-${eventId}`);
+            const deptEl = document.getElementById(`card-dept-${eventId}`);
+            const type = typeEl ? typeEl.value : (ev ? ev.event_type : '');
+            const dept = deptEl ? deptEl.value : (ev ? ev.assigned_dept : '');
+            if (!type || type === '待审核') { alert('请先选择事件类型（需改判部门）'); return; }
+            if (!dept) { alert('请先选择改派部门（需改判部门）'); return; }
+            try {
+                const r1 = await fetch(`${API_BASE}/api/events/${eventId}/type`, {
+                    method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ event_type: type, urgency: ev ? (ev.urgency || '') : '' })
+                });
+                if (checkUnauthorized(r1)) return;
+                if (!r1.ok) { const d = await r1.json().catch(() => ({})); alert((d && (d.error || d.detail)) || '改类型失败'); return; }
+                const r2 = await fetch(`${API_BASE}/api/events/${eventId}/dept`, {
+                    method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify({ department: dept })
+                });
+                if (checkUnauthorized(r2)) return;
+                if (!r2.ok) { const d = await r2.json().catch(() => ({})); alert((d && (d.error || d.detail)) || '改派失败'); return; }
+                await loadData();
+            } catch (e) { alert('网络请求失败'); }
+        }
+
+        async function returnToAdmin(eventId) {
+            if (!confirm('确定将该事件转回管理重新分派？')) return;
+            try {
+                const res = await fetch(`${API_BASE}/api/events/${eventId}/return`, {
+                    method: 'POST', headers: getAuthHeaders(false)
+                });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) { const d = await res.json().catch(() => ({})); alert((typeof d.detail === 'string' ? d.detail : (d.error || '操作失败'))); return; }
+                alert('已转回管理');
+                await loadData();
+            } catch (e) { alert('网络请求失败'); }
+        }
+
         async function changeDept(eventId, dept) {
             if (!dept) return;
             const ev = allEvents.find(x => x.event_id === eventId);
@@ -1251,12 +1607,296 @@
             } catch (e) {}
         }
 
+        // ---- \u7cfb\u7edf\u516c\u544a\uff08\u4ec5\u8d85\u7ba1\uff09 ----
+        function annCmd(cmd, val) {
+            document.execCommand(cmd, false, val || null);
+            const ed = document.getElementById('ann-content');
+            if (ed) ed.focus();
+        }
+        function resetAnnForm() {
+            document.getElementById('ann-id').value = '';
+            document.getElementById('ann-title').value = '';
+            const ed = document.getElementById('ann-content');
+            if (ed) ed.innerHTML = '';
+            document.getElementById('ann-publish').value = '';
+            document.getElementById('ann-expire').value = '';
+            const cancel = document.getElementById('ann-cancel');
+            if (cancel) cancel.classList.add('hidden');
+            const btn = document.getElementById('ann-save');
+            if (btn) btn.textContent = '\u53d1\u5e03\u516c\u544a';
+        }
+        async function loadAnnouncements() {
+            const box = document.getElementById('annList');
+            if (!box) return;
+            try {
+                const res = await fetch(`${API_BASE}/api/admin/announcements`, { headers: getAuthHeaders(false) });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) return;
+                const d = await res.json();
+                const items = (d && d.announcements) ? d.announcements : [];
+                window.__annList = items;
+                box.innerHTML = items.map(a => `<div class="review-beneficiary">\u3010${escapeHtml(a.title)}\u3011 ${escapeHtml(a.publish_time)} ~ ${escapeHtml(a.expire_time)} <button class="btn-sm" onclick="editAnnouncement(${a.id})">\u7f16\u8f91</button> <button class="btn-sm btn-reject" onclick="deleteAnnouncement(${a.id})">\u5220\u9664</button></div>`).join('') || '<div class="empty">\u6682\u65e0\u516c\u544a</div>';
+            } catch (e) { box.innerHTML = '<div class="empty">\u52a0\u8f7d\u5931\u8d25</div>'; }
+        }
+        function editAnnouncement(id) {
+            const items = window.__annList || [];
+            const a = items.find(x => x.id === id);
+            if (!a) return;
+            document.getElementById('ann-id').value = a.id;
+            document.getElementById('ann-title').value = a.title;
+            document.getElementById('ann-content').innerHTML = a.content;
+            document.getElementById('ann-publish').value = (a.publish_time || '').slice(0, 16);
+            document.getElementById('ann-expire').value = (a.expire_time || '').slice(0, 16);
+            document.getElementById('ann-save').textContent = '\u4fdd\u5b58\u4fee\u6539';
+            const cancel = document.getElementById('ann-cancel');
+            if (cancel) cancel.classList.remove('hidden');
+        }
+        async function saveAnnouncement() {
+            const title = document.getElementById('ann-title').value.trim();
+            const content = document.getElementById('ann-content').innerHTML;
+            const publish = document.getElementById('ann-publish').value;
+            const expire = document.getElementById('ann-expire').value;
+            const id = document.getElementById('ann-id').value;
+            if (!title || !content || !publish || !expire) { alert('\u8bf7\u586b\u5199\u5b8c\u6574\u516c\u544a\u4fe1\u606f'); return; }
+            if (publish >= expire) { alert('\u751f\u6548\u65f6\u95f4\u9700\u65e9\u4e8e\u5230\u671f\u65f6\u95f4'); return; }
+            const body = JSON.stringify({ title, content, publish_time: publish, expire_time: expire });
+            const method = id ? 'PUT' : 'POST';
+            const url = id ? `${API_BASE}/api/admin/announcements/${id}` : `${API_BASE}/api/admin/announcements`;
+            const res = await fetch(url, { method, headers: getAuthHeaders(), body });
+            if (checkUnauthorized(res)) return;
+            const d = await res.json().catch(() => ({}));
+            if (res.ok && d.success) { alert('\u5df2\u4fdd\u5b58'); resetAnnForm(); await loadAnnouncements(); }
+            else { alert((d && (d.detail || d.error)) || '\u4fdd\u5b58\u5931\u8d25'); }
+        }
+        async function deleteAnnouncement(id) {
+            if (!confirm('\u786e\u5b9a\u5220\u9664\u8be5\u516c\u544a\uff1f')) return;
+            const res = await fetch(`${API_BASE}/api/admin/announcements/${id}`, { method: 'DELETE', headers: getAuthHeaders(false) });
+            if (checkUnauthorized(res)) return;
+            if (res.ok) { alert('\u5df2\u5220\u9664'); await loadAnnouncements(); }
+            else alert('\u5220\u9664\u5931\u8d25');
+        }
+
+        async function loadMetrics() {
+            try {
+                const res = await fetch(`${API_BASE}/api/metrics`, { headers: getAuthHeaders(false) });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) return;
+                const d = await res.json();
+                renderSlaHandling(d);
+                renderSlaWorkhours(d);
+            } catch (e) {}
+        }
+        function handlingColor(min) {
+            if (min == null) return '#6b7280';
+            if (min <= 5) return '#16a34a';
+            if (min <= 20) return '#d97706';
+            return '#dc2626';
+        }
+        function renderSlaHandling(d) {
+            const handEl = document.getElementById('sla-handling');
+            const listEl = document.getElementById('sla-dept-list');
+            const role = (window.currentUser || {}).role;
+            if (handEl) handEl.style.color = handlingColor(d.avg_handling_min);
+            if (role === 'dept') {
+                if (handEl) handEl.textContent = (d.avg_handling_min != null) ? (d.avg_handling_min + ' 分钟') : '-';
+                if (listEl) listEl.innerHTML = '';
+            } else {
+                if (handEl) handEl.textContent = (d.avg_handling_min != null) ? (d.avg_handling_min + ' 分钟（全部）') : '-';
+                const results = d.dept_results || {};
+                const rows = Object.entries(results).map(([k, v]) => {
+                    const name = DEPTS[k] || k;
+                    const valText = v != null ? (v + ' 分') : '-';
+                    return `<span class="sla-dept-item" style="color:${handlingColor(v)}">${escapeHtml(name)}：${valText}</span>`;
+                }).join('');
+                if (listEl) listEl.innerHTML = rows || '<span class="sla-dept-item">暂无数据</span>';
+            }
+        }
+        function renderSlaWorkhours(d) {
+            const box = document.getElementById('sla-workhours');
+            if (!box) return;
+            const role = (window.currentUser || {}).role;
+            if (role === 'admin') {
+                box.innerHTML = `<input type="time" id="sla-ws" value="${escapeHtml(d.work_hours_start)}"> ~ <input type="time" id="sla-we" value="${escapeHtml(d.work_hours_end)}"> <button class="btn-sm" onclick="saveWorkHours()">保存</button>`;
+            } else {
+                box.innerHTML = `${escapeHtml(d.work_hours_start)} – ${escapeHtml(d.work_hours_end)}`;
+            }
+        }
+        async function saveWorkHours() {
+            const ws = document.getElementById('sla-ws') ? document.getElementById('sla-ws').value : '';
+            const we = document.getElementById('sla-we') ? document.getElementById('sla-we').value : '';
+            if (!ws || !we) { alert('请选择上班时间'); return; }
+            const res = await fetch(`${API_BASE}/api/admin/workhours`, {
+                method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ work_hours_start: ws, work_hours_end: we })
+            });
+            if (checkUnauthorized(res)) return;
+            if (!res.ok) { const dd = await res.json().catch(() => ({})); alert((dd && (dd.detail || dd.error)) || '保存失败'); return; }
+            alert('已保存');
+            await loadMetrics();
+        }
+
+        // ---- AI \u5468\u62a5\u5f39\u7a97 ----
+        let wrWeeks = [];
+        function syncPageScrollLock() {
+            const ids = ['weeklyReportOverlay', 'editDeptUserModal', 'lightboxOverlay'];
+            const anyOpen = ids.some(id => { const el = document.getElementById(id); return el && !el.classList.contains('hidden'); });
+            document.body.classList.toggle('modal-lock', anyOpen);
+        }
+        async function openWeeklyReport() {
+            document.getElementById('weeklyReportOverlay').classList.remove('hidden');
+            syncPageScrollLock();
+            await loadWeeklyReportList();
+            const week = document.getElementById('weekSelect').value;
+            if (week) { await loadSavedWeek(week); } else { resetWrRange(); }
+        }
+        async function loadWeeklyReportList() {
+            try {
+                const res = await fetch(`${API_BASE}/api/admin/weekly_reports`, { headers: getAuthHeaders(false) });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) return;
+                const d = await res.json();
+                wrWeeks = (d && d.weeks) ? d.weeks : [];
+                const sel = document.getElementById('weekSelect');
+                if (!sel) return;
+                sel.innerHTML = wrWeeks.map(w => `<option value="${escapeHtml(w.week_key)}">${escapeHtml(w.week_label || w.week_key)}</option>`).join('') || '<option value="">\uff08\u6682\u65e0\u5df2\u751f\u6210\u5468\u62a5\uff09</option>';
+            } catch (e) {}
+        }
+        function onWeekChange() {
+            const wk = document.getElementById('weekSelect').value;
+            if (wk) { document.getElementById('wrStart').value = wk; document.getElementById('wrEnd').value = ''; loadSavedWeek(wk); }
+        }
+        function _localDateStr(d) {
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            return `${y}-${m}-${dd}`;
+        }
+        function showWrLoading() {
+            const c = document.getElementById('weeklyReportContent');
+            if (c) c.innerHTML = '<div class="wr-loading"><div class="spinner"></div><div class="muted">正在生成周报…</div></div>';
+        }
+        function resetWrRange() {
+            const d = new Date();
+            const day = (d.getDay() + 6) % 7;
+            const mon = new Date(d); mon.setDate(d.getDate() - day);
+            document.getElementById('wrStart').value = _localDateStr(mon);
+            document.getElementById('wrEnd').value = _localDateStr(d);
+            document.getElementById('weekSelect').value = '';
+            loadWeeklyReport();
+        }
+        async function loadSavedWeek(week) {
+            try {
+                const res = await fetch(`${API_BASE}/api/admin/weekly_report?week=${encodeURIComponent(week)}`, { headers: getAuthHeaders(false) });
+                if (checkUnauthorized(res)) return;
+                const d = await res.json().catch(() => ({}));
+                const c = document.getElementById('weeklyReportContent');
+                if (res.ok && d.report) { document.getElementById('wrStart').value = d.report.start; document.getElementById('wrEnd').value = d.report.end; renderWeeklyReport(d.report); }
+                else if (c) c.innerHTML = '<div class="modal-text muted">\u8be5\u5468\u5468\u62a5\u672a\u751f\u6210\uff0c\u8bf7\u8bbe\u7f6e\u65e5\u671f\u540e\u70b9\u300c\u751f\u6210/\u5237\u65b0\u300d\u3002</div>';
+            } catch (e) {}
+        }
+        async function generateWeeklyReport() {
+            const btn = document.getElementById('wrGenerateBtn');
+            if (btn) { btn.disabled = true; }
+            try {
+                const rep = await postGenerate();
+                if (rep) { renderWeeklyReport(rep); await loadWeeklyReportList(); document.getElementById('weekSelect').value = rep.week_key; }
+            } finally { if (btn) btn.disabled = false; }
+        }
+        async function loadWeeklyReport() {
+            const start = document.getElementById('wrStart').value;
+            const end = document.getElementById('wrEnd').value;
+            const c = document.getElementById('weeklyReportContent');
+            const week = document.getElementById('weekSelect').value;
+            if (week) { await loadSavedWeek(week); return; }
+            if (!start) { if (c) c.innerHTML = '<div class="modal-text muted">\u8bf7\u8bbe\u7f6e\u65e5\u671f\u8303\u56f4\u540e\u70b9\u300c\u751f\u6210/\u5237\u65b0\u300d\u3002</div>'; return; }
+            const rep = await postGenerate();
+            if (rep) renderWeeklyReport(rep);
+        }
+        async function postGenerate() {
+            showWrLoading();
+            const start = document.getElementById('wrStart').value;
+            const end = document.getElementById('wrEnd').value;
+            const q = new URLSearchParams();
+            if (start) q.set('start', start);
+            if (end) q.set('end', end);
+            const res = await fetch(`${API_BASE}/api/admin/weekly_report?${q.toString()}`, { method: 'POST', headers: getAuthHeaders(false) });
+            if (checkUnauthorized(res)) return null;
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok || !d.success) { alert((d && (d.detail || d.error)) || '\u751f\u6210\u5931\u8d25'); return null; }
+            return d.report;
+        }
+        function renderWeeklyReport(r) {
+            const c = document.getElementById('weeklyReportContent');
+            if (!c) return;
+            wrLastReport = r;
+            const s = r.stats || {};
+            const tip = '\u4ec5\u7edf\u8ba1\u4e0a\u73ed\u65f6\u6bb5\u8017\u65f6\uff0c\u81ea\u52a8\u5254\u9664\u975e\u5de5\u4f5c\u65f6\u95f4';
+            const sv = (v, unit) => (v != null ? (v + (unit || '')) : '-');
+            let html = '<div class="sla-row" style="margin-bottom:10px;">'
+                + `<div class="sla-item" title="${tip}"><div class="sla-label">\u672c\u5468\u521b\u5efa</div><div class="sla-value">${s.total_created ?? 0}</div></div>`
+                + `<div class="sla-item"><div class="sla-label">\u5df2\u5904\u7406</div><div class="sla-value">${s.processed_count ?? 0}</div></div>`
+                + `<div class="sla-item"><div class="sla-label">\u5df2\u5b8c\u6210</div><div class="sla-value">${s.completed_count ?? 0}</div></div>`
+                + `<div class="sla-item"><div class="sla-label">\u672a\u5904\u7406/\u8d85\u65f6</div><div class="sla-value">${s.unprocessed_count ?? 0}</div></div>`
+                + `<div class="sla-item"><div class="sla-label">\u529e\u7ed3\u7387</div><div class="sla-value">${s.completion_rate != null ? (s.completion_rate*100).toFixed(1) + '%' : '-'}</div></div>`
+                + `<div class="sla-item" title="${tip}"><div class="sla-label">\u5e73\u5747\u54cd\u5e94\u65f6\u957f</div><div class="sla-value" style="color:${s.response_color || '#6b7280'}">${sv(s.avg_response_min, ' \u5206')}</div></div>`
+                + `<div class="sla-item" title="${tip}"><div class="sla-label">\u5e73\u5747\u5904\u7406\u65f6\u957f</div><div class="sla-value" style="color:${s.handling_color || '#6b7280'}">${sv(s.avg_handling_min, ' \u5206')}</div></div>`
+                + '</div>';
+
+            const td = s.type_distribution || {};
+            const tagText = Object.entries(td).map(([t, n]) => `<span class="tag">${escapeHtml(t)} ${n}</span>`).join(' ');
+            if (tagText) html += `<div class="modal-text" style="margin-bottom:8px;"><b>\u5de5\u5355\u7c7b\u578b</b> ${tagText}</div>`;
+
+            const dm = s.dept_metrics || [];
+            if (dm.length) {
+                html += `<div class="modal-text"><b>\u90e8\u95e8\u6307\u6807</b></div><table style="width:100%;border-collapse:collapse;margin-bottom:8px;"><thead><tr><th style="text-align:left;\u00a0">\u90e8\u95e8</th><th>\u5de5\u5355\u6570</th><th>\u5e73\u5747\u54cd\u5e94</th><th>\u5e73\u5747\u5904\u7406</th></tr></thead><tbody>`
+                    + dm.map(m => { const noTicket = m.count === 0; return `<tr><td style="text-align:left;">${escapeHtml(m.dept_name)}</td><td>${noTicket ? '无工单' : m.count}</td><td style="color:${m.avg_response_min != null ? '#16a34a' : '#6b7280'}">${noTicket ? '-' : sv(m.avg_response_min, ' 分')}</td><td>${noTicket ? '-' : sv(m.avg_handling_min, ' 分')}</td></tr>`; }).join('')
+                    + '</tbody></table>';
+            }
+
+            const dups = s.duplicates || [];
+            html += '<div class="modal-text" style="margin-top:6px;"><b>\u98ce\u9669\u533a</b></div>';
+            html += riskSummary('重复工单', dups.length, dups, d => `${escapeHtml(d.type)} (\u540c\u7528\u6237 ${d.count} \u6b21)`);
+            html += riskSummary('超时工单', s.overdue_count || 0, s.overdue || [], e => `${escapeHtml(e.type)} ${escapeHtml(e.event_id.slice(0,8))}`);
+            html += riskSummary('积压工单', s.backlog_count || 0, s.backlog || [], e => `${escapeHtml(e.type)} ${escapeHtml(e.event_id.slice(0,8))}`);
+
+            html += `<div class="modal-text" style="margin-top:10px;"><b>AI \u5468\u62a5\u6b63\u6587</b></div>`;
+            html += `<div class="modal-text" style="white-space:pre-wrap;">${escapeHtml(r.ai_summary || '\u751f\u6210\u5931\u8d25\uff0c\u53ef\u91cd\u8bd5\u3002')}</div>`;
+            c.innerHTML = html;
+        }
+        function riskSummary(title, count, list, fmt) {
+            let h = `<details style="margin:6px 0;"><summary class="reply-link">${title}：${count} ${count ? '（点击展开）' : ''}</summary>`;
+            if (list && list.length) {
+                const short = list.slice(0, 10).map(fmt).join('；');
+                h += `<div class="modal-text muted" style="margin-top:4px;">${short}${list.length > 10 ? ` 等 ${list.length} \u4ef6` : ''}</div>`;
+            } else {
+                h += `<div class="modal-text muted" style="margin-top:4px;">\u65e0</div>`;
+            }
+            h += '</details>';
+            return h;
+        }
+        async function copyWeeklyReport() {
+            const r = wrLastReport;
+            if (!r) { const txt = document.getElementById('weeklyReportContent').innerText; if (!txt) { alert('\u65e0\u53ef\u590d\u5236\u5185\u5bb9'); return; } try { await navigator.clipboard.writeText(txt); alert('\u5df2\u590d\u5236'); return; } catch (e) { alert('\u590d\u5236\u5931\u8d25'); return; } }
+            const md = weeklyReportMarkdown(r);
+            try { await navigator.clipboard.writeText(md); alert('\u5df2\u590d\u5236\u5468\u62a5\u6587\u672c'); } catch (e) { alert('\u590d\u5236\u5931\u8d25'); }
+        }
+        function exportWeeklyReport() {
+            const week = document.getElementById('weekSelect').value;
+            const url = `${API_BASE}/api/admin/weekly_report/export?week=${encodeURIComponent(week)}`;
+            window.open(url, '_blank');
+        }
+        function weeklyReportMarkdown(r) {
+            return '# \u793e\u533a\u5468\u62a5\uff08' + (r.week_label || '') + '）\n\n' + (r.ai_summary || '');
+        }
+        function closeWeeklyReport() { document.getElementById('weeklyReportOverlay').classList.add('hidden'); syncPageScrollLock(); }
+
+
         function populateDeptSelect() {
             const sel = document.getElementById('du-department');
             if (!sel) return;
             sel.innerHTML = Object.entries(DEPTS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
         }
 
+        let deptUsersCache = [];
         async function loadDeptUsers() {
             const box = document.getElementById('deptUsersList');
             if (!box) return;
@@ -1265,7 +1905,11 @@
                 if (checkUnauthorized(res)) return;
                 if (!res.ok) return;
                 const users = await res.json();
-                box.innerHTML = users.map(u => `<div class="review-beneficiary">${escapeHtml(u.real_name || u.username)} · ${escapeHtml(u.username)} · ${escapeHtml(u.department_name || '')} ${u.status === 'disabled' ? '· 已停用' : ''} <button class="btn-sm btn-reject" onclick="deleteDeptUser('${u.id}')">删除</button></div>`).join('') || '<div class="empty">暂无部门账号</div>';
+                deptUsersCache = Array.isArray(users) ? users : [];
+                box.innerHTML = deptUsersCache.map(u => {
+                    const disabled = u.status === 'disabled' ? '· 已停用' : '';
+                    return `<div class="review-beneficiary">${escapeHtml(u.real_name || u.username)} · ${escapeHtml(u.username)} · ${escapeHtml(u.department_name || '')} ${disabled} <button class="btn-sm" onclick="openEditDeptUser('${u.id}')">修改</button> <button class="btn-sm btn-reject" onclick="deleteDeptUser('${u.id}')">删除</button></div>`;
+                }).join('') || '<div class="empty">暂无部门账号</div>';
             } catch (e) { box.innerHTML = '<div class="empty">加载失败</div>'; }
         }
 
@@ -1296,6 +1940,43 @@
             else { alert((d && (d.detail || d.error)) || '删除失败'); }
         }
 
+        function openEditDeptUser(id) {
+            const u = deptUsersCache.find(x => x.id === id);
+            if (!u) return;
+            document.getElementById('eu-id').value = u.id;
+            document.getElementById('eu-username').value = u.username || '';
+            document.getElementById('eu-real_name').value = u.real_name || '';
+            document.getElementById('eu-phone').value = u.phone || '';
+            document.getElementById('eu-password').value = '';
+            document.getElementById('editDeptUserModal').classList.remove('hidden');
+            syncPageScrollLock();
+        }
+
+        function closeEditDeptUser() {
+            const m = document.getElementById('editDeptUserModal');
+            if (m) m.classList.add('hidden');
+            syncPageScrollLock();
+        }
+
+        async function saveDeptUser() {
+            const id = document.getElementById('eu-id').value;
+            const username = document.getElementById('eu-username').value.trim();
+            const real_name = document.getElementById('eu-real_name').value.trim();
+            const phone = document.getElementById('eu-phone').value.trim();
+            const password = document.getElementById('eu-password').value;
+            if (!username || !real_name || !phone) { alert('请完整填写用户名、姓名、手机号'); return; }
+            if (password && password.length < 6) { alert('密码至少 6 位'); return; }
+            const payload = { username, real_name, phone };
+            if (password) payload.password = password;
+            const res = await fetch(`${API_BASE}/api/admin/dept_users/${id}`, {
+                method: 'PATCH', headers: getAuthHeaders(), body: JSON.stringify(payload)
+            });
+            if (checkUnauthorized(res)) return;
+            const d = await res.json().catch(() => ({}));
+            if (res.ok && d.success) { alert('已保存'); closeEditDeptUser(); loadDeptUsers(); }
+            else { alert((typeof d.detail === 'string' ? d.detail : (d.error || '保存失败'))); }
+        }
+
         function renderReplyCell(e) {
             let txt = '';
             if (e.status === '已拒绝' && e.rejected_reason) {
@@ -1311,6 +1992,18 @@
         }
 
         // 渲染表格
+        function paginationHtml(page, total) {
+            if (total <= 1) return '';
+            let btns = '';
+            const start = Math.max(1, page - 2);
+            const end = Math.min(total, page + 2);
+            for (let i = start; i <= end; i++) {
+                btns += `<button class="p-btn ${i === page ? 'active' : ''}" onclick="goEventPage(${i})">${i}</button>`;
+            }
+            return `<button class="p-btn" onclick="goEventPage(${page - 1})" ${page <= 1 ? 'disabled' : ''}>上一页</button>${btns}<button class="p-btn" onclick="goEventPage(${page + 1})" ${page >= total ? 'disabled' : ''}>下一页</button>`;
+        }
+        function goEventPage(n) { eventPage = n; applyFilters(); }
+
         function renderTable(events) {
             const container = document.getElementById('tableContainer');
             if (!events || events.length === 0) {
@@ -1328,7 +2021,12 @@
                 return 0;
             });
 
-            const rows = sorted.map(e => `
+            const totalPages = Math.max(1, Math.ceil(sorted.length / EVENT_PAGE_SIZE));
+            if (eventPage > totalPages) eventPage = totalPages;
+            if (eventPage < 1) eventPage = 1;
+            const pageEvents = sorted.slice((eventPage - 1) * EVENT_PAGE_SIZE, eventPage * EVENT_PAGE_SIZE);
+
+            const rows = pageEvents.map(e => `
                 <tr>
                     <td data-label="创建时间">${escapeHtml(e.created_at || '-')}</td>
                     <td data-label="描述">${beneficiaryTag(e)}${escapeHtml(e.description || '-')}</td>
@@ -1336,6 +2034,7 @@
                     <td data-label="紧急程度"><span class="tag ${urgencyClass(e.urgency)}">${escapeHtml(e.urgency || '-')}</span></td>
                     <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${escapeHtml(e.scene_tag || '-')}</span></td>
                     <td data-label="处理部门">${escapeHtml(e.handler || '-')}</td>
+                    <td data-label="照片/录音"><span class="muted" id="table-media-${e.event_id}">/</span></td>
                     <td data-label="位置">${locationCell(e)}</td>
         <td data-label="status">${
           e.status === '已撤销'
@@ -1358,6 +2057,7 @@
                             <th onclick="sortBy('urgency')">紧急程度<span class="sort-indicator">${sortIndicator('urgency')}</span></th>
                             <th onclick="sortBy('scene_tag')">场景标签<span class="sort-indicator">${sortIndicator('scene_tag')}</span></th>
                             <th onclick="sortBy('handler')">处理部门<span class="sort-indicator">${sortIndicator('handler')}</span></th>
+                            <th>照片/录音</th>
                             <th>位置</th>
                             <th onclick="sortBy('status')">状态<span class="sort-indicator">${sortIndicator('status')}</span></th>
                             <th>回复</th>
@@ -1366,7 +2066,9 @@
                     <tbody>${rows}</tbody>
                 </table>
             `;
-            document.getElementById('showingInfo').textContent = `共 ${sorted.length} 条记录`;
+            container.innerHTML += `<div class="pagination">${paginationHtml(eventPage, totalPages)}</div>`;
+            document.getElementById('showingInfo').textContent = `共 ${sorted.length} 条 · 第 ${eventPage}/${totalPages} 页`;
+            renderTableMediaCells(pageEvents);
         }
 
         // 提交者信息 tooltip
@@ -1428,28 +2130,108 @@
         }
 
         // 筛选逻辑
+        function _parseEventDate(s) {
+            if (!s) return null;
+            const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+            if (!m) return null;
+            return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]);
+        }
+        function _startOfDay(d) { const x = new Date(d); x.setHours(0,0,0,0); return x; }
+        function _endOfDay(d) { const x = new Date(d); x.setHours(23,59,59,999); return x; }
+        function dateInRange(e, range) {
+            if (!range) return true;
+            const d = _parseEventDate(e.created_at);
+            if (!d) return false;
+            const now = new Date();
+            const todayStart = _startOfDay(now);
+            const todayEnd = _endOfDay(now);
+            const day = (now.getDay() + 6) % 7; // 0 = 周一
+            const weekStart = new Date(todayStart); weekStart.setDate(weekStart.getDate() - day);
+            const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6); weekEnd.setHours(23,59,59,999);
+            const lastWeekStart = new Date(weekStart); lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+            const lastWeekEnd = new Date(weekStart); lastWeekEnd.setDate(lastWeekEnd.getDate() - 1); lastWeekEnd.setHours(23,59,59,999);
+            switch (range) {
+                case 'today': return d >= todayStart && d <= todayEnd;
+                case 'yesterday': { const ys = new Date(todayStart); ys.setDate(ys.getDate() - 1); const ye = _endOfDay(ys); return d >= ys && d <= ye; }
+                case 'thisweek': return d >= weekStart && d <= weekEnd;
+                case 'lastweek': return d >= lastWeekStart && d <= lastWeekEnd;
+                case '1m': return d >= new Date(now.getTime() - 30*24*3600*1000);
+                case '3m': return d >= new Date(now.getTime() - 90*24*3600*1000);
+                case '1y': return d >= new Date(now.getTime() - 365*24*3600*1000);
+            }
+            return true;
+        }
+
         function getFilteredEvents() {
             const statusFilter = document.getElementById('filterStatus').value;
             const typeFilter = document.getElementById('filterType').value;
             const urgencyFilter = document.getElementById('filterUrgency').value;
             const sceneFilter = document.getElementById('filterScene').value;
+            const dateFilter = document.getElementById('filterDate').value;
 
             return allEvents.filter(e => {
                 if (statusFilter && e.status !== statusFilter) return false;
                 if (typeFilter && e.event_type !== typeFilter) return false;
                 if (urgencyFilter && e.urgency !== urgencyFilter) return false;
                 if (sceneFilter && e.scene_tag !== sceneFilter) return false;
+                if (!dateInRange(e, dateFilter)) return false;
                 return true;
             });
         }
 
-        function applyFilters() {
+        function applyFilters(reset) {
+            if (reset) eventPage = 1;
             const filtered = getFilteredEvents();
             renderTable(filtered);
         }
 
         // 加载数据
+        function eventsSignature(events) {
+            return (events || []).map(e => [e.event_id, e.status, e.created_at,
+                e.handler || '', e.event_type || '', e.reply || '', e.audio_transcript || '',
+                (e.replies || []).length].join('|')).join(';');
+        }
+
+        function refreshListArea() {
+            updateTypeFilterOptions(allEvents);
+            applyFilters();
+            renderReviewLists();
+        }
+
+        function _somethingPlaying() {
+            if (document.querySelector('audio:not([paused])')) return true;
+            if (window.__tableAudio && window.__tableAudio.paused === false) return true;
+            return false;
+        }
+
+        async function pollChanges() {
+            if (document.hidden) return;
+            try {
+                const res = await fetch(`${API_BASE}/api/events`, { headers: getAuthHeaders(false) });
+                if (checkUnauthorized(res)) return;
+                if (!res.ok) return;
+                const events = await res.json();
+                const sig = eventsSignature(events);
+                const playing = _somethingPlaying();
+                if (sig !== lastEventsSignature) {
+                    if (playing) {
+                        pendingListRefresh = true; // 有东西在播，稍后再刷，避免打断
+                    } else {
+                        allEvents = events;
+                        lastEventsSignature = sig;
+                        refreshListArea();
+                    }
+                } else if (pendingListRefresh && !playing) {
+                    pendingListRefresh = false;
+                    allEvents = events;
+                    refreshListArea();
+                }
+                loadUnread();
+            } catch (e) {}
+        }
+
         async function loadData() {
+            eventPage = 1;
             try {
                 const res = await fetch(`${API_BASE}/api/events`, {
                     headers: getAuthHeaders(false)
@@ -1460,29 +2242,33 @@
 
                 renderStats(allEvents);
 
-                // 事件类型分布
-                const typeCounts = countBy(allEvents, 'event_type');
-                renderBarChart('typeChart', typeCounts);
+                if ((window.currentUser || {}).role !== 'dept') {
+                    // 事件类型分布
+                    const typeCounts = countBy(allEvents, 'event_type');
+                    renderBarChart('typeChart', typeCounts);
 
-                // 紧急程度分布（固定颜色映射）
-                const urgencyCounts = countBy(allEvents, 'urgency');
-                renderBarChart('urgencyChart', urgencyCounts, {
-                    '高': 'red',
-                    '中': 'orange',
-                    '低': 'green'
-                });
+                    // 紧急程度分布（固定颜色映射）
+                    const urgencyCounts = countBy(allEvents, 'urgency');
+                    renderBarChart('urgencyChart', urgencyCounts, {
+                        '高': 'red',
+                        '中': 'orange',
+                        '低': 'green'
+                    });
 
-                // 场景标签分布
-                const sceneCounts = countBy(allEvents, 'scene_tag');
-                renderBarChart('sceneChart', sceneCounts, {
-                    '生命急救': 'red',
-                    '紧急救援': 'orange',
-                    '常规': 'blue'
-                });
+                    // 场景标签分布
+                    const sceneCounts = countBy(allEvents, 'scene_tag');
+                    renderBarChart('sceneChart', sceneCounts, {
+                        '生命急救': 'red',
+                        '紧急救援': 'orange',
+                        '常规': 'blue'
+                    });
+                }
 
                 updateTypeFilterOptions(allEvents);
                 applyFilters();
                 renderReviewLists();
+                lastEventsSignature = eventsSignature(allEvents);
+                loadMetrics();
             } catch (e) {
                 document.getElementById('typeChart').innerHTML = '<div class="empty">数据加载失败</div>';
                 document.getElementById('urgencyChart').innerHTML = '<div class="empty">数据加载失败</div>';
@@ -1497,13 +2283,13 @@
                 populateDeptSelect();
                 loadData();
                 loadUnread();
-                loadCommunitySettings();
+                if ((window.currentUser || {}).role === 'admin') loadCommunitySettings();
                 if ((window.currentUser || {}).role === 'admin') loadDeptUsers();
-                // 每 10 秒自动刷新一次，页面隐藏时暂停
+                if ((window.currentUser || {}).role === 'admin') loadAnnouncements();
+                // 每 10 秒检测变化：仅在有新变化时刷新列表区，避免打断
                 setInterval(() => {
                     if (document.hidden) return;
-                    loadData();
-                    loadUnread();
+                    pollChanges();
                 }, 10000);
             }
         });

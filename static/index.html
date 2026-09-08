@@ -32,48 +32,61 @@
     <div class="container">
         <div class="card">
             <h2>事件提交</h2>
-            <!-- 提交方式：本人 / 代人办 -->
-            <div class="tabs" id="beneficiary-tabs">
-                <div class="tab active" id="tab-self" onclick="setBeneficiaryType('self')">本人</div>
-                <div class="tab" id="tab-proxy" onclick="setBeneficiaryType('proxy')">代人办</div>
+            <!-- 提交方式：文字描述 / 语音上报（二选一） -->
+            <div class="tabs" id="mode-tabs">
+                <div class="tab active" id="tab-mode-text" onclick="setSubmitMode('text')">文字描述</div>
+                <div class="tab" id="tab-mode-voice" onclick="setSubmitMode('voice')">语音上报</div>
             </div>
-            <div class="beneficiary-proxy hidden" id="beneficiary-proxy">
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="proxy-name">被帮助人姓名</label>
-                        <input type="text" id="proxy-name" placeholder="请输入真实姓名">
+
+            <!-- 文字描述模式：本人/代人办 + 描述 -->
+            <div id="text-mode-section">
+                <div class="tabs" id="beneficiary-tabs">
+                    <div class="tab active" id="tab-self" onclick="setBeneficiaryType('self')">本人</div>
+                    <div class="tab" id="tab-proxy" onclick="setBeneficiaryType('proxy')">代人办</div>
+                </div>
+                <div class="beneficiary-proxy hidden" id="beneficiary-proxy">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="proxy-name">被帮助人姓名</label>
+                            <input type="text" id="proxy-name" placeholder="请输入真实姓名">
+                        </div>
+                        <div class="form-group">
+                            <label for="proxy-phone">手机号</label>
+                            <input type="tel" id="proxy-phone" placeholder="请输入11位手机号">
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label for="proxy-phone">手机号</label>
-                        <input type="tel" id="proxy-phone" placeholder="请输入11位手机号">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="proxy-building">楼栋</label>
+                            <input type="text" id="proxy-building" placeholder="如：2栋">
+                        </div>
+                        <div class="form-group">
+                            <label for="proxy-unit">单元</label>
+                            <input type="text" id="proxy-unit" placeholder="如：3单元">
+                        </div>
+                        <div class="form-group">
+                            <label for="proxy-room">房间号</label>
+                            <input type="text" id="proxy-room" placeholder="如：401">
+                        </div>
                     </div>
                 </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="proxy-building">楼栋</label>
-                        <input type="text" id="proxy-building" placeholder="如：2栋">
-                    </div>
-                    <div class="form-group">
-                        <label for="proxy-unit">单元</label>
-                        <input type="text" id="proxy-unit" placeholder="如：3单元">
-                    </div>
-                    <div class="form-group">
-                        <label for="proxy-room">房间号</label>
-                        <input type="text" id="proxy-room" placeholder="如：401">
-                    </div>
-                </div>
+                <textarea id="description" placeholder="请输入居民问题描述，例如：我家楼下下水道堵了"></textarea>
             </div>
-            <!-- 事件位置（本人默认取注册住址，可修改） -->
-            <div class="form-row">
+
+            <!-- 语音上报模式：仅本人办，按住说话 -->
+            <div id="voice-mode-section" class="hidden">
+                <div class="voice-row">
+                    <button type="button" class="btn recorder" id="recBtn">按住说话</button>
+                    <span class="locate-hint" id="voiceHint"></span>
+                </div>
+                <div class="locate-hint">语音上报仅支持本人办，按住说话录音后提交</div>
+            </div>
+
+            <!-- 事件位置（本人默认取注册住址，可修改；代人办改为填被代办人地址） -->
+            <div class="form-row" id="location-row">
                 <div class="form-group"><label>楼栋</label><input type="text" id="ev-building" placeholder="如：2栋"></div>
                 <div class="form-group"><label>单元</label><input type="text" id="ev-unit" placeholder="如：3单元"></div>
                 <div class="form-group"><label>房间号</label><input type="text" id="ev-room" placeholder="如：401"></div>
-            </div>
-            <textarea id="description" placeholder="请输入居民问题描述，例如：我家楼下下水道堵了"></textarea>
-            <div class="voice-row">
-                <button type="button" class="btn-sm" id="voiceBtn" onclick="toggleVoice()">&#127908; 语音转文字</button>
-                <button type="button" class="btn-sm" id="recBtn" onclick="toggleRecord()">&#9209; 录音</button>
-                <span class="locate-hint" id="voiceHint"></span>
             </div>
             <div class="photo-grid" id="photoGrid"></div>
             <div class="form-row">
@@ -178,6 +191,25 @@
         </div>
     </div>
 
+    <!-- 图片查看器 -->
+    <div class="overlay hidden" id="photoLightbox" onclick="closePhoto()">
+        <div class="lightbox" onclick="event.stopPropagation()">
+            <span class="modal-close" onclick="closePhoto()" aria-label="关闭">&times;</span>
+            <img id="photoLightboxImg" src="" alt="照片">
+        </div>
+    </div>
+
+    <!-- 强制公告弹窗（无关闭叉，仅已阅读） -->
+    <div class="overlay hidden" id="announcementOverlay">
+        <div class="modal">
+            <div class="modal-title" style="padding-left:0;">公告</div>
+            <div class="modal-content" id="announcementContent" style="max-height:60vh;overflow-y:auto;"></div>
+            <div class="modal-buttons">
+                <button class="btn" onclick="markAnnouncementRead()">已阅读</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const API_BASE = '';
 
@@ -255,6 +287,9 @@
             document.getElementById('tab-self').classList.toggle('active', !isProxy);
             document.getElementById('tab-proxy').classList.toggle('active', isProxy);
             document.getElementById('beneficiary-proxy').classList.toggle('hidden', !isProxy);
+            // 代人办时只显示被代办人地址，隐藏本人(事件)地址
+            const loc = document.getElementById('location-row');
+            if (loc) loc.classList.toggle('hidden', isProxy);
         }
 
         function collectBeneficiary() {
@@ -352,7 +387,7 @@
 
         let currentReplyEventId = null;
 
-        function handleReplyClick(eventId) {
+        async function handleReplyClick(eventId) {
             const event = window.userEvents && window.userEvents.find(e => e.event_id === eventId);
             if (!event) return;
             currentReplyEventId = eventId;
@@ -362,25 +397,97 @@
             if (replies.length === 0 && event.reply) {
                 html = `<div class="reply-item"><div class="reply-content">${escapeHtml(event.reply)}</div></div>`;
             } else if (replies.length > 0) {
-                html = replies.map(r => `
-                    <div class="reply-item">
+                for (const r of replies) {
+                    let photosHtml = '';
+                    if (r.photos && r.photos.length) {
+                        const thumbs = [];
+                        for (const p of r.photos) {
+                            const u = await mediaUrl(p);
+                            if (u) thumbs.push(`<img class="tl-photo" src="${u}" alt="照片" onclick="openPhoto('${u}');event.stopPropagation()">`);
+                        }
+                        if (thumbs.length) photosHtml = `<div class="tl-photos">${thumbs.join('')}</div>`;
+                    }
+                    html += `<div class="reply-item">
                         <div class="reply-meta">${escapeHtml(r.reviewer_name || '管理员')} · ${escapeHtml(r.created_at)}</div>
                         <div class="reply-content">${escapeHtml(r.content)}</div>
-                    </div>
-                `).join('');
+                        ${photosHtml}
+                    </div>`;
+                }
             } else {
                 html = '<div class="reply-content">暂无回复</div>';
             }
             document.getElementById('replyText').innerHTML = html;
             document.getElementById('replyOverlay').classList.remove('hidden');
+            _syncBodyScroll();
         }
 
         function closeReplyDialog() {
             document.getElementById('replyOverlay').classList.add('hidden');
+            _syncBodyScroll();
             if (currentReplyEventId) {
                 markRead(currentReplyEventId);
                 currentReplyEventId = null;
             }
+        }
+
+        async function fillReplyThumbs() {
+            const thumbs = document.querySelectorAll('.reply-thumb[data-event]');
+            for (const el of thumbs) {
+                const eid = el.getAttribute('data-event');
+                const ev = (window.userEvents || []).find(x => x.event_id === eid);
+                if (!ev) continue;
+                const withPhoto = (ev.replies || []).find(r => (r.photos && r.photos.length));
+                if (!withPhoto) continue;
+                try {
+                    const u = await mediaUrl(withPhoto.photos[0]);
+                    if (u) el.innerHTML = `<img class="reply-thumb-img" src="${u}" alt="照片" title="查看回复照片" onclick="event.stopPropagation();handleReplyClick('${eid}')" style="width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer;vertical-align:middle;margin-left:6px;">`;
+                } catch (e) {}
+            }
+        }
+
+        let __miniAudio = null;
+        async function fillMediaCells() {
+            const photoEls = document.querySelectorAll('.media-photo[data-photo]');
+            for (const el of photoEls) {
+                const mid = el.getAttribute('data-photo');
+                const eid = el.getAttribute('data-event');
+                try {
+                    const u = await mediaUrl(mid);
+                    if (u) el.innerHTML = `<img class="media-photo-img" src="${u}" alt="照片" title="点击查看大图" onclick="openPhoto('${u}');event.stopPropagation()">`;
+                } catch (e) {}
+            }
+            const audioEls = document.querySelectorAll('.media-audio-btn[data-audio]');
+            for (const el of audioEls) {
+                const mid = el.getAttribute('data-audio');
+                const eid = el.getAttribute('data-event');
+                try {
+                    const u = await mediaUrl(mid);
+                    if (u) { el.setAttribute('data-src', u); el.onclick = () => toggleMiniAudio(u, el, eid); }
+                } catch (e) {}
+            }
+        }
+        function toggleMiniAudio(src, btn, eid) {
+            if (!__miniAudio) __miniAudio = new Audio();
+            if (__miniAudio.src === src && !__miniAudio.paused) { __miniAudio.pause(); btn.textContent = '▶ 录音'; return; }
+            __miniAudio.src = src;
+            __miniAudio.play();
+            btn.textContent = '⏸ 暂停';
+            __miniAudio.onended = () => { btn.textContent = '▶ 录音'; };
+        }
+
+        function _syncBodyScroll() {
+            const anyOpen = !document.getElementById('replyOverlay').classList.contains('hidden')
+                || !document.getElementById('detailOverlay').classList.contains('hidden');
+            document.body.classList.toggle('modal-lock', anyOpen);
+        }
+
+        function openPhoto(url) {
+            document.getElementById('photoLightboxImg').src = url;
+            document.getElementById('photoLightbox').classList.remove('hidden');
+        }
+        function closePhoto() {
+            document.getElementById('photoLightbox').classList.add('hidden');
+            document.getElementById('photoLightboxImg').src = '';
         }
 
         async function markRead(eventId) {
@@ -401,26 +508,55 @@
         // 事件提交与轮询（原有逻辑，仅增加认证头）
         // ------------------------------------------------------------------
         let pendingSubmit = null;
+        let listPage = 1;
+        const LIST_PAGE_SIZE = 20;
 
         // ------------------------------------------------------------------
         // 提交确认弹窗：本人/代人办提交前先确认信息
         // ------------------------------------------------------------------
+        let submitMode = 'text';
+        function setSubmitMode(mode) {
+            submitMode = mode;
+            document.getElementById('tab-mode-text').classList.toggle('active', mode === 'text');
+            document.getElementById('tab-mode-voice').classList.toggle('active', mode === 'voice');
+            document.getElementById('text-mode-section').classList.toggle('hidden', mode !== 'text');
+            document.getElementById('voice-mode-section').classList.toggle('hidden', mode !== 'voice');
+            if (mode === 'text') {
+                // 移除已录录音，保留照片；若在录音则停止
+                mediaIds = mediaIds.filter(id => !isAudio(id));
+                renderPhotoGrid();
+                if (mediaRecorder && mediaRecorder.state === 'recording') stopRecording();
+            } else {
+                // 清空描述，强制本人办
+                document.getElementById('description').value = '';
+                setBeneficiaryType('self');
+                prewarmMic();
+            }
+        }
+
         async function submitEvent() {
-            const desc = document.getElementById('description').value.trim();
             const error = document.getElementById('error');
             error.textContent = '';
-            if (!desc) { error.textContent = '请输入居民描述'; return; }
-
-            const beneficiary = collectBeneficiary();
-            if (beneficiary.error) { error.textContent = beneficiary.error; return; }
-
+            let desc = '';
+            let beneficiary;
+            if (submitMode === 'text') {
+                desc = document.getElementById('description').value.trim();
+                if (!desc) { error.textContent = '请输入居民问题描述'; return; }
+                beneficiary = collectBeneficiary();
+                if (beneficiary.error) { error.textContent = beneficiary.error; return; }
+            } else {
+                // 语音上报：必须已录录音，仅本人办
+                if (!mediaIds.some(id => isAudio(id))) { error.textContent = '请按住说话录制语音后再提交'; return; }
+                desc = '';
+                beneficiary = { beneficiary_type: 'self' };
+            }
             pendingSubmit = { desc, beneficiary };
             showSubmitConfirm(desc, beneficiary);
         }
 
         function showSubmitConfirm(desc, beneficiary) {
             const rows = [];
-            rows.push(`<div class="confirm-row"><span class="confirm-label">事件描述</span><span class="confirm-value">${escapeHtml(desc)}</span></div>`);
+            rows.push(`<div class="confirm-row"><span class="confirm-label">事件描述</span><span class="confirm-value">${desc ? escapeHtml(desc) : '（语音上报，以录音为准）'}</span></div>`);
             if (beneficiary.beneficiary_type === 'proxy') {
                 rows.push('<div class="confirm-row"><span class="confirm-label">提交方式</span><span class="confirm-value">代人办</span></div>');
                 rows.push(`<div class="confirm-row"><span class="confirm-label">被帮助人</span><span class="confirm-value">${escapeHtml(beneficiary.beneficiary_name)} · ${escapeHtml(beneficiary.beneficiary_phone)} · ${escapeHtml(beneficiary.beneficiary_building)}${escapeHtml(beneficiary.beneficiary_unit)}${escapeHtml(beneficiary.beneficiary_room)}</span></div>`);
@@ -478,9 +614,15 @@
                         description: desc,
                         lat: pos ? pos.lat : null,
                         lng: pos ? pos.lng : null,
-                        building: document.getElementById('ev-building').value.trim(),
-                        unit: document.getElementById('ev-unit').value.trim(),
-                        room: document.getElementById('ev-room').value.trim(),
+                        building: (beneficiary && beneficiary.beneficiary_type === 'proxy')
+                            ? (beneficiary.beneficiary_building || '')
+                            : document.getElementById('ev-building').value.trim(),
+                        unit: (beneficiary && beneficiary.beneficiary_type === 'proxy')
+                            ? (beneficiary.beneficiary_unit || '')
+                            : document.getElementById('ev-unit').value.trim(),
+                        room: (beneficiary && beneficiary.beneficiary_type === 'proxy')
+                            ? (beneficiary.beneficiary_room || '')
+                            : document.getElementById('ev-room').value.trim(),
                         media_ids: mediaIds,
                         ...(extra || {}),
                         ...beneficiary
@@ -748,6 +890,18 @@
             }, 30000);
         }
 
+        function paginationHtml(page, total) {
+            if (total <= 1) return '';
+            let btns = '';
+            const start = Math.max(1, page - 2);
+            const end = Math.min(total, page + 2);
+            for (let i = start; i <= end; i++) {
+                btns += `<button class="p-btn ${i === page ? 'active' : ''}" onclick="goListPage(${i})">${i}</button>`;
+            }
+            return `<button class="p-btn" onclick="goListPage(${page - 1})" ${page <= 1 ? 'disabled' : ''}>上一页</button>${btns}<button class="p-btn" onclick="goListPage(${page + 1})" ${page >= total ? 'disabled' : ''}>下一页</button>`;
+        }
+        function goListPage(n) { listPage = n; loadList(true); }
+
         async function loadList(quiet = false) {
             const container = document.getElementById('listContainer');
             try {
@@ -769,6 +923,12 @@
                     container.innerHTML = '<div class="empty">暂无事件记录</div>';
                     return;
                 }
+                // 分页：非轮询重置到第 1 页，轮询保持当前页
+                const totalPages = Math.max(1, Math.ceil(events.length / LIST_PAGE_SIZE));
+                if (!quiet) listPage = 1;
+                if (listPage > totalPages) listPage = totalPages;
+                if (listPage < 1) listPage = 1;
+                const pageEvents = events.slice((listPage - 1) * LIST_PAGE_SIZE, listPage * LIST_PAGE_SIZE);
                 const urgencyClass = u => {
                     if (u === '高') return 'tag-high';
                     if (u === '中') return 'tag-medium';
@@ -801,19 +961,29 @@
                     return `<span class="tag ${statusClass(e.status)}">${escapeHtml(e.status || '-')}</span>`;
                 };
                 const replyCell = e => {
-                    let txt = '';
                     if (e.status === '已拒绝' && e.rejected_reason) {
-                        txt = e.rejected_reason;
-                    } else if (e.reply) {
-                        txt = e.reply;
-                    } else if (e.replies && e.replies.length) {
-                        txt = (e.replies[e.replies.length - 1].content || '');
+                        const short = e.rejected_reason.length > 30 ? e.rejected_reason.slice(0, 30) + '…' : e.rejected_reason;
+                        return `<span class="reply-cell" title="${escapeHtml(e.rejected_reason)}">${escapeHtml(short)}</span>`;
                     }
-                    if (!txt) return '<span class="muted">-</span>';
-                    const short = txt.length > 30 ? txt.slice(0, 30) + '…' : txt;
-                    return `<span class="reply-cell" title="${escapeHtml(txt)}">${escapeHtml(short)}</span>`;
+                    const replies = e.replies || [];
+                    if (!replies.length && !e.reply) return '<span class="muted">-</span>';
+                    const count = replies.length || 1;
+                    const unreadBadge = e.has_new_reply ? '<span class="unread-badge">●</span>' : '';
+                    return `<span class="reply-cell">
+                        <span class="reply-link" onclick="handleReplyClick('${e.event_id}')">共 ${count} 条回复${unreadBadge}</span>
+                        <span class="reply-thumb" data-event="${e.event_id}"></span>
+                    </span>`;
                 };
-                const rows = events.map(e => `
+                const mediaCell = e => {
+                    const photos = (e.media || []).filter(m => !isAudio(m.media_id));
+                    const audios = (e.media || []).filter(m => isAudio(m.media_id));
+                    if (!photos.length && !audios.length) return '<span class="muted">-</span>';
+                    let html = '';
+                    if (audios.length) html += `<span class="media-audio-btn" data-event="${e.event_id}" data-audio="${audios[0].media_id}">▶ 录音</span>`;
+                    if (photos.length) html += `<span class="media-photo" data-event="${e.event_id}" data-photo="${photos[0].media_id}"></span>`;
+                    return `<span class="media-cell">${html}</span>`;
+                };
+                const rows = pageEvents.map(e => `
                     <tr data-event-id="${e.event_id}">
                         <td data-label="事件编号">${escapeHtml((e.event_id || '').slice(0, 8))}</td>
                         <td data-label="创建时间">${escapeHtml(e.created_at || '-')}</td>
@@ -824,6 +994,7 @@
                         <td data-label="场景标签"><span class="tag ${sceneClass(e.scene_tag)}">${escapeHtml(e.scene_tag || '-')}</span></td>
                         <td data-label="处理部门">${escapeHtml(e.handler || '-')}</td>
                         <td data-label="状态">${statusCell(e)}</td>
+                        <td data-label="附件">${mediaCell(e)}</td>
                         <td data-label="回复">${replyCell(e)}</td>
                         <td data-label="操作">${renderActionCell(e)}</td>
                     </tr>
@@ -841,6 +1012,7 @@
                                 <th>场景标签</th>
                                 <th>处理部门</th>
                                 <th>状态</th>
+                                <th>附件</th>
                                 <th>回复</th>
                                 <th>操作</th>
                             </tr>
@@ -848,6 +1020,9 @@
                         <tbody>${rows}</tbody>
                     </table>
                 `;
+                container.innerHTML += `<div class="pagination">${paginationHtml(listPage, totalPages)}</div>`;
+                await fillReplyThumbs();
+                fillMediaCells();
                 startCancelTick();
             } catch (e) {
                 if (quiet) {
@@ -900,21 +1075,28 @@
             } catch (e) { return ''; }
         }
         function resetMedia() { mediaIds = []; document.getElementById('photoGrid').innerHTML = ''; }
+        function isAudio(id) { return /\.(mp3|m4a|wav|ogg|webm)$/i.test(id || ''); }
         async function renderPhotoGrid() {
             const grid = document.getElementById('photoGrid');
             grid.innerHTML = '';
             for (let i = 0; i < mediaIds.length; i++) {
-                const url = await mediaUrl(mediaIds[i]);
+                const id = mediaIds[i];
                 const div = document.createElement('div');
                 div.className = 'photo-thumb';
-                div.innerHTML = `<img src="${url}" alt="照片"><span class="rm" onclick="removeMedia(${i})">×</span>`;
+                if (isAudio(id)) {
+                    div.innerHTML = `<div style="font-size:12px;color:#1d4ed8">&#127925; 录音</div><span class="rm" onclick="removeMedia(${i})">×</span>`;
+                } else {
+                    const url = await mediaUrl(id);
+                    div.innerHTML = `<img src="${url}" alt="照片"><span class="rm" onclick="removeMedia(${i})">×</span>`;
+                }
                 grid.appendChild(div);
             }
         }
         function removeMedia(i) { mediaIds.splice(i, 1); renderPhotoGrid(); }
-        async function uploadFile(file) {
+        async function uploadFile(file, kind = 'photo') {
             const fd = new FormData();
             fd.append('file', file);
+            fd.append('kind', kind);
             const res = await fetch(`${API_BASE}/api/uploads`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
@@ -928,43 +1110,22 @@
             for (const file of Array.from(files || [])) {
                 if (mediaIds.length >= 3) { alert('最多3张照片'); break; }
                 if (!file.type.startsWith('image/')) continue;
-                const id = await uploadFile(file);
+                const id = await uploadFile(file, 'photo');
                 if (id) { mediaIds.push(id); await renderPhotoGrid(); }
             }
             document.getElementById('photoInput').value = '';
         }
 
-        let recognition = null;
-        function toggleVoice() {
-            const hint = document.getElementById('voiceHint');
-            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SR) { hint.textContent = '当前浏览器不支持语音识别（需 Chrome/Edge + HTTPS）'; return; }
-            if (recognition) { recognition.stop(); recognition = null; hint.textContent = ''; return; }
-            recognition = new SR();
-            recognition.lang = 'zh-CN';
-            recognition.interimResults = false;
-            recognition.maxAlternatives = 1;
-            hint.textContent = '正在聆听，请说话…';
-            recognition.onresult = e => {
-                const txt = e.results[0][0].transcript;
-                const el = document.getElementById('description');
-                el.value = (el.value ? el.value + ' ' : '') + txt;
-                hint.textContent = '已识别，可继续编辑';
-            };
-            recognition.onerror = e => { hint.textContent = '语音识别失败：' + e.error; };
-            recognition.onend = () => { recognition = null; };
-            recognition.start();
-        }
-
         let mediaRecorder = null;
         let recordedChunks = [];
-        async function toggleRecord() {
+        let recStart = 0;
+        let recTimer = null;
+        let recordingPressed = false;
+        const REC_MAX_MS = 60000;
+
+        async function startRecording() {
             const hint = document.getElementById('voiceHint');
-            if (mediaRecorder && mediaRecorder.state === 'recording') {
-                mediaRecorder.stop();
-                document.getElementById('recBtn').textContent = '⏺ 录音';
-                return;
-            }
+            if (mediaRecorder && mediaRecorder.state === 'recording') return;
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { hint.textContent = '当前环境不支持录音（需 HTTPS）'; return; }
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -972,17 +1133,55 @@
                 recordedChunks = [];
                 mediaRecorder.ondataavailable = e => { if (e.data.size) recordedChunks.push(e.data); };
                 mediaRecorder.onstop = async () => {
+                    if (recTimer) { clearTimeout(recTimer); recTimer = null; }
+                    const dur = Date.now() - recStart;
+                    if (dur < 1000) {
+                        hint.textContent = '说话时间太短';
+                        stream.getTracks().forEach(tr => tr.stop());
+                        mediaRecorder = null;
+                        return;
+                    }
                     const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
                     const ext = (blob.type.includes('mp4') || blob.type.includes('m4a')) ? 'm4a' : (blob.type.includes('ogg') ? 'ogg' : 'webm');
                     const file = new File([blob], 'rec.' + ext, { type: blob.type });
-                    const id = await uploadFile(file);
-                    if (id) { mediaIds.push(id); await renderPhotoGrid(); hint.textContent = '录音已附加'; }
+                    const id = await uploadFile(file, 'audio');
+                    if (id) {
+                        mediaIds = mediaIds.filter(x => !isAudio(x)); // 每事件仅一条录音
+                        mediaIds.push(id);
+                        await renderPhotoGrid();
+                        hint.textContent = '录音已附加（' + Math.round(dur / 1000) + '秒）';
+                    }
                     stream.getTracks().forEach(tr => tr.stop());
+                    mediaRecorder = null;
                 };
+                recStart = Date.now();
                 mediaRecorder.start();
-                document.getElementById('recBtn').textContent = '⏹ 停止录音';
-                hint.textContent = '正在录音…';
+                hint.textContent = '正在录音…松开结束';
+                recTimer = setTimeout(() => { if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop(); }, REC_MAX_MS);
+                // 如果按下后在获取麦克风权限期间就松开了，判断为过短，立即停止，避免“点一下开始、再点一下停止”的异常行为
+                if (!recordingPressed) mediaRecorder.stop();
             } catch (e) { hint.textContent = '无法访问麦克风：' + e.message; }
+        }
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+        }
+        async function prewarmMic() {
+            // 提前请求麦克风权限（第一次进入语音上报时触发一次授权），避免按住说话时才弹出授权导致录音失败
+            try {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                stream.getTracks().forEach(tr => tr.stop());
+            } catch (e) { /* 忽略：权限未授或已拒绝 */ }
+        }
+        function bindRecBtn() {
+            const btn = document.getElementById('recBtn');
+            if (!btn) return;
+            btn.addEventListener('contextmenu', e => e.preventDefault());
+            btn.addEventListener('pointerdown', e => { e.preventDefault(); recordingPressed = true; startRecording(); });
+            btn.addEventListener('pointerup', e => { e.preventDefault(); recordingPressed = false; stopRecording(); });
+            btn.addEventListener('pointerleave', () => { recordingPressed = false; stopRecording(); });
+            btn.addEventListener('touchcancel', () => { recordingPressed = false; stopRecording(); });
+            btn.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
         }
 
         let currentDetailId = null;
@@ -990,6 +1189,7 @@
             currentDetailId = eventId;
             document.getElementById('detailContent').innerHTML = '<div class="empty">加载中…</div>';
             document.getElementById('detailOverlay').classList.remove('hidden');
+            _syncBodyScroll();
             try {
                 const res = await fetch(`${API_BASE}/api/events/${eventId}`, { headers: getAuthHeaders(false) });
                 if (checkUnauthorized(res)) return;
@@ -1002,7 +1202,7 @@
                 let photos = '';
                 if (n.photos && n.photos.length) {
                     const imgs = [];
-                    for (const p of n.photos) { const u = await mediaUrl(p); if (u) imgs.push(`<img src="${u}" alt="">`); }
+                    for (const p of n.photos) { const u = await mediaUrl(p); if (u) imgs.push(`<img class="tl-photo" src="${u}" alt="" onclick="openPhoto('${u}');event.stopPropagation()">`); }
                     if (imgs.length) photos = `<div class="tl-photos">${imgs.join('')}</div>`;
                 }
                 return `<div class="tl-item"><div class="tl-time">${escapeHtml(n.time || '')} · ${escapeHtml(n.type || '')}</div><div class="tl-text">${escapeHtml(n.text || '')}</div>${n.actor ? `<div class="tl-actor">${escapeHtml(n.actor)}</div>` : ''}${photos}</div>`;
@@ -1011,9 +1211,38 @@
             if (['已受理', '处理中', '已完成'].includes(e.status)) {
                 follow = `<div class="form-row"><textarea id="followupText" placeholder="向工作人员追问"></textarea></div><button class="btn-sm" onclick="sendFollowup('${e.event_id}')">发送追问</button>`;
             }
-            document.getElementById('detailContent').innerHTML = `<div class="modal-text">${escapeHtml(e.description || '')}</div><div class="modal-text muted">类型：${escapeHtml(e.event_type || '-')} · 状态：${escapeHtml(e.status || '-')} · 部门：${escapeHtml(e.department_name || e.handler || '-')}</div><div class="timeline">${tl.join('')}</div>${follow}`;
+            let audioHtml = '';
+            for (const m of (e.media || [])) {
+                if (!isAudio(m.media_id)) continue;
+                const au = await mediaUrl(m.media_id);
+                if (au) audioHtml += `<div class="tl-item"><div class="modal-text">&#127908; 我的录音</div><audio controls src="${au}" style="width:100%"></audio></div>`;
+            }
+            let userPhotosHtml = '';
+            const userPhotoMedia = (e.media || []).filter(m => !isAudio(m.media_id));
+            if (userPhotoMedia.length) {
+                const imgs = [];
+                for (const m of userPhotoMedia) { const u = await mediaUrl(m.media_id); if (u) imgs.push(`<img class="tl-photo" src="${u}" alt="照片" onclick="openPhoto('${u}');event.stopPropagation()">`); }
+                if (imgs.length) userPhotosHtml = `<div class="modal-text"><b>我上传的照片</b></div><div class="tl-photos">${imgs.join('')}</div>`;
+            }
+            let tScript = '';
+            if (e.audio_transcript) tScript = `<div class="modal-text"><b>语音转写：</b>${escapeHtml(e.audio_transcript)}</div>`;
+            let repliesHtml = '';
+            if ((e.replies || []).length) {
+                const items = [];
+                for (const r of e.replies) {
+                    let ph = '';
+                    if (r.photos && r.photos.length) {
+                        const ts = [];
+                        for (const p of r.photos) { const u = await mediaUrl(p); if (u) ts.push(`<img class="tl-photo" src="${u}" alt="照片" onclick="openPhoto('${u}');event.stopPropagation()">`); }
+                        if (ts.length) ph = `<div class="tl-photos">${ts.join('')}</div>`;
+                    }
+                    items.push(`<div class="reply-item"><div class="reply-meta">${escapeHtml(r.reviewer_name || '管理员')} · ${escapeHtml(r.created_at)}</div><div class="reply-content">${escapeHtml(r.content)}</div>${ph}</div>`);
+                }
+                repliesHtml = `<div class="modal-text"><b>处理回复</b></div>${items.join('')}`;
+            }
+            document.getElementById('detailContent').innerHTML = `<div class="modal-text">${escapeHtml(e.description || '（未填写描述，以录音为准）')}</div><div class="modal-text muted">类型：${escapeHtml(e.event_type || '-')} · 状态：${escapeHtml(e.status || '-')} · 部门：${escapeHtml(e.department_name || e.handler || '-')}</div>${tScript}${audioHtml}${userPhotosHtml}${repliesHtml}<div class="timeline">${tl.join('')}</div>${follow}`;
         }
-        function closeDetail() { document.getElementById('detailOverlay').classList.add('hidden'); currentDetailId = null; }
+        function closeDetail() { document.getElementById('detailOverlay').classList.add('hidden'); _syncBodyScroll(); currentDetailId = null; }
         async function sendFollowup(eventId) {
             const txt = document.getElementById('followupText').value.trim();
             if (!txt) { alert('请输入追问内容'); return; }
@@ -1025,11 +1254,49 @@
             else { const d = await res.json().catch(() => ({})); alert((d && d.detail) || '发送失败'); }
         }
 
-        initAuth().then(ok => {
-            if (ok) {
-                loadList();
-                startListPolling();
+        // ---- 系统公告：居民登录强制阅读（完全拦截前） ----
+        let announcementQueue = [];
+        let currentAnnouncementId = null;
+        let afterAnnouncements = null;
+        async function checkAnnouncements() {
+            try {
+                const res = await fetch(`${API_BASE}/api/announcements/unread`, { headers: getAuthHeaders(false) });
+                if (checkUnauthorized(res)) return true;
+                if (!res.ok) return true;
+                const d = await res.json();
+                announcementQueue = (d && d.announcements) ? d.announcements : [];
+                if (announcementQueue.length) { showNextAnnouncement(); return false; }
+                return true;
+            } catch (e) { return true; }
+        }
+        function showNextAnnouncement() {
+            if (!announcementQueue.length) {
+                document.getElementById('announcementOverlay').classList.add('hidden');
+                if (afterAnnouncements) { const f = afterAnnouncements; afterAnnouncements = null; f(); }
+                return;
             }
+            const a = announcementQueue.shift();
+            currentAnnouncementId = a.id;
+            document.getElementById('announcementContent').innerHTML = `<div class="modal-title" style="padding-left:0;">${escapeHtml(a.title)}</div><div class="modal-text">${a.content}</div>`;
+            document.getElementById('announcementOverlay').classList.remove('hidden');
+        }
+        async function markAnnouncementRead() {
+            if (!currentAnnouncementId) return;
+            try { await fetch(`${API_BASE}/api/announcements/${currentAnnouncementId}/read`, { method: 'POST', headers: getAuthHeaders(false) }); } catch (e) {}
+            currentAnnouncementId = null;
+            showNextAnnouncement();
+        }
+
+        initAuth().then(async ok => {
+            if (!ok) return;
+            const startPage = () => { setSubmitMode('text'); bindRecBtn(); loadList(); startListPolling(); };
+            const resident = (window.currentUser || {}).role === 'resident';
+            if (resident) {
+                afterAnnouncements = startPage;
+                const go = await checkAnnouncements();
+                if (!go) return;
+            }
+            startPage();
         });
     </script>
 </body>

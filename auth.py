@@ -551,6 +551,9 @@ def login_user(username: str, password: str) -> tuple[bool, str, dict[str, Any] 
         if not _verify_password(password, user["password_hash"]):
             return False, "用户名或密码错误", None
 
+        # 单账号单登录：先使该账号所有旧会话失效（后登录踢掉先登录）
+        for _tok in [t for t, s in _sessions.items() if s.get("user_id") == user["id"]]:
+            _sessions.pop(_tok, None)
         token = _generate_token()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         _sessions[token] = {
@@ -783,24 +786,96 @@ def list_dept_users() -> list[dict[str, Any]]:
         return [_dept_user_public(u) for u in _users.values() if u.get("role") == "dept"]
 
 
-def update_dept_user(user_id: str, password: str | None = None, department: str | None = None, status: str | None = None) -> tuple[bool, str, dict[str, Any] | None]:
-    """超管更新部门账号（改密/改部门/启停）。"""
+def update_dept_user(
+    user_id: str,
+    username: str | None = None,
+    real_name: str | None = None,
+    phone: str | None = None,
+    password: str | None = None,
+    department: str | None = None,
+    status: str | None = None,
+) -> tuple[bool, str, dict[str, Any] | None]:
+    """超管更新部门账号（改用户名/姓名/手机号/密码/部门/启停）。"""
     with _auth_lock:
-        global _users
+        global _users, _sessions_mtime
         _refresh_users_if_stale()
         user = _users.get(user_id)
         if user is None or user.get("role") != "dept":
             return False, "部门账号不存在", None
+
+        old_username = user.get("username", "")
+        old_phone = user.get("phone", "")
+
+        # 先校验所有字段（避免部分修改后产生不一致状态）
+        new_username = old_username
+        if username is not None:
+            v = username.strip()
+            if not v or len(v) < 3 or len(v) > 20:
+                return False, "用户名需 3-20 位", None
+            if not re.match(r"^[a-zA-Z0-9_一-龥]+$", v):
+                return False, "用户名含非法字符", None
+            if v != old_username:
+                existing = _username_index.get(v)
+                if existing is not None and existing != user_id:
+                    return False, "用户名已存在", None
+            new_username = v
+
+        new_name = None
+        if real_name is not None:
+            v = real_name.strip()
+            if not v or len(v) > 20:
+                return False, "姓名需 1-20 位", None
+            new_name = v
+
+        new_phone = old_phone
+        if phone is not None:
+            v = phone.strip()
+            if not re.match(r"^1[3-9]\d{9}$", v):
+                return False, "手机号格式不正确", None
+            if v != old_phone:
+                existing = _phone_index.get(v)
+                if existing is not None and existing != user_id:
+                    return False, "手机号已存在", None
+            new_phone = v
+
+        if department is not None and department not in dispatch_agent.DEPARTMENTS:
+            return False, "部门不合法", None
+
+        if password and len(password) < 6:
+            return False, "密码至少 6 位", None
+
+        if status is not None and status not in ("active", "disabled"):
+            return False, "状态不合法", None
+
+        # 校验通过后统一提交
+        if new_username != old_username:
+            _username_index.pop(old_username, None)
+            _username_index[new_username] = user_id
+        user["username"] = new_username
+
+        if new_name is not None:
+            user["real_name"] = new_name
+
+        if new_phone != old_phone:
+            _phone_index.pop(old_phone, None)
+            _phone_index[new_phone] = user_id
+        user["phone"] = new_phone
+
         if department is not None:
-            if department not in dispatch_agent.DEPARTMENTS:
-                return False, "部门不合法", None
             user["department"] = department
+
         if password:
-            if len(password) < 6:
-                return False, "密码至少 6 位", None
             user["password_hash"] = _hash_password(password)
+            # 修改密码后清除该账号所有会话，强制重新登录
+            _refresh_sessions_if_stale()
+            for _tok in [t for t, s in _sessions.items() if s.get("user_id") == user["id"]]:
+                _sessions.pop(_tok, None)
+            _save_sessions(_sessions)
+            _sessions_mtime = _update_mtime_after_save(SESSIONS_FILE)
+
         if status is not None:
             user["status"] = "active" if status == "active" else "disabled"
+
         _save_users(_users)
         _users_mtime = _update_mtime_after_save(USERS_FILE)
     return True, "已更新", _dept_user_public(user)

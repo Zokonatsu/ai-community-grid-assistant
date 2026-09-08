@@ -18,6 +18,10 @@ from datetime import datetime
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 COMMUNITY_CONFIG_FILE = os.path.join(DATA_DIR, "community_config.json")
 
+# 全局上班时段默认
+DEFAULT_WORK_HOURS_START = "09:00"
+DEFAULT_WORK_HOURS_END = "18:00"
+
 
 def _ensure_data_dir() -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -34,6 +38,8 @@ def load() -> dict | None:
         with open(COMMUNITY_CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict) and "center_lat" in data and "center_lng" in data:
+            data.setdefault("work_hours_start", DEFAULT_WORK_HOURS_START)
+            data.setdefault("work_hours_end", DEFAULT_WORK_HOURS_END)
             return data
         return None
     except (json.JSONDecodeError, OSError, TypeError):
@@ -59,3 +65,40 @@ def save(name: str, center_lat: float, center_lng: float, radius_m: float) -> di
     except OSError as exc:
         raise RuntimeError(f"保存社区设置失败：{exc}") from exc
     return config
+
+
+def _read_raw() -> dict | None:
+    """读取整个配置文件（不限字段），文件不存在/损坏返回 None。"""
+    if not os.path.exists(COMMUNITY_CONFIG_FILE):
+        return None
+    try:
+        with open(COMMUNITY_CONFIG_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except (json.JSONDecodeError, OSError, TypeError):
+        return None
+
+
+def get_workhours() -> dict:
+    """读取全局上班时段，缺失时回到默认 09:00-18:00。"""
+    data = _read_raw() or {}
+    return {
+        "work_hours_start": data.get("work_hours_start") or DEFAULT_WORK_HOURS_START,
+        "work_hours_end": data.get("work_hours_end") or DEFAULT_WORK_HOURS_END,
+        "updated_at": data.get("updated_at", ""),
+    }
+
+
+def save_workhours(start: str, end: str) -> dict:
+    """保存全局上班时段并返回落盘后配置。"""
+    data = _read_raw() or {}
+    data["work_hours_start"] = (start or DEFAULT_WORK_HOURS_START).strip()
+    data["work_hours_end"] = (end or DEFAULT_WORK_HOURS_END).strip()
+    data["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _ensure_data_dir()
+    try:
+        with open(COMMUNITY_CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except OSError as exc:
+        raise RuntimeError(f"保存上班时段失败：{exc}") from exc
+    return get_workhours()

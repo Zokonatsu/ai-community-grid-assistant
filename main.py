@@ -20,7 +20,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Depends, Header, Request, Body, UploadFile, File
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, Body, UploadFile, File, Form
 from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -40,7 +40,10 @@ import dispatch_agent
 import auth
 import geo
 import community_store
+import db
+import weekly_report
 import media_store
+import asr
 from secure_store import encrypt_field, decrypt_field
 
 logger = logging.getLogger("main")
@@ -236,6 +239,8 @@ for task in _tasks.values():
     for fld in ("user_read_at", "assigned_dept", "department_name", "reviewer_dept", "dept_read_at"):
         if fld not in task:
             task[fld] = ""
+    if "audio_transcript" not in task:
+        task["audio_transcript"] = ""
     if "media" not in task:
         task["media"] = []
     if "timeline" not in task:
@@ -254,6 +259,134 @@ _task_lock = asyncio.Lock()
 _background_tasks: set[asyncio.Task] = set()
 
 
+# 关键词→事件类型确定性快路径（仅用于转写后的语音，命中即派单）
+_AUDIO_KEYWORD_RULES: list[tuple[str, tuple[str, ...]]] = [
+    ("安全隐患", ("噪音", "噪声", "陌生人", "门禁", "监控", "打架", "盗窃", "偷", "闯入", "扰民", "大声")),
+    ("邻里纠纷", ("矛盾", "纠纷", "邻里", "吵架", "投诉邻居", "占道", "养狗")),
+    ("公共设施", ("电梯", "路灯", "电路", "停电", "停水", "门锁", "井盖", "健身器材", "设备")),
+    ("物业维修", ("漏水", "下水道", "管道", "堵", "水管", "渗水", "外墙", "屋顶", "天花板", "水龙头", "马桶")),
+    ("环境卫生", ("垃圾", "清扫", "臭味", "异味", "卫生", "保洁", "老鼠", "蟑螂", "烟头")),
+]
+
+def _keyword_dispatch(text: str) -> dict | None:
+    """关键词规则：命中常见社区诉求则返回 {event_type, urgency, scene_tag, confidence, emergency_type, address}。"""
+    if not text:
+        return None
+    for event_type, words in _AUDIO_KEYWORD_RULES:
+        if any(w in text for w in words):
+            return {
+                "event_type": event_type,
+                "urgency": "中",
+                "scene_tag": "常规",
+                "confidence": "high",
+                "emergency_type": "",
+                "address": "",
+            }
+    return None
+
+
+async def _process_audio_event(
+    event_id: str,
+    pre_checked_state: dict[str, str],
+    user_id: str,
+    lat: float | None,
+    lng: float | None,
+    audio_ids: list[str],
+) -> None:
+    """录音事件后台流程：ASR 转写 -> DeepSeek 分类 -> 派单或保持待审核。"""
+    transcript = ""
+    try:
+        audio_id = audio_ids[0]
+        data = await asyncio.to_thread(media_store.read_upload, audio_id)
+        if data:
+            transcript = await asyncio.to_thread(asr.transcribe, data, media_store.ext_of(audio_id))
+    except Exception as exc:
+        logger.warning("录音转写失败：event_id=%s，异常=%s", event_id, exc)
+        transcript = ""
+
+    async with _task_lock:
+        _reload_tasks()
+        task = _tasks.get(event_id)
+        if task is None:
+            return
+        task["audio_transcript"] = transcript
+        if not transcript:
+            task["status"] = "待审核"
+            _timeline_append(task, "待审核", "录音转写失败，已转人工审核", "系统")
+            _save_tasks(_tasks)
+            return
+
+    combined = (transcript + " " + (pre_checked_state.get("description", "") or "")).strip() or transcript
+
+    # 快路径1：应急硬规则（最高优先级，跳过 LLM）
+    hard = None
+    try:
+        hard = _check_hard_rules_first(combined)
+    except Exception as exc:
+        logger.warning("录音事件硬规则检查异常：event_id=%s，异常=%s", event_id, exc)
+
+    # 快路径2：关键词→部门确定性派单
+    kw = _keyword_dispatch(combined)
+
+    semantic = None
+    used_fast = False
+    if hard is not None:
+        semantic = hard
+        used_fast = True
+        logger.info("录音事件应急硬规则命中，跳过LLM：event_id=%s", event_id)
+    elif kw is not None:
+        semantic = kw
+        used_fast = True
+        logger.info("录音事件关键词快路径命中：event_id=%s, type=%s", event_id, kw.get("event_type"))
+    else:
+        try:
+            check_state = {
+                "description": combined, "address": "", "event_type": "", "urgency": "",
+                "scene_tag": "", "handler": "", "confidence": "", "confirmation_required": False,
+                "emergency_type": "", "confirmed": False,
+            }
+            semantic = await asyncio.wait_for(asyncio.to_thread(receive_node, check_state), timeout=50.0)
+        except Exception as exc:
+            logger.warning("录音事件语义校验异常：event_id=%s，异常=%s", event_id, exc)
+            semantic = None
+
+    async with _task_lock:
+        _reload_tasks()
+        task = _tasks.get(event_id)
+        if task is None:
+            return
+        if not isinstance(semantic, dict) or semantic.get("event_type", "") in ("无效输入", "API异常", "待审核") or (not used_fast and semantic.get("confidence", "") != "high"):
+            task["status"] = "待审核"
+            _timeline_append(task, "待审核", "录音内容待人工确认归类", "系统")
+            _save_tasks(_tasks)
+            return
+        dispatch_state = {
+            "description": combined, "address": semantic.get("address", ""),
+            "event_type": semantic.get("event_type", ""), "urgency": semantic.get("urgency", ""),
+            "scene_tag": semantic.get("scene_tag", ""), "handler": "", "confidence": semantic.get("confidence", ""),
+            "emergency_type": semantic.get("emergency_type", ""),
+        }
+        result = await asyncio.to_thread(dispatch_agent.dispatch_node, dispatch_state)
+        handler = result.get("handler", "")
+        key, name = dispatch_agent.handler_to_department(handler)
+        task.update({
+            "address": semantic.get("address", ""),
+            "event_type": semantic.get("event_type", ""),
+            "urgency": semantic.get("urgency", ""),
+            "scene_tag": semantic.get("scene_tag", ""),
+            "handler": handler,
+            "assigned_dept": key,
+            "department_name": name,
+        })
+        if key:
+            task["status"] = "待处理"
+            _timeline_append(task, "待处理", "已派单至" + name, "系统")
+        else:
+            task["status"] = "待审核"
+            _timeline_append(task, "待审核", "已转入超管/人工审核", "系统")
+        _save_tasks(_tasks)
+
+
 async def _process_event(
     event_id: str,
     pre_checked_state: dict[str, str],
@@ -268,7 +401,18 @@ async def _process_event(
     后台仅执行 dispatch_node → record_node，避免二次调用 LLM API。
     超时保护：若 dispatch_record_workflow.invoke 超过 60 秒未完成，标记为处理超时。
     定位坐标 lat/lng 仅透传给 record_node 落盘，不参与派单决策。
+    含录音的事件改走 _process_audio_event（ASR 转写 + DeepSeek 分类）。
     """
+
+    async with _task_lock:
+        _reload_tasks()
+        _cur = _tasks.get(event_id)
+    _audio_ids = []
+    if _cur:
+        _audio_ids = [m.get("media_id", "") for m in _cur.get("media", []) if media_store.is_audio(m.get("media_id", ""))]
+    if _audio_ids:
+        await _process_audio_event(event_id, pre_checked_state, user_id, lat, lng, _audio_ids)
+        return
 
     def _run() -> dict[str, str]:
         initial_state: WorkflowState = {
@@ -404,6 +548,76 @@ async def _auto_accept_loop() -> None:
         await asyncio.sleep(config.AUTO_ACCEPT_CHECK_SECONDS)
 
 
+async def _cleanup_old_recordings() -> int:
+    """删除超过保留期的录音，并移除事件内的过期音频引用。返回删除数量。"""
+    cutoff_days = config.RECORDING_RETENTION_DAYS
+    if cutoff_days <= 0:
+        return 0
+    now = datetime.now()
+    cutoff = now - timedelta(days=cutoff_days)
+    expired_ids: set[str] = set()
+    try:
+        items = await asyncio.to_thread(media_store.list_audio_keys)
+    except Exception as exc:
+        logger.warning("读取录音列表失败：%s", exc)
+        return 0
+    for it in items:
+        key = (it.get("key") or "")
+        lm = it.get("last_modified")
+        if not key or lm is None:
+            continue
+        media_id = key.rsplit("/", 1)[-1]
+        try:
+            if isinstance(lm, datetime):
+                lm_dt = lm
+            elif isinstance(lm, str):
+                lm_dt = datetime.strptime(lm, "%Y-%m-%d %H:%M:%S")
+            elif hasattr(lm, "timestamp"):
+                lm_dt = datetime.fromtimestamp(lm.timestamp())
+            else:
+                continue
+        except Exception:
+            continue
+        if lm_dt < cutoff:
+            expired_ids.add(media_id)
+
+    if not expired_ids:
+        return 0
+
+    deleted = 0
+    async with _task_lock:
+        _reload_tasks()
+        for mid in expired_ids:
+            for task in _tasks.values():
+                media = task.get("media") or []
+                new_media = [m for m in media if m.get("media_id") != mid]
+                if len(new_media) != len(media):
+                    task["media"] = new_media
+        for mid in expired_ids:
+            try:
+                if await asyncio.to_thread(media_store.delete_audio, mid):
+                    deleted += 1
+            except Exception as exc:
+                logger.warning("删除录音失败：%s，%s", mid, exc)
+        if deleted:
+            _save_tasks(_tasks)
+    if deleted:
+        logger.info("录音清理完成，删除 %d 条超过 %d 天", deleted, cutoff_days)
+    return deleted
+
+
+async def _cleanup_recordings_loop() -> None:
+    """后台定时清理超过保留期的录音。"""
+    while True:
+        try:
+            await _cleanup_old_recordings()
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("录音清理扫描异常：%s", exc)
+        await asyncio.sleep(config.RECORDING_CLEANUP_CHECK_SECONDS)
+
+
 def _build_task(
     *,
     event_id: str,
@@ -463,6 +677,7 @@ def _build_task(
         "emergency_type": emergency_type or "",
         "assigned_dept": "",
         "department_name": "",
+        "audio_transcript": "",
         "reviewer_id": "",
         "reviewer_dept": "",
         "timeline": [{
@@ -509,10 +724,44 @@ app = FastAPI(
 )
 
 
+
+
+async def _maybe_auto_generate_weekly_report() -> bool:
+    """每周一凌晨 1 点自动生成并归档本周周报（若当周尚未生成）。"""
+    now = datetime.now()
+    if now.weekday() != 0 or now.hour != 1:
+        return False
+    try:
+        monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        week_key = monday.strftime("%Y-%m-%d")
+        if weekly_report.load(week_key) is not None:
+            return False
+        await _build_weekly_report()
+        logger.info("已自动生成并归档本周周报：%s", week_key)
+        return True
+    except Exception as exc:
+        logger.warning("自动生成周报失败：%s", exc)
+        return False
+
+
+async def _weekly_report_auto_loop() -> None:
+    """后台定时检测：每周一凌晨自动生成全部门周报并入库存档。"""
+    while True:
+        try:
+            await _maybe_auto_generate_weekly_report()
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.warning("\u5468\u62a5\u81ea\u52a8\u751f\u6210\u626b\u63cf\u5f02\u5e38\uff1a%s", exc)
+        await asyncio.sleep(3600)
+
 @app.on_event("startup")
 async def _auto_accept_startup() -> None:
-    """启动后后台循环扫描并自动受理超时未处理的待审核事件。"""
+    db.init_db()
+    """启动后后台循环扫描并自动受理超时未处理的待审核事件，并定时清理超期录音。"""
     asyncio.create_task(_auto_accept_loop())
+    asyncio.create_task(_cleanup_recordings_loop())
+    asyncio.create_task(_weekly_report_auto_loop())
 
 
 # 注册 CORS 中间件，允许前端跨域调用（白名单取自环境变量，默认含本机与生产前端）
@@ -573,7 +822,7 @@ class EventRequest(BaseModel):
     """
     事件提交请求体。
     """
-    description: str = Field(..., description="居民事件描述字符串", min_length=1, max_length=500)
+    description: str = Field(default="", description="居民事件描述字符串（可空，与录音至少其一）", max_length=500)
     confirmed: bool = Field(default=False, description="用户是否已确认高风险描述（用于模糊急救二次提交）")
     emergency_type: str | None = Field(default=None, description="模糊急救类型：medical/police/fire（用于二次提交时传递）")
     lat: float | None = Field(default=None, ge=-90, le=90, description="事件实时定位纬度")
@@ -599,6 +848,11 @@ class CommunityUpdateRequest(BaseModel):
     center_lat: float = Field(..., ge=-90, le=90, description="中心纬度")
     center_lng: float = Field(..., ge=-180, le=180, description="中心经度")
     radius_m: float = Field(..., gt=0, description="覆盖半径（米）")
+
+
+class WorkHoursRequest(BaseModel):
+    work_hours_start: str = Field(..., pattern=r"^\d{2}:\d{2}$", description="上班开始时间，如 09:00")
+    work_hours_end: str = Field(..., pattern=r"^\d{2}:\d{2}$", description="上班结束时间，如 18:00")
 
 
 class EventResponseData(BaseModel):
@@ -693,8 +947,11 @@ class DeptUserCreateRequest(BaseModel):
 
 
 class DeptUserUpdateRequest(BaseModel):
-    password: str | None = Field(default=None, min_length=6, max_length=64)
-    department: str | None = Field(default=None, min_length=1, max_length=30)
+    username: str | None = Field(default=None, description="用户名，留空表示不修改")
+    real_name: str | None = Field(default=None, description="姓名，留空表示不修改")
+    phone: str | None = Field(default=None, description="手机号，留空表示不修改")
+    password: str | None = Field(default=None, description="密码，留空表示不修改")
+    department: str | None = Field(default=None, description="部门字段，留空表示不修改")
     status: str | None = Field(default=None, description="active=启用 / disabled=停用")
 
 
@@ -938,6 +1195,495 @@ async def admin_update_community(
 
 
 # ------------------------------------------------------------------
+# API 端点：PUT /api/admin/workhours（全局上班时段，仅超管）
+# ------------------------------------------------------------------
+@app.put("/api/admin/workhours")
+async def admin_update_workhours(
+    request: WorkHoursRequest,
+    _admin: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    try:
+        return community_store.save_workhours(request.work_hours_start, request.work_hours_end)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ------------------------------------------------------------------
+# API 端点：GET /api/metrics（工作人员）—— 平均响应/处理时长
+# ------------------------------------------------------------------
+def _parse_dt(s: str) -> datetime | None:
+    try:
+        return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return None
+
+
+def _diff_min(a: datetime, b: datetime) -> float | None:
+    if not a or not b:
+        return None
+    return (b - a).total_seconds() / 60.0
+
+
+async def _compute_daily_handling() -> dict[str, Any]:
+    whs = community_store.get_workhours()
+    today = datetime.now().strftime("%Y-%m-%d")
+    dept_values: dict[str, list[float]] = {}
+    async with _task_lock:
+        _refresh_tasks()
+        for task in _tasks.values():
+            created = task.get("created_at", "")
+            if not isinstance(created, str) or not created.startswith(today):
+                continue
+            if task.get("status") != "已完成" or not task.get("completed_at"):
+                continue
+            ad = task.get("assigned_dept", "")
+            if not ad or ad not in dispatch_agent.DEPARTMENTS:
+                continue
+            # 仅统计由部门账号实际完成的事件，超管自己完成的不纳入
+            rv_dept = task.get("reviewer_dept", "")
+            if not rv_dept or rv_dept not in dispatch_agent.DEPARTMENTS:
+                continue
+            # 最早的「待处理」时间线 = 派单到部门时间
+            first_handle = None
+            for n in (task.get("timeline") or []):
+                if n.get("type") == "待处理" and n.get("time"):
+                    t = _parse_dt(n["time"])
+                    if t is not None:
+                        first_handle = t
+                        break
+            if first_handle is None:
+                continue
+            cplt = _parse_dt(task["completed_at"])
+            hmin = _work_minutes_between(first_handle, cplt, whs)
+            if hmin is None or hmin < 0:
+                continue
+            dept_values.setdefault(ad, []).append(hmin)
+
+    dept_results: dict[str, Any] = {}
+    for k in dispatch_agent.DEPARTMENTS:
+        vals = dept_values.get(k)
+        dept_results[k] = round(sum(vals) / len(vals), 1) if vals else None
+    all_vals = [v for v in dept_results.values() if v is not None]
+    overall = round(sum(all_vals) / len(all_vals), 1) if all_vals else None
+    return {
+        "work_hours_start": whs.get("work_hours_start", "09:00"),
+        "work_hours_end": whs.get("work_hours_end", "18:00"),
+        "date": today,
+        "dept_results": dept_results,
+        "avg_handling_min": overall,
+    }
+
+
+@app.get("/api/metrics")
+async def get_metrics(
+    current_user: dict[str, Any] = Depends(get_staff_dependency),
+) -> dict[str, Any]:
+    data = await _compute_daily_handling()
+    role = current_user.get("role")
+    department = current_user.get("department", "")
+    if role == "dept":
+        return {
+            "role": "dept",
+            "dept": department,
+            "dept_name": dispatch_agent.DEPARTMENTS.get(department, ""),
+            "avg_handling_min": data["dept_results"].get(department),
+            "work_hours_start": data["work_hours_start"],
+            "work_hours_end": data["work_hours_end"],
+            "date": data["date"],
+        }
+    return {
+        "role": "admin",
+        "dept_results": data["dept_results"],
+        "avg_handling_min": data["avg_handling_min"],
+        "work_hours_start": data["work_hours_start"],
+        "work_hours_end": data["work_hours_end"],
+        "date": data["date"],
+    }
+
+
+# ------------------------------------------------------------------
+# AI 周报：本周统计 + AI 逐事件总结 + 每周历史（仅超管）
+# ------------------------------------------------------------------
+# ------------------------------------------------------------------
+# \u5468\u62a5\u6307\u6807\u5de5\u5177\u51fd\u6570\uff08\u4e0a\u73ed\u65f6\u6bb5\u5207\u7247\uff09
+# ------------------------------------------------------------------
+def _work_minutes_between(start: datetime, end: datetime, whs: dict) -> float:
+    """\u8ba1\u7b97 [start, end] \u843d\u5728\u6bcf\u5929\u4e0a\u73ed\u65f6\u6bb5\uff08\u5468\u4e00~\u5468\u4e94\uff0cwhs.work_hours_start~end\uff09\u5185\u7684\u5206\u949f\u6570\u3002"""
+    if not start or not end or end <= start:
+        return 0.0
+    try:
+        ws_h, ws_m = map(int, whs.get("work_hours_start", "09:00").split(":"))
+        we_h, we_m = map(int, whs.get("work_hours_end", "18:00").split(":"))
+    except Exception:
+        ws_h, ws_m, we_h, we_m = 9, 0, 18, 0
+    ws = ws_h * 60 + ws_m
+    we = we_h * 60 + we_m
+    total = 0.0
+    cur = start
+    while cur < end:
+        if cur.weekday() >= 5:  # \u5468\u672b
+            cur = (cur + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            continue
+        day_start = cur.replace(hour=0, minute=0, second=0, microsecond=0)
+        win_start = day_start + timedelta(minutes=ws)
+        win_end = day_start + timedelta(minutes=we)
+        ov_start = max(cur, win_start)
+        ov_end = min(end, win_end)
+        if ov_end > ov_start:
+            total += (ov_end - ov_start).total_seconds() / 60.0
+        cur = day_start + timedelta(days=1)
+    return total
+
+
+def _color_for_response(minutes: float | None) -> str:
+    if minutes is None:
+        return "#6b7280"
+    if minutes <= 5:
+        return "#00b42a"
+    if minutes <= 20:
+        return "#ff7d00"
+    return "#f53f3f"
+
+
+# ------------------------------------------------------------------
+# AI \u5468\u62a5\uff1a\u6307\u5b9a\u65f6\u95f4\u8303\u56f4 + \u53ef\u9009\u90e8\u95e8 + \u5468\u6bd4\uff08\u4ec5\u8d85\u7ba1\uff09
+# ------------------------------------------------------------------
+def _range_key(start_dt: datetime) -> str:
+    return start_dt.strftime("%Y-%m-%d")
+
+
+def _range_label(start_dt: datetime, end_dt: datetime) -> str:
+    return f"{start_dt.strftime('%m月%d日')} \u2013 {end_dt.strftime('%m月%d日')}"
+
+
+async def _compute_range_stats(start_dt: datetime, end_dt: datetime, dept: str) -> dict[str, Any]:
+    whs = community_store.get_workhours()
+    now = datetime.now()
+    created_this_week = 0
+    processed_count = 0
+    completed_count = 0
+    unprocessed = 0
+    type_dist: dict[str, int] = {}
+    dup_map: dict[tuple[str, str], list[str]] = {}
+    overdue: list[dict[str, Any]] = []
+    backlog: list[dict[str, Any]] = []
+    dept_metrics_raw: dict[str, dict[str, Any]] = {}
+
+    resp_vals: dict[str, list[float]] = {}
+    hand_vals: dict[str, list[float]] = {}
+    all_resp: list[float] = []
+    all_hand: list[float] = []
+
+    async with _task_lock:
+        _refresh_tasks()
+        for task in _tasks.values():
+            created = task.get("created_at", "")
+            cdt = _parse_dt(created)
+            if cdt is None:
+                continue
+            created_in_range = start_dt <= cdt <= end_dt
+            if not created_in_range:
+                continue
+            # 部门筛选：仅统计派给该部门的工单
+            if dept and task.get("assigned_dept", "") != dept:
+                continue
+            # \u5e9f\u5f03\u5de5\u5355\u4e0d\u53c2\u4e0e\u6307\u6807
+            if task.get("status") in ("\u5df2\u62d2\u7edd", "\u5df2\u64a4\u9500"):
+                continue
+
+            created_this_week += 1
+            et = task.get("event_type", "") or "-"
+            type_dist[et] = type_dist.get(et, 0) + 1
+
+            # \u673a\u4f1a\u98ce\u9669\u7c7b\u522b
+            if task.get("status") in ("\u5f85\u5ba1\u6838", "\u5f85\u5904\u7406", "\u5904\u7406\u8d85\u65f6"):
+                unprocessed += 1
+            if task.get("status") == "\u5904\u7406\u8d85\u65f6":
+                overdue.append({"event_id": task.get("event_id", ""), "type": et, "created_at": created})
+            # \u79ef\u538b\uff1a\u521b\u5efa\u8d85 3 \u5929\u4ecd\u672a\u5b8c\u6210
+            if task.get("status") != "\u5df2\u5b8c\u6210" and cdt < now - timedelta(days=3):
+                backlog.append({"event_id": task.get("event_id", ""), "type": et, "created_at": created})
+
+            key = (task.get("user_id", ""), et)
+            dup_map.setdefault(key, []).append(task.get("event_id", ""))
+
+            # 本周是否进入处理（已受理/处理中/已完成 时间线在本周）
+            processed_in_week = False
+            for n in (task.get("timeline") or []):
+                t = _parse_dt(n.get("time", "")) if n.get("time") else None
+                if t and start_dt <= t <= end_dt and n.get("type") in ("已受理", "处理中", "已完成"):
+                    processed_in_week = True
+                    break
+            if processed_in_week:
+                processed_count += 1
+
+            # \u4e3b\u4f53\u6307\u6807\u4ec5\u7528\u5df2\u5b8c\u6210\uff08\u529e\u7ed3\uff09\u5de5\u5355
+            if task.get("status") != "\u5df2\u5b8c\u6210" or not task.get("completed_at"):
+                continue
+            cplt = _parse_dt(task["completed_at"])
+            if cplt is None or not (start_dt <= cplt <= end_dt):
+                continue
+            completed_count += 1
+
+            ad = task.get("assigned_dept", "")
+            rv_dept = task.get("reviewer_dept", "")
+            if not ad or ad not in dispatch_agent.DEPARTMENTS:
+                continue
+            if rv_dept not in dispatch_agent.DEPARTMENTS:
+                continue  # \u8d85\u7ba1\u5b8c\u6210\u4e0d\u7eb3\u5165
+
+            first_handle = None
+            for n in (task.get("timeline") or []):
+                if n.get("type") == "\u5f85\u5904\u7406" and n.get("time"):
+                    t = _parse_dt(n["time"])
+                    if t is not None:
+                        first_handle = t
+                        break
+            if first_handle is None:
+                continue
+            resp_min = _work_minutes_between(cdt, first_handle, whs)
+            hand_min = _work_minutes_between(first_handle, cplt, whs)
+            if resp_min is None or hand_min is None or resp_min < 0 or hand_min < 0:
+                continue  # \u65f6\u95f4\u810f\u6570\u636e\u5254\u9664
+
+            if dept and ad != dept:
+                continue
+            di = dept_metrics_raw.setdefault(ad, {"count": 0, "resp": [], "hand": []})
+            di["count"] += 1
+            di["resp"].append(resp_min)
+            di["hand"].append(hand_min)
+            all_resp.append(resp_min)
+            all_hand.append(hand_min)
+
+    # \u6c47\u603b
+    def _avg(vals):
+        return round(sum(vals) / len(vals), 1) if vals else None
+
+    dept_metrics = []
+    for k in dispatch_agent.DEPARTMENTS:
+        di = dept_metrics_raw.get(k)
+        dept_metrics.append({
+            "dept_key": k,
+            "dept_name": dispatch_agent.DEPARTMENTS[k],
+            "count": di["count"] if di else 0,
+            "avg_response_min": _avg(di["resp"]) if di else None,
+            "avg_handling_min": _avg(di["hand"]) if di else None,
+        })
+
+    duplicates = []
+    for (uid, et), ids in dup_map.items():
+        if len(ids) >= 2:
+            duplicates.append({"user_id": uid, "type": et, "count": len(ids), "event_ids": ids})
+    duplicates.sort(key=lambda x: x["count"], reverse=True)
+
+    avg_response = _avg(all_resp)
+    avg_handling = _avg(all_hand)
+    completion_rate = round(completed_count / created_this_week, 4) if created_this_week else None
+    sla_compliance = round(sum(1 for r in all_resp if r <= 20) / len(all_resp), 4) if all_resp else None
+    hot_types = sorted(type_dist.items(), key=lambda x: x[1], reverse=True)[:3]
+
+    return {
+        "total_created": created_this_week,
+        "processed_count": processed_count,
+        "completed_count": completed_count,
+        "unprocessed_count": unprocessed,
+        "overdue_count": len(overdue),
+        "backlog_count": len(backlog),
+        "completion_rate": completion_rate,
+        "avg_response_min": avg_response,
+        "avg_handling_min": avg_handling,
+        "response_color": _color_for_response(avg_response),
+        "handling_color": _color_for_response(avg_handling),
+        "sla_compliance_rate": sla_compliance,
+        "work_hours_start": whs.get("work_hours_start", "09:00"),
+        "work_hours_end": whs.get("work_hours_end", "18:00"),
+        "type_distribution": type_dist,
+        "hot_types": [{"type": t, "count": c} for t, c in hot_types],
+        "dept_metrics": dept_metrics,
+        "duplicates": duplicates,
+        "overdue": overdue,
+        "backlog": backlog,
+    }
+
+
+async def _build_weekly_report(start_date: str = "", end_date: str = "", dept: str = "") -> dict[str, Any]:
+    now = datetime.now()
+    if start_date:
+        start_dt = _parse_dt(start_date + " 00:00:00")
+        end_dt = _parse_dt((end_date or start_date) + " 23:59:59")
+    else:
+        monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_dt = monday
+        end_dt = now
+    if start_dt is None or end_dt is None or end_dt < start_dt:
+        end_dt = start_dt + timedelta(days=6)
+
+    stats = await _compute_range_stats(start_dt, end_dt, dept)
+    prev_end = start_dt - timedelta(seconds=1)
+    prev_start = start_dt - timedelta(days=7)
+    prev_stats = await _compute_range_stats(prev_start, prev_end, dept)
+
+    week_key = _range_key(start_dt)
+    week_label = _range_label(start_dt, end_dt)
+    ai_summary = ""
+
+    ai = await asyncio.to_thread(
+        weekly_report.generate_ai_summary,
+        stats,
+        prev_stats,
+        label=week_label,
+    )
+    ai_summary = ai.get("ai_summary", "")
+
+    report = {
+        "week_key": week_key,
+        "week_label": week_label,
+        "start": start_dt.strftime("%Y-%m-%d"),
+        "end": end_dt.strftime("%Y-%m-%d"),
+        "generated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "dept": dept,
+        "stats": stats,
+        "prev": {
+            "avg_response_min": prev_stats.get("avg_response_min"),
+            "avg_handling_min": prev_stats.get("avg_handling_min"),
+            "completed_count": prev_stats.get("completed_count"),
+            "completion_rate": prev_stats.get("completion_rate"),
+        },
+        "ai_summary": ai_summary,
+    }
+    weekly_report.save(week_key, report)
+    return report
+
+
+@app.get("/api/admin/weekly_reports")
+async def admin_weekly_reports(
+    _admin: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    return {"success": True, "weeks": weekly_report.load_weeks()}
+
+
+@app.get("/api/admin/weekly_report")
+async def admin_weekly_report_get(
+    week: str = "",
+    _admin: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    wk = week or datetime.now().strftime("%Y-%m-%d")
+    data = weekly_report.load(wk)
+    if data is None:
+        raise HTTPException(status_code=404, detail="该周周报尚未生成")
+    return {"success": True, "report": data}
+
+
+@app.post("/api/admin/weekly_report")
+async def admin_weekly_report_post(
+    start: str = "",
+    end: str = "",
+    dept: str = "",
+    _admin: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    report = await _build_weekly_report(start, end, dept)
+    return {"success": True, "report": report}
+
+
+@app.get("/api/admin/weekly_report/export")
+async def admin_weekly_report_export(
+    week: str = "",
+    _admin: dict[str, Any] = Depends(get_admin_dependency),
+) -> Response:
+    wk = week or datetime.now().strftime("%Y-%m-%d")
+    data = weekly_report.load(wk)
+    if data is None:
+        raise HTTPException(status_code=404, detail="该周周报尚未生成")
+    md = weekly_report.to_markdown(data)
+    return Response(
+        content=md,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="weekly_report_{wk}.md"'},
+    )
+
+
+# ------------------------------------------------------------------
+# ------------------------------------------------------------------
+# \u7cfb\u7edf\u516c\u544a\uff08\u4ec5\u8d85\u7ba1\u7ba1\u7406\uff1b\u5c45\u6c11\u8bfb\u516c\u544a\uff09
+# ------------------------------------------------------------------
+class AnnouncementRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200, description="\u516c\u544a\u6807\u9898")
+    content: str = Field(..., max_length=20000, description="\u516c\u544a\u6b63\u6587\uff08\u5bcc\u6587\u672c\uff09")
+    publish_time: str = Field(..., description="\u751f\u6548\u65f6\u95f4 YYYY-MM-DD HH:MM[:SS]")
+    expire_time: str = Field(..., description="\u5230\u671f\u65f6\u95f4 YYYY-MM-DD HH:MM[:SS]")
+
+
+def _norm_ann_dt(s: str) -> str:
+    s = (s or "").replace("T", " ").strip()
+    if len(s) == 16:
+        s = s + ":00"
+    return s
+
+
+@app.get("/api/admin/announcements")
+async def admin_list_announcements(
+    _admin: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    return {"success": True, "announcements": db.list_announcements()}
+
+
+@app.post("/api/admin/announcements")
+async def admin_create_announcement(
+    body: AnnouncementRequest,
+    _admin: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    a = db.create_announcement(
+        body.title, body.content,
+        _norm_ann_dt(body.publish_time), _norm_ann_dt(body.expire_time),
+        _admin.get("id", ""),
+    )
+    return {"success": True, "announcement": a}
+
+
+@app.put("/api/admin/announcements/{announcement_id}")
+async def admin_update_announcement(
+    announcement_id: int,
+    body: AnnouncementRequest,
+    _admin: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    a = db.update_announcement(
+        announcement_id, body.title, body.content,
+        _norm_ann_dt(body.publish_time), _norm_ann_dt(body.expire_time),
+    )
+    if a is None:
+        raise HTTPException(status_code=404, detail="\u516c\u544a\u4e0d\u5b58\u5728")
+    return {"success": True, "announcement": a}
+
+
+@app.delete("/api/admin/announcements/{announcement_id}")
+async def admin_delete_announcement(
+    announcement_id: int,
+    _admin: dict[str, Any] = Depends(get_admin_dependency),
+) -> dict[str, Any]:
+    if not db.delete_announcement(announcement_id):
+        raise HTTPException(status_code=404, detail="\u516c\u544a\u4e0d\u5b58\u5728")
+    return {"success": True}
+
+
+@app.get("/api/announcements/unread")
+async def user_unread_announcements(
+    current_user: dict[str, Any] = Depends(get_current_user_dependency),
+) -> dict[str, Any]:
+    return {"success": True, "announcements": db.list_unread_announcements(current_user.get("id", ""))}
+
+
+@app.post("/api/announcements/{announcement_id}/read")
+async def user_read_announcement(
+    announcement_id: int,
+    current_user: dict[str, Any] = Depends(get_current_user_dependency),
+) -> dict[str, Any]:
+    db.mark_announcement_read(current_user.get("id", ""), announcement_id)
+    return {"success": True}
+
+
+# ------------------------------------------------------------------
+
+# ------------------------------------------------------------------
 # API 端点：GET /api/events
 # ------------------------------------------------------------------
 @app.get("/api/events")
@@ -1015,10 +1761,14 @@ async def list_events(current_user: dict[str, Any] = Depends(get_current_user_de
                 "beneficiary_room": task.get("beneficiary_room", ""),
                 "assigned_dept": task.get("assigned_dept", ""),
                 "department_name": task.get("department_name", ""),
+                "audio_transcript": task.get("audio_transcript", ""),
                 "timeline": task.get("timeline", []),
                 "media": task.get("media", []),
                 "reviewer_id": task.get("reviewer_id", ""),
                 "reviewer_dept": task.get("reviewer_dept", ""),
+                "returned_by_dept": task.get("returned_by_dept", ""),
+                "returned_by_dept_name": task.get("returned_by_dept_name", ""),
+                "dispatched_by_name": task.get("dispatched_by_name", ""),
             }
             # 定位坐标/距中心米数仅管理员/部门可见，居民端不返回（避免暴露他人位置）
             if role in ("admin", "dept"):
@@ -1079,11 +1829,55 @@ async def create_event(
         room = (body.room or "").strip()
         media_entries = [{
             "media_id": m,
-            "kind": "user",
+            "kind": "audio" if media_store.is_audio(m) else "photo",
             "uploaded_by": current_user.get("id", ""),
             "created_at": "",
             "note": "",
         } for m in (body.media_ids or []) if m]
+        # 描述或录音至少其一；带录音的事件一律不拒绝，先进人工审核
+        has_audio = any(media_store.is_audio(m) for m in (body.media_ids or []))
+        if not (body.description or "").strip() and not has_audio:
+            return EventResponse(success=False, error="请填写事件描述或提供录音")
+        if has_audio:
+            event_id = str(uuid.uuid4())
+            created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            async with _task_lock:
+                _refresh_tasks()
+                _tasks[event_id] = _build_task(
+                    event_id=event_id, description=(body.description or "").strip(), created_at=created_at,
+                    status="待审核", address="", event_type="待审核", urgency="中", scene_tag="常规",
+                    emergency_type="", user=current_user, lat=body.lat, lng=body.lng, beneficiary=beneficiary,
+                )
+                _tasks[event_id]["media"] = [{**m, "created_at": created_at} for m in media_entries]
+                _tasks[event_id]["event_building"] = building
+                _tasks[event_id]["event_unit"] = unit
+                _tasks[event_id]["event_room"] = room
+                _save_tasks(_tasks)
+            audio_state = {
+                "description": (body.description or "").strip(), "address": "", "event_type": "待审核",
+                "urgency": "中", "scene_tag": "常规", "handler": "", "status": "待审核",
+                "created_at": "", "user_id": current_user["id"], "confidence": "none",
+                "confirmation_required": False, "emergency_type": "", "confirmed": False,
+            }
+            # 录音事件：同步完成 ASR 转写 + 识别派单，确保提交结果与后台一致
+            await _process_event(event_id, audio_state, current_user["id"], body.lat, body.lng)
+            async with _task_lock:
+                _refresh_tasks()
+                _task = _tasks.get(event_id)
+            _final = _task or {}
+            return EventResponse(
+                success=True,
+                data=EventResponseData(
+                    event_id=event_id,
+                    address=_final.get("address", "") or "",
+                    event_type=_final.get("event_type", "待审核") or "待审核",
+                    urgency=_final.get("urgency", "中") or "中",
+                    scene_tag=_final.get("scene_tag", "常规") or "常规",
+                    handler=_final.get("handler", "") or "",
+                    status=_final.get("status", "待审核") or "待审核",
+                    created_at=created_at,
+                ),
+            )
         # ------------------------------------------------------------------
         # 前置硬规则检查（生命安全优先）：命中则跳过所有LLM调用
         # ------------------------------------------------------------------
@@ -1739,6 +2533,7 @@ async def get_event(
         "handler": task.get("handler") or None,
         "department_name": task.get("department_name", ""),
         "assigned_dept": task.get("assigned_dept", ""),
+        "audio_transcript": task.get("audio_transcript", ""),
         "created_at": task["created_at"],
         "completed_at": task.get("completed_at"),
         "error": task.get("error"),
@@ -1748,6 +2543,9 @@ async def get_event(
         "media": task.get("media", []),
         "rejected_reason": task.get("rejected_reason", ""),
         "withdrawn_at": task.get("withdrawn_at", ""),
+        "returned_by_dept": task.get("returned_by_dept", ""),
+        "returned_by_dept_name": task.get("returned_by_dept_name", ""),
+        "dispatched_by_name": task.get("dispatched_by_name", ""),
     }
 
 
@@ -1896,6 +2694,41 @@ async def reject_event(
             "reason": task["rejected_reason"],
         },
     }
+
+
+# ------------------------------------------------------------------
+# API 端点：POST /api/events/{event_id}/return
+# ------------------------------------------------------------------
+@app.post("/api/events/{event_id}/return")
+async def return_event_to_admin(
+    event_id: str,
+    current_user: dict[str, Any] = Depends(get_staff_dependency),
+) -> dict[str, Any]:
+    """部门把事件转回超管，重置为「待审核」让超管重新归类派单。"""
+    async with _task_lock:
+        _refresh_tasks()
+        task = _tasks.get(event_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="事件不存在")
+        role = current_user.get("role")
+        dept = current_user.get("department", "")
+        if role == "dept" and task.get("assigned_dept", "") != dept and task.get("reviewer_dept", "") != dept and task.get("reviewer_id", "") != current_user.get("id"):
+            raise HTTPException(status_code=403, detail="无权操作该事件")
+        if task.get("status") != "待处理":
+            raise HTTPException(status_code=400, detail="仅待处理事件可转回管理")
+        task["status"] = "待审核"
+        task["event_type"] = "待审核"
+        task["assigned_dept"] = ""
+        task["department_name"] = ""
+        task["handler"] = ""
+        task["reviewer_id"] = ""
+        task["reviewer_dept"] = ""
+        task["returned_by_dept"] = dept if role == "dept" else ""
+        task["returned_by_dept_name"] = dispatch_agent.DEPARTMENTS.get(dept, "") if role == "dept" else ""
+        task["dispatched_by_name"] = ""
+        _timeline_append(task, "转回管理", "事件已转回管理，请重新归类派单", current_user.get("real_name", ""))
+        _save_tasks(_tasks)
+    return {"success": True, "data": {"event_id": task["event_id"], "status": task["status"]}}
 
 
 # ------------------------------------------------------------------
@@ -2064,6 +2897,9 @@ async def update_event_type(
             task["assigned_dept"] = key
             task["department_name"] = name
             task["status"] = "待处理"
+            task["returned_by_dept"] = ""
+            task["returned_by_dept_name"] = ""
+            task["dispatched_by_name"] = current_user.get("real_name", "")
             _timeline_append(task, "改类型", f"事件类型由 {old_type} 调整为 {new_type}，已转派 {name}", current_user.get("real_name", ""))
         _save_tasks(_tasks)
     return {"success": True, "data": {"event_id": task["event_id"], "status": task["status"], "event_type": task["event_type"], "department_name": task.get("department_name", "")}}
@@ -2089,12 +2925,15 @@ async def update_event_dept(
         TERMINAL = ("已完成", "已拒绝", "已撤销")
         if task.get("status") in TERMINAL:
             raise HTTPException(status_code=400, detail="已完成/已拒绝/已撤销的事件不可改派")
+        if task.get("event_type", "") == "待审核":
+            raise HTTPException(status_code=400, detail="待审核事件请先修改类型后再改派/受理")
         if dept == task.get("assigned_dept", ""):
             return {"success": True, "data": {"event_id": task["event_id"], "status": task["status"], "department_name": task.get("department_name", "")}}
         name = dispatch_agent.DEPARTMENTS[dept]
         task["assigned_dept"] = dept
         task["department_name"] = name
         task["handler"] = name
+        task["dispatched_by_name"] = current_user.get("real_name", "")
         # 改派后由新部门重新受理，清空原受理进度
         task["status"] = "待处理"
         task["reviewer_id"] = ""
@@ -2121,14 +2960,15 @@ async def admin_delete_dept_user(
 @app.post("/api/uploads")
 async def upload_media(
     file: UploadFile = File(...),
+    kind: str = Form("photo"),
     current_user: dict[str, Any] = Depends(get_current_user_dependency),
 ) -> dict[str, Any]:
     data = await file.read()
     try:
-        media_id = media_store.save_upload(data, file.filename)
+        media_id = media_store.save_upload(data, file.filename, kind=kind)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"success": True, "data": {"media_id": media_id, "url": f"/api/media/{media_id}"}}
+    return {"success": True, "data": {"media_id": media_id, "kind": kind, "url": f"/api/media/{media_id}"}}
 
 
 @app.get("/api/media/{media_id}")
@@ -2173,7 +3013,13 @@ async def admin_update_dept_user(
     _admin: dict[str, Any] = Depends(get_admin_dependency),
 ) -> dict[str, Any]:
     ok, msg, user = auth.update_dept_user(
-        user_id, password=body.password, department=body.department, status=body.status,
+        user_id,
+        username=body.username,
+        real_name=body.real_name,
+        phone=body.phone,
+        password=body.password,
+        department=body.department,
+        status=body.status,
     )
     if not ok:
         raise HTTPException(status_code=400, detail=msg)

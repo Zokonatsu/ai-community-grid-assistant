@@ -63,6 +63,9 @@ COMMUNITY_REQUIRE_LOCATION: bool = os.getenv("COMMUNITY_REQUIRE_LOCATION", "true
 AUTO_ACCEPT_HOURS: float = float(os.getenv("AUTO_ACCEPT_HOURS", "0.5") or 0)
 AUTO_ACCEPT_ENABLED: bool = AUTO_ACCEPT_HOURS > 0
 AUTO_ACCEPT_CHECK_SECONDS: int = int(os.getenv("AUTO_ACCEPT_CHECK_SECONDS", "60"))
+# 录音保留期：超过 N 天后由后台任务自动删除原始录音（默认 30 天）
+RECORDING_RETENTION_DAYS: int = int(os.getenv("RECORDING_RETENTION_DAYS", "30"))
+RECORDING_CLEANUP_CHECK_SECONDS: int = int(os.getenv("RECORDING_CLEANUP_CHECK_SECONDS", "86400"))
 
 
 # ------------------------------------------------------------------

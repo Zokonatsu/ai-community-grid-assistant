@@ -189,3 +189,28 @@ def delete_object(key: str) -> bool:
             return False
         raise CloudStoreError(f"云存储删除失败（key={key}）：{exc}") from exc
 
+
+
+def list_objects(prefix: str) -> list[dict]:
+    """列出指定前缀下的对象，返回 [{key, last_modified}] 。
+
+    last_modified 为 COS 返回的时间（datetime 或字符串），供上层根据保留期判断。
+    """
+    client, bucket = _get_client()
+    results: list[dict] = []
+    marker = ""
+    while True:
+        try:
+            resp = client.list_objects(Bucket=bucket, Prefix=prefix, Marker=marker, MaxKeys=1000)
+        except Exception as exc:
+            raise CloudStoreError(f"云存储列对象失败（prefix={prefix}）：{exc}") from exc
+        contents = resp.get("Contents") or []
+        for c in contents:
+            results.append({"key": c.get("Key", ""), "last_modified": c.get("LastModified")})
+        if not resp.get("IsTruncated"):
+            break
+        marker = resp.get("NextMarker") or (contents[-1].get("Key", "") if contents else "")
+        if not marker:
+            break
+    logger.info("云存储列出对象：prefix=%s，count=%d", prefix, len(results))
+    return results
