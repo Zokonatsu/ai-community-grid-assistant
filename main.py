@@ -1727,9 +1727,17 @@ async def geo_regeo(
 @app.get("/api/geo/search")
 async def geo_search(
     kw: str,
+    location: str | None = None,
+    city: str | None = None,
     current_user: dict[str, Any] = Depends(get_current_user_dependency),
 ) -> dict[str, Any]:
-    data = _amap_call("assistant/inputtips", f"keywords={kw}&datatype=all")
+    # 传入 location(当前地图中心/定位)与可选 city，使高德按距离/本地优先返回，并保证结果带坐标
+    qs = f"keywords={kw}&datatype=all"
+    if location:
+        qs += f"&location={location}"
+    if city:
+        qs += f"&city={city}&citylimit=true"
+    data = _amap_call("assistant/inputtips", qs)
     if data is None:
         raise HTTPException(status_code=400, detail="高德 key 未配置或请求失败")
     if str(data.get("status")) != "1":

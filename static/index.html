@@ -211,7 +211,7 @@
             <span class="modal-close" style="left:auto;right:12px;top:12px;" onclick="closeLocationPicker()" aria-label="关闭">&times;</span>
             <div class="modal-title" style="padding-left:0;">选择位置</div>
             <div class="form-row" style="margin-bottom:6px;">
-                <input type="text" id="locSearch" placeholder="搜索地点，回车确认" style="flex:1;" onkeydown="if(event.key==='Enter'){event.preventDefault();locSearchGo();}">
+                <input type="text" id="locSearch" placeholder="搜索地点，实时联想" style="flex:1;" onkeydown="if(event.key==='Enter'){event.preventDefault();locSearchGo(true);}" oninput="locSearchInput()">
                 <span class="locate-hint" id="locSearchHint"></span>
             </div>
             <div id="locTips" class="loc-tips" style="display:none;"></div>
@@ -1122,20 +1122,32 @@
                 if (res.ok) { const d = await res.json(); document.getElementById('locAddr').value = d.address || ''; }
             } catch (e) {}
         }
-        async function locSearchGo() {
+        let _locSearchTimer = null;
+        function locSearchInput() {
+            clearTimeout(_locSearchTimer);
+            const kw = document.getElementById('locSearch').value.trim();
+            if (!kw) { const b = document.getElementById('locTips'); if (b) b.style.display = 'none'; return; }
+            _locSearchTimer = setTimeout(() => locSearchGo(false), 300);
+        }
+        async function locSearchGo(autoSelect) {
             const kw = document.getElementById('locSearch').value.trim();
             const hint = document.getElementById('locSearchHint');
             const tipsBox = document.getElementById('locTips');
             if (!kw) { tipsBox.style.display = 'none'; return; }
+            // 以当前地图中心/定位为偏置，让高德优先返回本地且带坐标的结果
+            const center = (locMap && locMap.getCenter) ? locMap.getCenter() : null;
+            let url = `${API_BASE}/api/geo/search?kw=${encodeURIComponent(kw)}`;
+            if (center) url += `&location=${encodeURIComponent(center.lng + ',' + center.lat)}`;
             hint.textContent = '搜索中…';
             try {
-                const res = await fetch(`${API_BASE}/api/geo/search?kw=${encodeURIComponent(kw)}`, { headers: getAuthHeaders(false) });
+                const res = await fetch(url, { headers: getAuthHeaders(false) });
                 const d = await res.json().catch(() => ({}));
                 const tips = (d && d.tips) ? d.tips : [];
                 hint.textContent = tips.length ? '' : '无结果';
                 window.__locTips = tips;
                 tipsBox.innerHTML = tips.map((t, i) => `<div class="loc-tip" onclick="locPickTip(${i})">${escapeHtml(t.name)}<span class="muted">${escapeHtml(t.address || '')}</span></div>`).join('');
                 tipsBox.style.display = tips.length ? 'block' : 'none';
+                if (autoSelect && tips.length) locPickTip(0);
             } catch (e) { hint.textContent = '搜索失败'; }
         }
         function locPickTip(i) {
