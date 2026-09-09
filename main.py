@@ -370,7 +370,7 @@ async def _process_audio_event(
         handler = result.get("handler", "")
         key, name = dispatch_agent.handler_to_department(handler)
         task.update({
-            "address": semantic.get("address", ""),
+            "address": task.get("incoming_address", "") or semantic.get("address", ""),
             "event_type": semantic.get("event_type", ""),
             "urgency": semantic.get("urgency", ""),
             "scene_tag": semantic.get("scene_tag", ""),
@@ -465,7 +465,7 @@ async def _process_event(
                 handler = result.get("handler", "")
                 key, name = dispatch_agent.handler_to_department(handler)
                 task.update({
-                    "address": result["address"],
+                    "address": task.get("incoming_address", "") or result["address"],
                     "event_type": result["event_type"],
                     "urgency": result["urgency"],
                     "scene_tag": result["scene_tag"],
@@ -625,6 +625,7 @@ def _build_task(
     created_at: str,
     status: str,
     address: str,
+    incoming_address: str = "",
     event_type: str,
     urgency: str,
     scene_tag: str,
@@ -654,7 +655,8 @@ def _build_task(
         "event_id": event_id,
         "description": description,
         "status": status,
-        "address": address,
+        "incoming_address": incoming_address,
+        "address": incoming_address or address,
         "event_type": event_type,
         "urgency": urgency,
         "scene_tag": scene_tag,
@@ -830,6 +832,7 @@ class EventRequest(BaseModel):
     building: str | None = Field(default=None, max_length=20, description="事件楼栋（可空，默认取注册住址）")
     unit: str | None = Field(default=None, max_length=20, description="事件单元")
     room: str | None = Field(default=None, max_length=20, description="事件房间号")
+    address: str | None = Field(default=None, max_length=300, description="用户选择的位置（可读地址，可选）")
     media_ids: list[str] = Field(default_factory=list, description="已上传媒体ID列表（照片/录音）")
     # 提交方式：本人（self）/ 代人办（proxy）
     beneficiary_type: str = Field(default="self", description="提交方式：self=本人，proxy=代人办")
@@ -1254,7 +1257,7 @@ async def _compute_daily_handling() -> dict[str, Any]:
             if first_handle is None:
                 continue
             cplt = _parse_dt(task["completed_at"])
-            hmin = _work_minutes_between(first_handle, cplt, whs)
+            hmin = _diff_min(first_handle, cplt)
             if hmin is None or hmin < 0:
                 continue
             dept_values.setdefault(ad, []).append(hmin)
@@ -1442,7 +1445,7 @@ async def _compute_range_stats(start_dt: datetime, end_dt: datetime, dept: str) 
             if first_handle is None:
                 continue
             resp_min = _work_minutes_between(cdt, first_handle, whs)
-            hand_min = _work_minutes_between(first_handle, cplt, whs)
+            hand_min = _diff_min(first_handle, cplt)
             if resp_min is None or hand_min is None or resp_min < 0 or hand_min < 0:
                 continue  # \u65f6\u95f4\u810f\u6570\u636e\u5254\u9664
 
@@ -1684,6 +1687,68 @@ async def user_read_announcement(
 # ------------------------------------------------------------------
 
 # ------------------------------------------------------------------
+# API 端点：高德地图代理（逆地理/搜索，key 只留后端）
+# ------------------------------------------------------------------
+def _amap_call(api: str, query: str) -> dict | None:
+    import urllib.request, urllib.parse, json
+    key = (config.AMAP_KEY or "").strip()
+    if not key:
+        return None
+    qs = urllib.parse.urlencode({**dict(urllib.parse.parse_qsl(query)), "key": key})
+    url = f"https://restapi.amap.com/v3/{api}?{qs}"
+    try:
+        with urllib.request.urlopen(url, timeout=15) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+@app.get("/api/geo/regeo")
+async def geo_regeo(
+    lat: float,
+    lng: float,
+    current_user: dict[str, Any] = Depends(get_current_user_dependency),
+) -> dict[str, Any]:
+    data = _amap_call("geocode/regeo", f"location={lng},{lat}&extensions=base")
+    if data is None:
+        raise HTTPException(status_code=400, detail="高德 key 未配置或请求失败")
+    if str(data.get("status")) != "1":
+        raise HTTPException(status_code=502, detail="高德逆地理失败：" + str(data.get("info")))
+    regeo = data.get("regeocode") or {}
+    comp = regeo.get("addressComponent") or {}
+    return {
+        "address": regeo.get("formatted_address", ""),
+        "province": comp.get("province", ""),
+        "city": comp.get("city", ""),
+        "district": comp.get("district", ""),
+    }
+
+
+@app.get("/api/geo/search")
+async def geo_search(
+    kw: str,
+    current_user: dict[str, Any] = Depends(get_current_user_dependency),
+) -> dict[str, Any]:
+    data = _amap_call("assistant/inputtips", f"keywords={kw}&datatype=all")
+    if data is None:
+        raise HTTPException(status_code=400, detail="高德 key 未配置或请求失败")
+    if str(data.get("status")) != "1":
+        raise HTTPException(status_code=502, detail="高德搜索失败：" + str(data.get("info")))
+    tips = data.get("tips") or []
+    out = []
+    for t in tips:
+        loc = (t.get("location") or "").strip()
+        name = (t.get("name") or "").strip()
+        if not loc or not name:
+            continue
+        addr = ((t.get("district") or "") + (t.get("address") or "")).strip()
+        parts = loc.split(",")
+        if len(parts) == 2:
+            out.append({"name": name, "address": addr, "lng": parts[0], "lat": parts[1]})
+    return {"tips": out[:20]}
+
+
+# ------------------------------------------------------------------
 # API 端点：GET /api/events
 # ------------------------------------------------------------------
 @app.get("/api/events")
@@ -1845,7 +1910,7 @@ async def create_event(
                 _refresh_tasks()
                 _tasks[event_id] = _build_task(
                     event_id=event_id, description=(body.description or "").strip(), created_at=created_at,
-                    status="待审核", address="", event_type="待审核", urgency="中", scene_tag="常规",
+                    status="待审核", address="", incoming_address=(body.address or "").strip(), event_type="待审核", urgency="中", scene_tag="常规",
                     emergency_type="", user=current_user, lat=body.lat, lng=body.lng, beneficiary=beneficiary,
                 )
                 _tasks[event_id]["media"] = [{**m, "created_at": created_at} for m in media_entries]
@@ -1911,7 +1976,7 @@ async def create_event(
                     description=body.description,
                     created_at=created_at,
                     status="处理中",
-                    address="",
+                    address="", incoming_address=(body.address or "").strip(),
                     event_type=hard_rule_result["event_type"],
                     urgency=hard_rule_result["urgency"],
                     scene_tag=hard_rule_result["scene_tag"],
@@ -2014,7 +2079,7 @@ async def create_event(
                     description=body.description,
                     created_at=created_at,
                     status="待审核",
-                    address="",
+                    address="", incoming_address=(body.address or "").strip(),
                     event_type="待审核",
                     urgency="中",
                     scene_tag="常规",
@@ -2076,7 +2141,7 @@ async def create_event(
                     description=body.description,
                     created_at=created_at,
                     status="待审核",
-                    address="",
+                    address="", incoming_address=(body.address or "").strip(),
                     event_type="待审核",
                     urgency="中",
                     scene_tag="常规",
@@ -2145,7 +2210,7 @@ async def create_event(
                     description=body.description,
                     created_at=created_at,
                     status="待审核",
-                    address="",
+                    address="", incoming_address=(body.address or "").strip(),
                     event_type="待审核",
                     urgency="中",
                     scene_tag="常规",
@@ -2271,7 +2336,7 @@ async def create_event(
                     description=body.description,
                     created_at=created_at,
                     status="待审核",
-                    address="",
+                    address="", incoming_address=(body.address or "").strip(),
                     event_type="待审核",
                     urgency="中",
                     scene_tag="常规",
@@ -2440,7 +2505,7 @@ async def create_event(
                     description=body.description,
                     created_at=created_at,
                     status="待审核",
-                    address="",
+                    address="", incoming_address=(body.address or "").strip(),
                     event_type="待审核",
                     urgency="高",
                     scene_tag=hard["scene_tag"],

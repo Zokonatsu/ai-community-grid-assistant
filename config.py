@@ -24,6 +24,9 @@ load_dotenv(override=False)
 LLM_API_KEY: str | None = os.getenv("LLM_API_KEY")
 LLM_BASE_URL: str | None = os.getenv("LLM_BASE_URL")
 
+# 高德地图 Web 服务 key（用于逆地理编码/搜索）
+AMAP_KEY: str | None = os.getenv("AMAP_KEY")
+
 # LLM 请求重试配置
 LLM_RETRY_ATTEMPTS: int = int(os.getenv("LLM_RETRY_ATTEMPTS", "3"))
 LLM_RETRY_BASE_DELAY: float = float(os.getenv("LLM_RETRY_BASE_DELAY", "1.0"))

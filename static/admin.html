@@ -1073,6 +1073,7 @@
                     <div class="review-desc">${escapeHtml(e.description || '-')}</div>
                     ${beneficiaryLine(e)}
                     <div class="review-meta-line">类型：${typeSel} ${deptSel} · 部门：${escapeHtml(e.department_name || e.handler || '-')}${e.status === '待审核' ? '（待审核：请先修改类型归类后受理）' : ''}</div>
+                    ${e.address ? `<div class="review-meta-line">位置：${escapeHtml(e.address)}</div>` : ''}
                     ${e.audio_transcript ? `<div class="modal-text"><b>语音转写：</b>${escapeHtml(e.audio_transcript)}</div>` : ''}
                     <div class="tl-photos" id="card-resident-photos-${e.event_id}"></div>
                     <div class="tl-photos" id="card-audio-${e.event_id}"></div>
@@ -2096,8 +2097,9 @@
 
         // 事件位置单元格：坐标 + 距中心米数 + 高德地图链接 + 定位状态徽章（仅管理员可见该数据）
         function locationCell(e) {
+            const addr = (e.address || '').trim();
             if (e.event_lat == null || e.event_lng == null) {
-                return '-';
+                return addr ? `<span class="loc-addr" title="${escapeHtml(addr)}">${escapeHtml(addr.length > 24 ? addr.slice(0, 24) + '…' : addr)}</span>` : '-';
             }
             const locBadge = e.event_location_status === 'verified'
                 ? '<span class="loc-badge loc-ok">已验证</span>'
@@ -2106,7 +2108,7 @@
                 ? `<span class="loc-dist">距中心 ${Math.round(e.event_distance_m)} 米</span>`
                 : '';
             const url = `https://uri.amap.com/marker?position=${e.event_lng},${e.event_lat}&name=${encodeURIComponent(e.description || '事件位置')}&src=community-grid`;
-            return `<div class="loc-cell">${locBadge}<span class="loc-coords">${e.event_lat.toFixed(5)}, ${e.event_lng.toFixed(5)}</span>${dist}<a class="loc-link" href="${url}" target="_blank" rel="noopener">查看地图</a></div>`;
+            return `<div class="loc-cell">${addr ? `<div class="loc-addr" title="${escapeHtml(addr)}">${escapeHtml(addr.length > 24 ? addr.slice(0, 24) + '…' : addr)}</div>` : ''}${locBadge}<span class="loc-coords">${e.event_lat.toFixed(5)}, ${e.event_lng.toFixed(5)}</span>${dist}<a class="loc-link" href="${url}" target="_blank" rel="noopener">查看地图</a></div>`;
         }
 
         function sortIndicator(key) {

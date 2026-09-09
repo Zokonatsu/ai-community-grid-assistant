@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>知·社区网格</title>
     <link rel="stylesheet" href="/common.css">
+    <link rel="stylesheet" href="/vendor/leaflet/leaflet.min.css">
 </head>
 <body>
     <!-- 顶部栏：左标题 + 右用户区 -->
@@ -87,6 +88,11 @@
                 <div class="form-group"><label>楼栋</label><input type="text" id="ev-building" placeholder="如：2栋"></div>
                 <div class="form-group"><label>单元</label><input type="text" id="ev-unit" placeholder="如：3单元"></div>
                 <div class="form-group"><label>房间号</label><input type="text" id="ev-room" placeholder="如：401"></div>
+            </div>
+            <div class="form-row">
+                <button type="button" class="btn-sm" onclick="openLocationPicker()">&#128205; 选择位置（可选）</button>
+                <span class="locate-hint" id="locShow">未选择，可提交时定位</span>
+                <input type="hidden" id="locAddrInput" value="">
             </div>
             <div class="photo-grid" id="photoGrid"></div>
             <div class="form-row">
@@ -199,6 +205,27 @@
         </div>
     </div>
 
+    <!-- 地图选点弹窗 -->
+    <div class="overlay hidden" id="locationPickerOverlay">
+        <div class="modal" style="max-width:96vw;max-height:92vh;width:100%;" onclick="event.stopPropagation()">
+            <span class="modal-close" style="left:auto;right:12px;top:12px;" onclick="closeLocationPicker()" aria-label="关闭">&times;</span>
+            <div class="modal-title" style="padding-left:0;">选择位置</div>
+            <div class="form-row" style="margin-bottom:6px;">
+                <input type="text" id="locSearch" placeholder="搜索地点，回车确认" style="flex:1;" onkeydown="if(event.key==='Enter'){event.preventDefault();locSearchGo();}">
+                <span class="locate-hint" id="locSearchHint"></span>
+            </div>
+            <div id="locTips" class="loc-tips" style="display:none;"></div>
+            <div id="locMap" style="height:50vh;border:1px solid var(--border);border-radius:8px;"></div>
+            <div class="form-row" style="margin:8px 0;">
+                <input type="text" id="locAddr" placeholder="已选地址（拖动图钉/搜索自动带出）" readonly style="flex:1;">
+            </div>
+            <div class="modal-buttons">
+                <button class="btn-sm btn-ghost" onclick="closeLocationPicker()">取消</button>
+                <button class="btn-sm" onclick="confirmLocation()">发送</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 强制公告弹窗（无关闭叉，仅已阅读） -->
     <div class="overlay hidden" id="announcementOverlay">
         <div class="modal">
@@ -210,6 +237,7 @@
         </div>
     </div>
 
+    <script src="/vendor/leaflet/leaflet.min.js"></script>
     <script>
         const API_BASE = '';
 
@@ -476,8 +504,8 @@
         }
 
         function _syncBodyScroll() {
-            const anyOpen = !document.getElementById('replyOverlay').classList.contains('hidden')
-                || !document.getElementById('detailOverlay').classList.contains('hidden');
+            const ids = ['replyOverlay', 'detailOverlay', 'photoLightbox', 'announcementOverlay', 'locationPickerOverlay'];
+            const anyOpen = ids.some(id => { const el = document.getElementById(id); return el && !el.classList.contains('hidden'); });
             document.body.classList.toggle('modal-lock', anyOpen);
         }
 
@@ -612,8 +640,9 @@
                     headers: getAuthHeaders(),
                     body: JSON.stringify({
                         description: desc,
-                        lat: pos ? pos.lat : null,
-                        lng: pos ? pos.lng : null,
+                        lat: (pickedLoc && pickedLoc.lat != null) ? pickedLoc.lat : (pos ? pos.lat : null),
+                        lng: (pickedLoc && pickedLoc.lng != null) ? pickedLoc.lng : (pos ? pos.lng : null),
+                        address: (pickedLoc && pickedLoc.address) ? pickedLoc.address : '',
                         building: (beneficiary && beneficiary.beneficiary_type === 'proxy')
                             ? (beneficiary.beneficiary_building || '')
                             : document.getElementById('ev-building').value.trim(),
@@ -1061,6 +1090,76 @@
         // 富提交：媒体 / 语音 / 时间线详情
         // ------------------------------------------------------------------
         let mediaIds = [];
+        let pickedLoc = null;
+        let locMap = null, locMarker = null;
+        function openLocationPicker() {
+            document.getElementById('locationPickerOverlay').classList.remove('hidden');
+            _syncBodyScroll();
+            initLocMap();
+        }
+        function defaultCenter() {
+            return [30.274, 120.155];
+        }
+        function initLocMap() {
+            if (!window.L) { alert('地图组件加载失败'); return; }
+            const start = pickedLoc ? [pickedLoc.lat, pickedLoc.lng] : defaultCenter();
+            if (locMap) { locMap.remove(); locMap = null; }
+            locMap = L.map('locMap').setView(start, 16);
+            L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', { maxZoom: 18, attribution: '© 高德地图', subdomains: '1234' }).addTo(locMap);
+            locMarker = L.marker(start, { draggable: true }).addTo(locMap);
+            locMarker.on('dragend', () => { const p = locMarker.getLatLng(); onPickPos(p.lat, p.lng); });
+            locMap.on('click', (e) => { locMarker.setLatLng(e.latlng); onPickPos(e.latlng.lat, e.latlng.lng); });
+            if (pickedLoc) {
+                document.getElementById('locAddr').value = pickedLoc.address || '';
+            } else {
+                document.getElementById('locAddr').value = '';
+                getPosition().then(p => { if (p) { locMap.setView([p.lat, p.lng], 16); locMarker.setLatLng([p.lat, p.lng]); onPickPos(p.lat, p.lng); } });
+            }
+        }
+        async function onPickPos(lat, lng) {
+            try {
+                const res = await fetch(`${API_BASE}/api/geo/regeo?lat=${lat}&lng=${lng}`, { headers: getAuthHeaders(false) });
+                if (res.ok) { const d = await res.json(); document.getElementById('locAddr').value = d.address || ''; }
+            } catch (e) {}
+        }
+        async function locSearchGo() {
+            const kw = document.getElementById('locSearch').value.trim();
+            const hint = document.getElementById('locSearchHint');
+            const tipsBox = document.getElementById('locTips');
+            if (!kw) { tipsBox.style.display = 'none'; return; }
+            hint.textContent = '搜索中…';
+            try {
+                const res = await fetch(`${API_BASE}/api/geo/search?kw=${encodeURIComponent(kw)}`, { headers: getAuthHeaders(false) });
+                const d = await res.json().catch(() => ({}));
+                const tips = (d && d.tips) ? d.tips : [];
+                hint.textContent = tips.length ? '' : '无结果';
+                window.__locTips = tips;
+                tipsBox.innerHTML = tips.map((t, i) => `<div class="loc-tip" onclick="locPickTip(${i})">${escapeHtml(t.name)}<span class="muted">${escapeHtml(t.address || '')}</span></div>`).join('');
+                tipsBox.style.display = tips.length ? 'block' : 'none';
+            } catch (e) { hint.textContent = '搜索失败'; }
+        }
+        function locPickTip(i) {
+            const t = (window.__locTips || [])[i]; if (!t) return;
+            locMap.setView([parseFloat(t.lat), parseFloat(t.lng)], 16);
+            locMarker.setLatLng([parseFloat(t.lat), parseFloat(t.lng)]);
+            onPickPos(parseFloat(t.lat), parseFloat(t.lng));
+            document.getElementById('locSearch').value = t.name;
+            document.getElementById('locTips').style.display = 'none';
+        }
+        function confirmLocation() {
+            if (!locMarker) { alert('请先在地图上选择位置'); return; }
+            const p = locMarker.getLatLng();
+            pickedLoc = { lat: p.lat, lng: p.lng, address: document.getElementById('locAddr').value.trim() };
+            document.getElementById('locAddrInput').value = pickedLoc.address;
+            document.getElementById('locShow').textContent = pickedLoc.address ? ('已选位置：' + pickedLoc.address) : '已选位置（坐标）';
+            closeLocationPicker();
+        }
+        function closeLocationPicker() {
+            document.getElementById('locationPickerOverlay').classList.add('hidden');
+            _syncBodyScroll();
+            if (locMap) { locMap.remove(); locMap = null; }
+        }
+
         const mediaUrlCache = {};
         async function mediaUrl(id) {
             if (!id) return '';
