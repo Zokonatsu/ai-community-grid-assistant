@@ -200,3 +200,7 @@ _regress_logs*/
 .dsh/
 
 backups/
+
+# 本地编辑器/脚本自动备份
+*.bak
+*.bak-*
