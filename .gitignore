@@ -204,3 +204,7 @@ backups/
 # 本地编辑器/脚本自动备份
 *.bak
 *.bak-*
+
+# UI 截图与临时脚本
+screenshots/
+screenshot_ui.py
